@@ -1,0 +1,32 @@
+import { Router } from 'express';
+
+import { asyncHandler } from '../../lib/async-handler';
+import { authenticate, requireRole } from '../../middleware/auth';
+import { validate } from '../../middleware/validate';
+import { staffController } from './staff.controller';
+import {
+  createStaffSchema,
+  idParam,
+  lockSchema,
+  saveAttendanceSchema,
+  staffQuery,
+  statusSchema,
+} from './staff.validation';
+
+/** Mounted at /api/staff. School admin + principal. (payroll/leave/salary/exit deferred.) */
+export const staffRoutes = Router();
+staffRoutes.use(authenticate, requireRole('school_admin', 'principal'));
+
+staffRoutes.get('/', validate({ query: staffQuery }), asyncHandler(staffController.list));
+staffRoutes.post('/', validate({ body: createStaffSchema }), asyncHandler(staffController.create));
+staffRoutes.get('/stats', asyncHandler(staffController.stats));
+staffRoutes.get('/generate-id', asyncHandler(staffController.generateId));
+staffRoutes.get('/check-id', asyncHandler(staffController.checkId));
+
+staffRoutes.get('/attendance', asyncHandler(staffController.getAttendance));
+staffRoutes.post('/attendance/save', validate({ body: saveAttendanceSchema }), asyncHandler(staffController.saveAttendance));
+staffRoutes.patch('/attendance/lock', validate({ body: lockSchema }), asyncHandler(staffController.lock));
+staffRoutes.get('/attendance/report', asyncHandler(staffController.report));
+
+staffRoutes.get('/:id', validate({ params: idParam }), asyncHandler(staffController.profile));
+staffRoutes.patch('/:id/status', validate({ params: idParam, body: statusSchema }), asyncHandler(staffController.updateStatus));
