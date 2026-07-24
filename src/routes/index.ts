@@ -27,6 +27,7 @@ import { payrollRoutes, staffHrRoutes } from '../modules/staff/staff-hr.routes';
 import { homeworkRoutes, teacherRoutes } from '../modules/teacher/teacher.routes';
 import { transportRoutes } from '../modules/transport/transport.routes';
 import { schoolRoutes } from '../modules/school/school.routes';
+import { platformRoutes } from '../modules/platform/platform.routes';
 import { superAdminExtrasRoutes } from '../modules/superadmin/superadmin.routes';
 import { studentsRoutes } from '../modules/students/students.routes';
 
@@ -36,6 +37,7 @@ export const apiRouter = Router();
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/super-admin', schoolRoutes);
 apiRouter.use('/super-admin', superAdminExtrasRoutes);
+apiRouter.use('/super-admin', platformRoutes);
 apiRouter.use('/sessions', sessionRoutes);
 apiRouter.use('/classes', classRoutes);
 apiRouter.use('/holidays', holidayRoutes);
