@@ -34,12 +34,58 @@ const auditLogSchema = new Schema(
   { timestamps: true },
 );
 
-/** Support ticket (for the platform ticket-stats widget). */
+const ticketAttachmentSchema = new Schema(
+  { fileName: String, fileSize: Number },
+  { _id: true },
+);
+
+const ticketCommentSchema = new Schema(
+  {
+    authorId: { type: String, default: '' },
+    authorName: { type: String, default: '' },
+    authorRole: { type: String, default: '' },
+    body: { type: String, default: '' },
+    createdAt: { type: String, default: '' },
+    attachments: { type: [ticketAttachmentSchema], default: [] },
+    internal: { type: Boolean, default: false },
+  },
+  { _id: true },
+);
+
+const ticketActivitySchema = new Schema(
+  {
+    createdAt: { type: String, default: '' },
+    performedBy: { type: String, default: '' },
+    action: { type: String, default: '' },
+  },
+  { _id: true },
+);
+
+/** Support ticket, full model (board, detail, comments, activity). */
 const ticketSchema = new Schema(
   {
     schoolId: { type: Schema.Types.ObjectId, ref: 'School', index: true },
-    subject: { type: String, default: '' },
-    status: { type: String, enum: ['open', 'in_progress', 'testing', 'resolved'], default: 'open' },
+    ticketNumber: { type: String, default: '' },
+    subject: { type: String, default: '' }, // legacy alias for title, kept for back-compat
+    title: { type: String, default: '' },
+    description: { type: String, default: '' },
+    category: { type: String, default: 'other' },
+    priority: { type: String, enum: ['low', 'medium', 'high', 'critical'], default: 'medium' },
+    status: {
+      type: String,
+      enum: ['open', 'in_progress', 'testing', 'resolved', 'closed'],
+      default: 'open',
+      index: true,
+    },
+    reporterName: { type: String, default: '' },
+    reporterRole: { type: String, default: '' },
+    schoolName: { type: String, default: '' },
+    assignedTo: { type: String, default: 'Unassigned' },
+    resolvedAt: { type: String, default: '' },
+    stepsToReproduce: { type: String, default: '' },
+    attachments: { type: [ticketAttachmentSchema], default: [] },
+    comments: { type: [ticketCommentSchema], default: [] },
+    activity: { type: [ticketActivitySchema], default: [] },
   },
   { timestamps: true },
 );

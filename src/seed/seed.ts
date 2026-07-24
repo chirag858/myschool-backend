@@ -964,15 +964,34 @@ export async function seedDemo() {
     );
   }
   const tickets = [
-    { subject: 'Cannot print receipt', status: 'open' },
-    { subject: 'Attendance sync delay', status: 'in_progress' },
-    { subject: 'New report format', status: 'testing' },
-    { subject: 'Login OTP not received', status: 'resolved' },
+    {
+      ticketNumber: 'TKT-2026-001', subject: 'Cannot print receipt', title: 'Cannot print receipt',
+      description: 'Fee receipt PDF fails to generate for cash payments.', category: 'technical_bug',
+      priority: 'high', status: 'open', reporterName: 'School Admin', reporterRole: 'school_admin',
+    },
+    {
+      ticketNumber: 'TKT-2026-002', subject: 'Attendance sync delay', title: 'Attendance sync delay',
+      description: 'Mobile app attendance takes 10+ minutes to reflect on the web dashboard.', category: 'technical_bug',
+      priority: 'medium', status: 'in_progress', reporterName: 'Coordinator', reporterRole: 'coordinator',
+      assignedTo: 'Support Engineer',
+    },
+    {
+      ticketNumber: 'TKT-2026-003', subject: 'New report format', title: 'New report format',
+      description: 'Requesting a class-wise summary export in addition to the existing detailed report.',
+      category: 'feature_request', priority: 'low', status: 'testing', reporterName: 'Principal', reporterRole: 'principal',
+      assignedTo: 'Support Engineer',
+    },
+    {
+      ticketNumber: 'TKT-2026-004', subject: 'Login OTP not received', title: 'Login OTP not received',
+      description: 'Parent app OTP SMS not arriving for some mobile numbers.', category: 'authentication',
+      priority: 'critical', status: 'resolved', reporterName: 'Parent Demo', reporterRole: 'parent',
+      assignedTo: 'Support Engineer', resolvedAt: '2026-07-20T10:00:00.000Z',
+    },
   ];
   for (const t of tickets) {
     await TicketModel.findOneAndUpdate(
       { schoolId: school._id, subject: t.subject },
-      { schoolId: school._id, ...t },
+      { schoolId: school._id, schoolName: school.name, ...t },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
   }

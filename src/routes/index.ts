@@ -30,6 +30,7 @@ import { schoolRoutes } from '../modules/school/school.routes';
 import { platformRoutes } from '../modules/platform/platform.routes';
 import { superAdminExtrasRoutes } from '../modules/superadmin/superadmin.routes';
 import { studentsRoutes } from '../modules/students/students.routes';
+import { supportRoutes } from '../modules/support/support.routes';
 
 /** All domain routers mount here, under the server's `/api` base. */
 export const apiRouter = Router();
@@ -67,4 +68,5 @@ apiRouter.use('/communication', communicationRoutes);
 apiRouter.use('/circulars', circularRoutes);
 apiRouter.use('/announcements', announcementRoutes);
 apiRouter.use('/notifications', notificationRoutes);
+apiRouter.use('/support', supportRoutes);
 // ↑ Remaining: fee-extras, HR extras (payroll/leave), portals + deferred.
