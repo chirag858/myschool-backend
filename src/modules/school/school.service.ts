@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import bcrypt from 'bcryptjs';
 import type { FilterQuery } from 'mongoose';
 
 import { ApiError } from '../../lib/api-error';
@@ -178,7 +179,30 @@ export const schoolService = {
         createdAt: now,
       },
     });
-    return { id: String(doc._id), code: doc.code };
+
+    // Every school needs at least one school_admin to log into its panel —
+    // without this, super-admin's "Login as school admin" impersonation
+    // 404s ("no admin to impersonate") for every newly onboarded school.
+    const tempPassword = randomUUID().slice(0, 10);
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    await UserModel.create({
+      name: String(p.identity.principalName ?? `${doc.name} Admin`),
+      username: String(p.identity.contactEmail).toLowerCase(),
+      email: String(p.identity.contactEmail).toLowerCase(),
+      mobile: p.identity.contactMobile,
+      role: 'school_admin',
+      passwordHash,
+      schoolId: doc._id,
+      schoolName: doc.name,
+      active: true,
+    });
+
+    return {
+      id: String(doc._id),
+      code: doc.code,
+      adminEmail: String(p.identity.contactEmail).toLowerCase(),
+      adminTempPassword: tempPassword,
+    };
   },
 
   async setSchoolStatus(id: string, status: string) {
