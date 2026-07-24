@@ -84,9 +84,24 @@ const DEMO_USERS: SeedUser[] = [
 
 /** A few extra tenants so the super-admin list/dashboard have data. */
 const EXTRA_SCHOOLS = [
-  { code: 'GVN', name: 'Green Valley National School', city: 'Ludhiana', state: 'Punjab', status: 'active', plan: 'yearly', amountPaid: 44999, startDate: '2026-01-01', expiryDate: '2026-12-31' },
-  { code: 'SPS', name: 'Sunrise Public School', city: 'Amritsar', state: 'Punjab', status: 'trial', plan: 'monthly', amountPaid: 0, startDate: '2026-07-01', expiryDate: '2026-12-31' },
-  { code: 'HRT', name: 'Heritage International', city: 'Chandigarh', state: 'Chandigarh', status: 'expired', plan: 'quarterly', amountPaid: 13499, startDate: '2026-04-01', expiryDate: '2026-06-30' },
+  {
+    code: 'GVN', name: 'Green Valley National School', city: 'Ludhiana', state: 'Punjab',
+    status: 'active', plan: 'yearly', amountPaid: 44999, startDate: '2026-01-01', expiryDate: '2026-12-31',
+    contactMobile: '9888100001', contactEmail: 'admin@greenvalley.test', principalName: 'Ravinder Kaur',
+    adminName: 'Green Valley Admin', adminUsername: 'gvn_admin',
+  },
+  {
+    code: 'SPS', name: 'Sunrise Public School', city: 'Amritsar', state: 'Punjab',
+    status: 'trial', plan: 'monthly', amountPaid: 0, startDate: '2026-07-01', expiryDate: '2026-12-31',
+    contactMobile: '9888100002', contactEmail: 'admin@sunrisepublic.test', principalName: 'Harpreet Singh',
+    adminName: 'Sunrise Admin', adminUsername: 'sps_admin',
+  },
+  {
+    code: 'HRT', name: 'Heritage International', city: 'Chandigarh', state: 'Chandigarh',
+    status: 'expired', plan: 'quarterly', amountPaid: 13499, startDate: '2026-04-01', expiryDate: '2026-06-30',
+    contactMobile: '9888100003', contactEmail: 'admin@heritageintl.test', principalName: 'Anjali Mehta',
+    adminName: 'Heritage Admin', adminUsername: 'hrt_admin',
+  },
 ] as const;
 
 export async function seedDemo() {
@@ -108,13 +123,16 @@ export async function seedDemo() {
   if (!school) throw new Error('Failed to seed demo school');
 
   for (const s of EXTRA_SCHOOLS) {
-    await SchoolModel.findOneAndUpdate(
+    const extraSchool = await SchoolModel.findOneAndUpdate(
       { code: s.code },
       {
         name: s.name,
         code: s.code,
         city: s.city,
         state: s.state,
+        contactMobile: s.contactMobile,
+        contactEmail: s.contactEmail,
+        principalName: s.principalName,
         status: s.status,
         plan: s.plan,
         expiryDate: s.expiryDate,
@@ -129,6 +147,23 @@ export async function seedDemo() {
           addedBy: 'Seed',
           createdAt: `${s.startDate}T00:00:00.000Z`,
         },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+    if (!extraSchool) continue;
+    const adminPasswordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
+    await UserModel.findOneAndUpdate(
+      { username: s.adminUsername },
+      {
+        name: s.adminName,
+        username: s.adminUsername,
+        email: s.contactEmail,
+        mobile: s.contactMobile,
+        role: 'school_admin',
+        passwordHash: adminPasswordHash,
+        schoolId: extraSchool._id,
+        schoolName: extraSchool.name,
+        active: true,
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
