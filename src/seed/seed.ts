@@ -117,6 +117,16 @@ export async function seedDemo() {
       expiryDate: '2027-03-31',
       active: true,
       modules: ALL_MODULES,
+      subscription: {
+        id: 'sub_msc',
+        plan: 'yearly',
+        startDate: '2026-04-01',
+        endDate: '2027-03-31',
+        amountPaid: 44999,
+        status: 'active',
+        addedBy: 'Seed',
+        createdAt: '2026-04-01T00:00:00.000Z',
+      },
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );

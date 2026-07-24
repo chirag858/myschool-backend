@@ -7,6 +7,13 @@ import { AuditLogModel, SubscriptionModel, TicketModel } from './superadmin.mode
 type Doc = Record<string, unknown> & { _id: unknown };
 const nowIso = (): string => new Date().toISOString();
 
+// School.subscription.paymentMethod uses PAYMENT_METHODS ('bank_transfer'),
+// but the frontend billing page's vocabulary is 'bank' — translate here
+// rather than making the frontend aware of the backend's enum spelling.
+function toPaymentMode(method: unknown): string {
+  return method === 'bank_transfer' ? 'bank' : String(method ?? 'cash');
+}
+
 function subscriptionView(d: Doc): Record<string, unknown> {
   return {
     id: String(d._id),
@@ -100,6 +107,106 @@ export const superAdminService = {
       },
     );
     return subscriptionView(doc.toObject() as Doc);
+  },
+
+  async getBillingOverview() {
+    const [schools, subs] = await Promise.all([
+      SchoolModel.find({}).lean(),
+      SubscriptionModel.find({}).sort({ createdAt: -1 }).lean(),
+    ]);
+    const schoolNameById = new Map(schools.map((s) => [String(s._id), s.name]));
+    const now = Date.now();
+
+    const subscriptions = schools.map((s) => {
+      const sub = (s.subscription as Record<string, unknown> | undefined) ?? {};
+      const endDate = String(sub.endDate ?? s.expiryDate ?? '');
+      const startDate = String(sub.startDate ?? '');
+      const daysRemaining = endDate
+        ? Math.round((new Date(endDate).getTime() - now) / (24 * 60 * 60 * 1000))
+        : 0;
+      const graceDays = Number(sub.graceDays ?? 0);
+      const status =
+        s.status === 'trial'
+          ? 'trial'
+          : daysRemaining > 0
+            ? 'active'
+            : daysRemaining >= -graceDays
+              ? 'grace'
+              : 'expired';
+      return {
+        id: String(s._id),
+        schoolId: String(s._id),
+        schoolName: s.name,
+        planType: s.plan,
+        startDate,
+        endDate,
+        daysRemaining,
+        amount: Number(sub.amountPaid ?? 0),
+        paymentStatus: Number(sub.amountPaid ?? 0) > 0 ? 'paid' : 'pending',
+        lastPaymentDate: sub.createdAt ? new Date(String(sub.createdAt)).toISOString() : undefined,
+        status,
+      };
+    });
+
+    const payments = subs.map((d) => ({
+      id: String(d._id),
+      schoolId: String(d.schoolId),
+      schoolName: schoolNameById.get(String(d.schoolId)) ?? 'Unknown school',
+      planType: d.plan,
+      amount: Number(d.amountPaid ?? 0),
+      date: d.createdAt ? new Date(String(d.createdAt)).toISOString() : now.toString(),
+      paymentMode: toPaymentMode(d.paymentMethod),
+      reference: d.paymentReference ?? '',
+      processedBy: d.addedBy ?? 'Super Admin',
+      status: d.status === 'pending' ? 'pending' : 'paid',
+      invoiceNumber: `INV-${String(d._id).slice(-6).toUpperCase()}`,
+    }));
+
+    return { subscriptions, payments };
+  },
+
+  async renewBilling(payload: {
+    schoolId: string;
+    plan: string;
+    amount: number;
+    paymentMethod: string;
+    paymentReference: string;
+  }) {
+    const durationDays: Record<string, number> = {
+      monthly: 30,
+      quarterly: 91,
+      half_yearly: 182,
+      yearly: 365,
+    };
+    const startDate = nowIso().slice(0, 10);
+    const endDate = new Date(Date.now() + (durationDays[payload.plan] ?? 365) * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    return this.renewSubscription(payload.schoolId, {
+      plan: payload.plan,
+      startDate,
+      endDate,
+      graceDays: 7,
+      paymentMethod: payload.paymentMethod,
+      paymentReference: payload.paymentReference,
+      amountPaid: payload.amount,
+    });
+  },
+
+  async addGracePeriod(schoolId: string, days: number) {
+    const school = await requireSchool(schoolId);
+    const sub = (school.subscription as Record<string, unknown> | undefined) ?? {};
+    const currentEnd = String(sub.endDate ?? school.expiryDate ?? nowIso().slice(0, 10));
+    const newGraceDays = Number(sub.graceDays ?? 0) + days;
+    await SchoolModel.updateOne(
+      { _id: schoolId },
+      {
+        $set: {
+          'subscription.graceDays': newGraceDays,
+        },
+      },
+    );
+    return { schoolId, graceDays: newGraceDays, currentEnd };
   },
 
   async getSchoolUsers(schoolId: string) {
