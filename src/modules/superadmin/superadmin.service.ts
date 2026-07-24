@@ -44,6 +44,43 @@ function auditView(d: Doc): Record<string, unknown> {
   };
 }
 
+// AuditLog.action is stored as free-text ("Collected fee", "Logged in") —
+// the full audit-logs page instead wants one of a fixed set of categories
+// for its filter dropdown/badge translations. Bucket by keyword; anything
+// unrecognized falls back to 'updated' rather than showing an untranslated
+// raw string.
+function normalizeAuditAction(text: unknown): string {
+  const s = String(text ?? '').toLowerCase();
+  if (s.includes('login') || s.includes('logged in') || s.includes('log in')) return 'login';
+  if (s.includes('logout') || s.includes('logged out') || s.includes('log out')) return 'logout';
+  if (s.includes('fee') || s.includes('payment') || s.includes('collected')) return 'payment';
+  if (s.includes('readjust')) return 'readjustment';
+  if (s.includes('delete')) return 'deleted';
+  if (s.includes('export')) return 'exported';
+  if (s.includes('approve')) return 'approved';
+  if (s.includes('reject')) return 'rejected';
+  if (s.includes('override')) return 'override';
+  if (s.includes('created') || s.includes('added')) return 'created';
+  return 'updated';
+}
+
+function fullAuditView(d: Doc, schoolName: string): Record<string, unknown> {
+  return {
+    id: String(d._id),
+    timestamp: d.timestamp ?? '',
+    userName: d.actorName ?? '',
+    role: d.actorRole ?? '',
+    schoolName,
+    module: d.module ?? '',
+    action: normalizeAuditAction(d.action),
+    recordAffected: '',
+    description: d.action ?? '',
+    oldValue: null,
+    newValue: null,
+    ipAddress: d.ipAddress ?? '',
+  };
+}
+
 async function requireSchool(schoolId: string): Promise<Doc> {
   const school = await SchoolModel.findById(schoolId).lean();
   if (!school) throw ApiError.notFound('School not found');
@@ -267,6 +304,33 @@ export const superAdminService = {
 
   async getAuditLogs(limit: number) {
     return (await AuditLogModel.find({}).sort({ timestamp: -1 }).limit(limit).lean()).map(auditView);
+  },
+
+  async getFullAuditLogs(filter: { module?: string; action?: string; search?: string }) {
+    const query: Record<string, unknown> = {};
+    if (filter.module && filter.module !== 'all') query.module = filter.module;
+    if (filter.search?.trim()) {
+      const rx = new RegExp(filter.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ actorName: rx }, { action: rx }];
+    }
+
+    const docs = await AuditLogModel.find(query).sort({ timestamp: -1 }).limit(500).lean();
+    const schoolIds = [...new Set(docs.map((d) => String(d.schoolId)))];
+    const schools = await SchoolModel.find({ _id: { $in: schoolIds } }).select('name').lean();
+    const schoolNameById = new Map(schools.map((s) => [String(s._id), s.name]));
+
+    let rows = docs.map((d) => fullAuditView(d as Doc, schoolNameById.get(String(d.schoolId)) ?? 'Unknown school'));
+    if (filter.action && filter.action !== 'all') {
+      rows = rows.filter((r) => r.action === filter.action);
+    }
+    return rows;
+  },
+
+  async getAuditLogDetail(id: string) {
+    const doc = await AuditLogModel.findById(id).lean();
+    if (!doc) return null;
+    const school = doc.schoolId ? await SchoolModel.findById(doc.schoolId).select('name').lean() : null;
+    return fullAuditView(doc as Doc, school?.name ?? 'Unknown school');
   },
 
   async ticketStats() {

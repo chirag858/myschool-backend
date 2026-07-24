@@ -29,4 +29,6 @@ superAdminExtrasRoutes.get('/schools/:id/activity', validate({ params: idParam }
 superAdminExtrasRoutes.post('/schools/:id/impersonate', validate({ params: idParam }), asyncHandler(superAdminController.impersonate));
 
 superAdminExtrasRoutes.get('/audit-logs', asyncHandler(superAdminController.getAuditLogs));
+superAdminExtrasRoutes.get('/audit-logs-full', asyncHandler(superAdminController.getFullAuditLogs));
+superAdminExtrasRoutes.get('/audit-logs-full/:id', validate({ params: idParam }), asyncHandler(superAdminController.getAuditLogDetail));
 superAdminExtrasRoutes.get('/tickets/stats', asyncHandler(superAdminController.ticketStats));

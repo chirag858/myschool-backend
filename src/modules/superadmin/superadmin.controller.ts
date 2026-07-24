@@ -47,4 +47,11 @@ export const superAdminController = {
   async ticketStats(_req: Request, res: Response) {
     send(res, await superAdminService.ticketStats());
   },
+  async getFullAuditLogs(req: Request, res: Response) {
+    const { module, action, search } = req.query as { module?: string; action?: string; search?: string };
+    send(res, await superAdminService.getFullAuditLogs({ module, action, search }));
+  },
+  async getAuditLogDetail(req: Request, res: Response) {
+    send(res, await superAdminService.getAuditLogDetail(id(req)));
+  },
 };
