@@ -132,6 +132,49 @@ export const studentsService = {
     }));
   },
 
+  async create(schoolId: string, payload: Record<string, unknown>) {
+    const className = String(payload.className);
+    const section = String(payload.section);
+    const admissionNumber = String(payload.admissionNumber);
+
+    const exists = await StudentModel.exists({ schoolId, admissionNumber });
+    if (exists) throw ApiError.conflict('Admission number already in use');
+
+    const doc = await StudentModel.create({
+      schoolId,
+      admissionNumber,
+      rollNumber: payload.rollNumber ?? '',
+      name: payload.name,
+      fatherName: (payload.parents as Record<string, unknown> | undefined)?.fatherName ?? '',
+      className,
+      section,
+      classKey: `${className}-${section}`,
+      admissionType: payload.admissionType,
+      admittedAt: new Date(String(payload.admittedAt)),
+      sessionLabel: payload.sessionLabel ?? '',
+      dateOfBirth: payload.dateOfBirth ?? '',
+      gender: payload.gender,
+      bloodGroup: payload.bloodGroup,
+      religion: payload.religion,
+      caste: payload.caste,
+      category: payload.category,
+      nationality: payload.nationality,
+      aadhaar: payload.aadhaar,
+      parents: payload.parents ?? {},
+      currentAddress: payload.currentAddress ?? {},
+      permanentAddress: payload.permanentAddress ?? {},
+      permanentSameAsCurrent: payload.permanentSameAsCurrent ?? true,
+      previousAcademic: payload.previousAcademic,
+      documents: (payload.documents as unknown[] | undefined)?.map((d) => ({
+        ...(d as Record<string, unknown>),
+        uploadedAt: new Date().toISOString(),
+        verification: 'pending',
+      })) ?? [],
+    });
+
+    return { id: String(doc._id), admissionNumber: doc.admissionNumber };
+  },
+
   async profile(schoolId: string, id: string) {
     const d = await StudentModel.findOne({ _id: id, schoolId }).lean();
     if (!d) throw ApiError.notFound('Student not found');

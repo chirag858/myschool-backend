@@ -17,6 +17,9 @@ export const studentsController = {
   async classSummary(req: Request, res: Response) {
     send(res, await studentsService.classSummary(schoolId(req)));
   },
+  async create(req: Request, res: Response) {
+    created(res, await studentsService.create(schoolId(req), req.body));
+  },
   async profile(req: Request, res: Response) {
     send(res, await studentsService.profile(schoolId(req), String(req.params.id)));
   },

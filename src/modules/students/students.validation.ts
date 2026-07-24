@@ -1,8 +1,73 @@
 import { z } from 'zod';
 
-import { PROFILE_STATUSES } from './student.model';
+import { ADMISSION_TYPES, GENDERS, PROFILE_STATUSES } from './student.model';
 
 export const idParam = z.object({ id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id') });
+
+const addressInput = z.object({
+  line1: z.string().min(1),
+  line2: z.string().optional(),
+  city: z.string().min(1),
+  state: z.string().min(1),
+  pinCode: z.string().min(1),
+});
+
+const parentsInput = z.object({
+  fatherName: z.string().optional(),
+  fatherMobile: z.string().optional(),
+  fatherOccupation: z.string().optional(),
+  fatherEmail: z.string().optional(),
+  fatherAadhaar: z.string().optional(),
+  motherName: z.string().optional(),
+  motherMobile: z.string().optional(),
+  motherOccupation: z.string().optional(),
+  motherEmail: z.string().optional(),
+  guardianName: z.string().optional(),
+  guardianMobile: z.string().optional(),
+  guardianRelation: z.string().optional(),
+});
+
+export const createStudentSchema = z.object({
+  admissionNumber: z.string().min(1),
+  admissionType: z.enum(ADMISSION_TYPES),
+  admittedAt: z.string().min(1),
+  sessionLabel: z.string().optional(),
+  className: z.string().min(1),
+  section: z.string().min(1),
+  rollNumber: z.string().optional(),
+  name: z.string().min(1),
+  dateOfBirth: z.string().optional(),
+  gender: z.enum(GENDERS),
+  bloodGroup: z.string().optional(),
+  religion: z.string().optional(),
+  caste: z.string().optional(),
+  category: z.string().optional(),
+  nationality: z.string().optional(),
+  aadhaar: z.string().optional(),
+  parents: parentsInput.optional(),
+  currentAddress: addressInput.optional(),
+  permanentAddress: addressInput.optional(),
+  permanentSameAsCurrent: z.boolean().optional(),
+  previousAcademic: z
+    .object({
+      schoolName: z.string().optional(),
+      className: z.string().optional(),
+      board: z.string().optional(),
+      tcNumber: z.string().optional(),
+      reasonForLeaving: z.string().optional(),
+    })
+    .optional(),
+  documents: z
+    .array(
+      z.object({
+        type: z.string(),
+        customLabel: z.string().optional(),
+        fileName: z.string(),
+        sizeBytes: z.number().nonnegative(),
+      }),
+    )
+    .optional(),
+});
 
 export const studentsQuerySchema = z.object({
   page: z.coerce.number().optional(),
