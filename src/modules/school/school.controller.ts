@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { send } from '../../lib/api-response';
+import { noContent, send } from '../../lib/api-response';
 import { MODULE_KEYS } from './school.model';
 import { schoolService } from './school.service';
 
@@ -26,8 +26,17 @@ export const schoolController = {
   },
 
   async setStatus(req: Request, res: Response) {
-    const { status } = req.body as { status: string };
-    send(res, await schoolService.setSchoolStatus(String(req.params.id), status));
+    const { status, reason } = req.body as { status: string; reason?: string };
+    send(res, await schoolService.setSchoolStatus(String(req.params.id), status, reason));
+  },
+
+  async activationOverview(_req: Request, res: Response) {
+    send(res, await schoolService.getActivationOverview());
+  },
+
+  async remove(req: Request, res: Response) {
+    await schoolService.deleteSchool(String(req.params.id));
+    noContent(res);
   },
 
   async getModules(req: Request, res: Response) {

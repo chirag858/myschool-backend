@@ -25,6 +25,7 @@ schoolRoutes.get(
   asyncHandler(schoolController.list),
 );
 schoolRoutes.get('/schools/list', asyncHandler(schoolController.listLite));
+schoolRoutes.get('/schools/activation-overview', asyncHandler(schoolController.activationOverview));
 schoolRoutes.post(
   '/schools',
   validate({ body: createSchoolSchema }),
@@ -39,6 +40,11 @@ schoolRoutes.patch(
   '/schools/:id/status',
   validate({ params: idParamSchema, body: statusSchema }),
   asyncHandler(schoolController.setStatus),
+);
+schoolRoutes.delete(
+  '/schools/:id',
+  validate({ params: idParamSchema }),
+  asyncHandler(schoolController.remove),
 );
 schoolRoutes.get(
   '/schools/:id/modules',

@@ -4,6 +4,8 @@ import bcrypt from 'bcryptjs';
 import type { FilterQuery } from 'mongoose';
 
 import { ApiError } from '../../lib/api-error';
+import { ClassModel } from '../academics/academics.models';
+import { FeeStructureModel } from '../fee/fee.models';
 import { StudentModel } from '../students/student.model';
 import { UserModel } from '../user/user.model';
 import { MODULE_KEYS, SchoolModel, type SchoolDoc } from './school.model';
@@ -205,11 +207,64 @@ export const schoolService = {
     };
   },
 
-  async setSchoolStatus(id: string, status: string) {
+  async setSchoolStatus(id: string, status: string, reason?: string) {
     const active = status === 'active' || status === 'trial';
-    const doc = await SchoolModel.findByIdAndUpdate(id, { status, active }, { new: true });
+    const update: Record<string, unknown> = { status, active };
+    if (reason !== undefined) update.suspensionReason = reason;
+    const doc = await SchoolModel.findByIdAndUpdate(id, update, { new: true });
     if (!doc) throw ApiError.notFound('School not found');
     return { success: true };
+  },
+
+  async getActivationOverview() {
+    const [pendingDocs, blockedDocs] = await Promise.all([
+      SchoolModel.find({ status: 'pending_setup' }).sort({ createdAt: -1 }).lean(),
+      SchoolModel.find({ status: { $in: ['suspended', 'expired'] } })
+        .sort({ updatedAt: -1 })
+        .lean(),
+    ]);
+
+    const pending = await Promise.all(
+      pendingDocs.map(async (d) => {
+        const [feeStructure, classesAdded, adminUser] = await Promise.all([
+          FeeStructureModel.exists({ schoolId: d._id }),
+          ClassModel.exists({ schoolId: d._id }),
+          UserModel.exists({ schoolId: d._id, role: { $in: ['school_admin', 'principal'] } }),
+        ]);
+        return {
+          id: String(d._id),
+          name: d.name,
+          createdAt: new Date((d as { createdAt?: Date }).createdAt ?? Date.now()).toISOString(),
+          createdBy: 'Super Admin',
+          status: d.status,
+          setup: {
+            feeStructure: Boolean(feeStructure),
+            classesAdded: Boolean(classesAdded),
+            adminUser: Boolean(adminUser),
+            logoUploaded: Boolean(d.branding?.logoUrl ?? d.logoUrl),
+          },
+        };
+      }),
+    );
+
+    const suspendedOrExpired = blockedDocs.map((d) => ({
+      id: String(d._id),
+      name: d.name,
+      createdAt: new Date((d as { createdAt?: Date }).createdAt ?? Date.now()).toISOString(),
+      createdBy: 'Super Admin',
+      status: d.status,
+      setup: { feeStructure: true, classesAdded: true, adminUser: true, logoUploaded: true },
+      lastActiveAt: d.lastLoginAt ? new Date(d.lastLoginAt).toISOString() : undefined,
+      reason: d.suspensionReason || undefined,
+    }));
+
+    return { pending, suspendedOrExpired };
+  },
+
+  async deleteSchool(id: string) {
+    const doc = await SchoolModel.findByIdAndDelete(id);
+    if (!doc) throw ApiError.notFound('School not found');
+    await UserModel.deleteMany({ schoolId: id });
   },
 
   async getSchoolModules(id: string): Promise<Record<string, boolean>> {
