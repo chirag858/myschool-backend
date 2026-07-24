@@ -18,4 +18,7 @@ export const platformController = {
     const { enabled } = req.body as { enabled: boolean };
     send(res, await platformService.setAppEnabled(String(req.params.key), enabled));
   },
+  async roleUserCounts(_req: Request, res: Response) {
+    send(res, await platformService.getRoleUserCounts());
+  },
 };

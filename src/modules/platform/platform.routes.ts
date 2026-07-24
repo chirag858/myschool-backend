@@ -22,3 +22,4 @@ platformRoutes.patch(
   validate({ params: keyParam, body: toggleSchema }),
   asyncHandler(platformController.setApp),
 );
+platformRoutes.get('/roles/user-counts', asyncHandler(platformController.roleUserCounts));

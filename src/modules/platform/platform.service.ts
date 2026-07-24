@@ -1,5 +1,6 @@
 import { ApiError } from '../../lib/api-error';
 import { SchoolModel } from '../school/school.model';
+import { UserModel } from '../user/user.model';
 import { PlatformConfigModel } from './platform.model';
 
 interface ModuleCatalogEntry {
@@ -102,5 +103,12 @@ export const platformService = {
       { upsert: true },
     );
     return { key, enabled };
+  },
+
+  async getRoleUserCounts(): Promise<Record<string, number>> {
+    const rows = await UserModel.aggregate<{ _id: string; count: number }>([
+      { $group: { _id: '$role', count: { $sum: 1 } } },
+    ]);
+    return Object.fromEntries(rows.map((r) => [r._id, r.count]));
   },
 };
