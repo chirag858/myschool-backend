@@ -4,7 +4,14 @@ import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { platformController } from './platform.controller';
-import { keyParam, toggleSchema } from './platform.validation';
+import {
+  emailTemplatePatch,
+  keyParam,
+  settingsBody,
+  settingsTypeParam,
+  templateIdParam,
+  toggleSchema,
+} from './platform.validation';
 
 /** Mounted at /api/super-admin. Platform-wide module/app toggles. */
 export const platformRoutes = Router();
@@ -23,3 +30,29 @@ platformRoutes.patch(
   asyncHandler(platformController.setApp),
 );
 platformRoutes.get('/roles/user-counts', asyncHandler(platformController.roleUserCounts));
+
+platformRoutes.get(
+  '/settings/:type',
+  validate({ params: settingsTypeParam }),
+  asyncHandler(platformController.getSetting),
+);
+platformRoutes.put(
+  '/settings/:type',
+  validate({ params: settingsTypeParam, body: settingsBody }),
+  asyncHandler(platformController.saveSetting),
+);
+
+platformRoutes.get('/settings/whatsapp/templates', asyncHandler(platformController.getWhatsAppTemplates));
+platformRoutes.post('/settings/whatsapp/templates', asyncHandler(platformController.addWhatsAppTemplate));
+platformRoutes.delete(
+  '/settings/whatsapp/templates/:id',
+  validate({ params: templateIdParam }),
+  asyncHandler(platformController.deleteWhatsAppTemplate),
+);
+
+platformRoutes.get('/settings/email/templates', asyncHandler(platformController.getEmailTemplates));
+platformRoutes.patch(
+  '/settings/email/templates/:id',
+  validate({ params: templateIdParam, body: emailTemplatePatch }),
+  asyncHandler(platformController.saveEmailTemplate),
+);

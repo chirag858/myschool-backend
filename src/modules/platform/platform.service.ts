@@ -46,8 +46,26 @@ async function getConfig() {
     {},
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
-  return doc as { moduleOverrides: Record<string, boolean>; appOverrides: Record<string, boolean> };
+  return doc as unknown as {
+    moduleOverrides: Record<string, boolean>;
+    appOverrides: Record<string, boolean>;
+    systemConfig: Record<string, unknown> | null;
+    smsConfig: Record<string, unknown> | null;
+    whatsappConfig: Record<string, unknown> | null;
+    whatsappTemplates: Record<string, unknown>[];
+    paymentConfig: Record<string, unknown> | null;
+    emailConfig: Record<string, unknown> | null;
+    emailTemplates: Record<string, unknown>[];
+  };
 }
+
+const SETTINGS_FIELD: Record<string, string> = {
+  system: 'systemConfig',
+  sms: 'smsConfig',
+  whatsapp: 'whatsappConfig',
+  payment: 'paymentConfig',
+  email: 'emailConfig',
+};
 
 export const platformService = {
   async getModulesOverview() {
@@ -103,6 +121,61 @@ export const platformService = {
       { upsert: true },
     );
     return { key, enabled };
+  },
+
+  // ─── Integration/system settings — persisted as-authored, no server-side
+  // defaults duplicated here; the frontend supplies its own fallback when
+  // this returns null (nothing saved yet). ───
+  async getSetting(type: string): Promise<Record<string, unknown> | null> {
+    const field = SETTINGS_FIELD[type];
+    if (!field) throw ApiError.notFound('Unknown settings type');
+    const config = await getConfig();
+    return (config as unknown as Record<string, unknown>)[field] as Record<string, unknown> | null;
+  },
+
+  async saveSetting(type: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const field = SETTINGS_FIELD[type];
+    if (!field) throw ApiError.notFound('Unknown settings type');
+    const config = await getConfig();
+    const current = (config as unknown as Record<string, unknown>)[field] as Record<string, unknown> | null;
+    const merged = { ...(current ?? {}), ...patch };
+    await PlatformConfigModel.updateOne({}, { $set: { [field]: merged } }, { upsert: true });
+    return merged;
+  },
+
+  async getWhatsAppTemplates() {
+    const config = await getConfig();
+    return config.whatsappTemplates ?? [];
+  },
+
+  async addWhatsAppTemplate(template: Record<string, unknown>) {
+    await PlatformConfigModel.updateOne(
+      {},
+      { $push: { whatsappTemplates: { $each: [template], $position: 0 } } },
+      { upsert: true },
+    );
+    return template;
+  },
+
+  async deleteWhatsAppTemplate(id: string) {
+    await PlatformConfigModel.updateOne({}, { $pull: { whatsappTemplates: { id } } });
+  },
+
+  async getEmailTemplates() {
+    const config = await getConfig();
+    return config.emailTemplates ?? [];
+  },
+
+  async saveEmailTemplate(id: string, patch: { subject: string; body: string }) {
+    const config = await getConfig();
+    let updated: Record<string, unknown> | null = null;
+    const next = (config.emailTemplates ?? []).map((t) => {
+      if (t.id !== id) return t;
+      updated = { ...t, ...patch, lastEdited: new Date().toISOString() };
+      return updated;
+    });
+    await PlatformConfigModel.updateOne({}, { $set: { emailTemplates: next } });
+    return updated;
   },
 
   async getRoleUserCounts(): Promise<Record<string, number>> {
