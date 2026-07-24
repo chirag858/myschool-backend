@@ -84,9 +84,9 @@ const DEMO_USERS: SeedUser[] = [
 
 /** A few extra tenants so the super-admin list/dashboard have data. */
 const EXTRA_SCHOOLS = [
-  { code: 'GVN', name: 'Green Valley National School', city: 'Ludhiana', state: 'Punjab', status: 'active', plan: 'yearly', amountPaid: 44999 },
-  { code: 'SPS', name: 'Sunrise Public School', city: 'Amritsar', state: 'Punjab', status: 'trial', plan: 'monthly', amountPaid: 0 },
-  { code: 'HRT', name: 'Heritage International', city: 'Chandigarh', state: 'Chandigarh', status: 'expired', plan: 'quarterly', amountPaid: 13499 },
+  { code: 'GVN', name: 'Green Valley National School', city: 'Ludhiana', state: 'Punjab', status: 'active', plan: 'yearly', amountPaid: 44999, startDate: '2026-01-01', expiryDate: '2026-12-31' },
+  { code: 'SPS', name: 'Sunrise Public School', city: 'Amritsar', state: 'Punjab', status: 'trial', plan: 'monthly', amountPaid: 0, startDate: '2026-07-01', expiryDate: '2026-12-31' },
+  { code: 'HRT', name: 'Heritage International', city: 'Chandigarh', state: 'Chandigarh', status: 'expired', plan: 'quarterly', amountPaid: 13499, startDate: '2026-04-01', expiryDate: '2026-06-30' },
 ] as const;
 
 export async function seedDemo() {
@@ -117,16 +117,17 @@ export async function seedDemo() {
         state: s.state,
         status: s.status,
         plan: s.plan,
-        expiryDate: '2026-12-31',
+        expiryDate: s.expiryDate,
         active: s.status === 'active' || s.status === 'trial',
         subscription: {
           id: `sub_${s.code.toLowerCase()}`,
           plan: s.plan,
-          endDate: '2026-12-31',
+          startDate: s.startDate,
+          endDate: s.expiryDate,
           amountPaid: s.amountPaid,
-          status: 'active',
+          status: s.status === 'expired' ? 'expired' : 'active',
           addedBy: 'Seed',
-          createdAt: '2026-01-01T00:00:00.000Z',
+          createdAt: `${s.startDate}T00:00:00.000Z`,
         },
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
