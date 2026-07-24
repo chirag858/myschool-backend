@@ -16,9 +16,14 @@ import {
   updateHeadSchema,
 } from './fee.validation';
 
-/** Mounted at /api/fee. Accountant + school_admin. */
+/**
+ * Mounted at /api/fee. Accountant + school_admin, plus super_admin for the
+ * cross-tenant Utilize (receipt correction) tool — receipts/:id lookups fall
+ * back to an unscoped search when the caller has no schoolId (see
+ * fee.controller's tenantScope()).
+ */
 export const feeRoutes = Router();
-feeRoutes.use(authenticate, requireRole('school_admin', 'accountant'));
+feeRoutes.use(authenticate, requireRole('school_admin', 'accountant', 'super_admin'));
 
 // Fee heads
 feeRoutes.get('/heads', asyncHandler(feeController.listHeads));
