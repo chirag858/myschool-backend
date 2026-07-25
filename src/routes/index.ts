@@ -32,6 +32,7 @@ import { superAdminExtrasRoutes } from '../modules/superadmin/superadmin.routes'
 import { studentsRoutes } from '../modules/students/students.routes';
 import { supportRoutes } from '../modules/support/support.routes';
 import { reportsRoutes } from '../modules/reports/reports.routes';
+import { schoolReportsRoutes } from '../modules/reports/school-reports.routes';
 
 /** All domain routers mount here, under the server's `/api` base. */
 export const apiRouter = Router();
@@ -41,6 +42,7 @@ apiRouter.use('/super-admin', schoolRoutes);
 apiRouter.use('/super-admin', superAdminExtrasRoutes);
 apiRouter.use('/super-admin', platformRoutes);
 apiRouter.use('/super-admin/reports', reportsRoutes);
+apiRouter.use('/super-admin/school-reports', schoolReportsRoutes);
 apiRouter.use('/sessions', sessionRoutes);
 apiRouter.use('/classes', classRoutes);
 apiRouter.use('/holidays', holidayRoutes);
