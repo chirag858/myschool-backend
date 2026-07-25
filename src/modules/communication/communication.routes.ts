@@ -12,6 +12,10 @@ import {
 } from './communication.validation';
 
 const gate = [authenticate, requireRole('school_admin', 'principal', 'coordinator')];
+const notificationGate = [
+  authenticate,
+  requireRole('school_admin', 'principal', 'coordinator', 'super_admin', 'support_engineer'),
+];
 
 // ── /api/communication ──
 export const communicationRoutes = Router();
@@ -36,7 +40,7 @@ announcementRoutes.delete('/:id', validate({ params: idParam }), asyncHandler(co
 
 // ── /api/notifications ──
 export const notificationRoutes = Router();
-notificationRoutes.use(...gate);
+notificationRoutes.use(...notificationGate);
 notificationRoutes.get('/', asyncHandler(communicationController.getNotifications));
 notificationRoutes.patch('/mark-all-read', asyncHandler(communicationController.markAllRead));
 notificationRoutes.delete('/read', asyncHandler(communicationController.clearRead));

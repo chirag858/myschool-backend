@@ -34,3 +34,17 @@ export const forgotResetSchema = z.object({
   otp: z.string().length(6),
   password: z.string().min(6),
 });
+
+export const updateProfileSchema = z.object({
+  name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  mobile: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  address: z.string().optional(),
+  photoUrl: z.string().optional(),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6),
+});

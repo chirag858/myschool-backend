@@ -46,7 +46,7 @@ export const authService = {
   },
 
   /** Web staff login (username/email + password). Returns { user, tokens }. */
-  async staffLogin(username: string, password: string): Promise<AuthResult> {
+  async staffLogin(username: string, password: string, ip = ''): Promise<AuthResult> {
     const key = username.toLowerCase();
     const user = await UserModel.findOne({
       $or: [{ username: key }, { email: key }],
@@ -56,6 +56,9 @@ export const authService = {
       throw ApiError.unauthorized('Invalid credentials');
     }
     if (!user.active) throw ApiError.forbidden('Account disabled');
+    user.lastLoginAt = new Date();
+    user.lastLoginIp = ip;
+    await user.save();
     return { user: user.toJSON(), tokens: tokensFor(user) };
   },
 
@@ -115,6 +118,37 @@ export const authService = {
     const user = await UserModel.findById(userId);
     if (!user) throw ApiError.notFound('User not found');
     return user.toJSON();
+  },
+
+  async updateProfile(
+    userId: string,
+    patch: {
+      name?: string;
+      email?: string;
+      mobile?: string;
+      dateOfBirth?: string;
+      address?: string;
+      photoUrl?: string;
+    },
+  ): Promise<unknown> {
+    const user = await UserModel.findByIdAndUpdate(userId, patch, { new: true });
+    if (!user) throw ApiError.notFound('User not found');
+    return user.toJSON();
+  },
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ ok: boolean; reason?: 'wrong_current' }> {
+    const user = await UserModel.findById(userId).select('+passwordHash');
+    if (!user || !user.passwordHash) throw ApiError.notFound('User not found');
+    if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
+      return { ok: false, reason: 'wrong_current' };
+    }
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+    return { ok: true };
   },
 
   async forgotSendOtp(username: string, contact: string): Promise<{ expiresAt: number; otp?: string }> {
