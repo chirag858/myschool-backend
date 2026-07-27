@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import { classRoutes, holidayRoutes, sessionRoutes } from '../modules/academics/academics.routes';
+import { timetableRoutes } from '../modules/timetable/timetable.routes';
 import { attendanceRoutes } from '../modules/attendance/attendance.routes';
 import { authRoutes } from '../modules/auth/auth.routes';
 import { coordinatorRoutes } from '../modules/coordinator/coordinator.routes';
@@ -48,6 +49,7 @@ apiRouter.use('/classes', classRoutes);
 apiRouter.use('/holidays', holidayRoutes);
 apiRouter.use('/students', studentsRoutes);
 apiRouter.use('/attendance', attendanceRoutes);
+apiRouter.use('/timetable', timetableRoutes);
 apiRouter.use('/exams', examRoutes);
 apiRouter.use('/fee', feeRoutes);
 apiRouter.use('/fee', feeExtrasRoutes);
