@@ -35,8 +35,12 @@ import { supportRoutes } from '../modules/support/support.routes';
 import { reportsRoutes } from '../modules/reports/reports.routes';
 import { schoolReportsRoutes } from '../modules/reports/school-reports.routes';
 
+import { adminDashboardRoutes } from '../modules/admin-dashboard/admin-dashboard.routes';
+
 /** All domain routers mount here, under the server's `/api` base. */
 export const apiRouter = Router();
+
+apiRouter.use('/admin-dashboard', adminDashboardRoutes);
 
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/super-admin', schoolRoutes);
