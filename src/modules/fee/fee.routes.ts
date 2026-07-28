@@ -50,3 +50,11 @@ feeRoutes.patch('/receipts/:id/cancel', validate({ params: idParam, body: cancel
 
 // Ledger
 feeRoutes.get('/ledger', validate({ query: ledgerQuery }), asyncHandler(feeController.ledger));
+
+// Student ledger — used by the student profile fee tab.
+// Also allow 'principal' and 'coordinator' so they can view a student's fee history.
+feeRoutes.get(
+  '/student-ledger/:studentId',
+  requireRole('school_admin', 'principal', 'coordinator', 'accountant'),
+  asyncHandler(feeController.studentLedger),
+);

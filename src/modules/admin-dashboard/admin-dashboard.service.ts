@@ -4,7 +4,7 @@ import { WaiveOffModel } from '../fee/fee-adjust.models';
 import { StaffModel, StaffAttendanceModel } from '../staff/staff.models';
 import { StaffLeaveApplicationModel } from '../staff/staff-hr.models';
 import { RefundRequestModel } from '../fee/fee-refunds.models';
-import { AnnouncementModel } from '../communication/communication.models';
+import { AnnouncementModel, CircularModel } from '../communication/communication.models';
 import { attendanceService } from '../attendance/attendance.service';
 import { StudentLeaveModel } from '../coordinator/coordinator.models';
 
@@ -234,17 +234,36 @@ export const adminDashboardService = {
   },
 
   async getNotices(schoolId: string) {
-    const notices = await AnnouncementModel.find({ schoolId })
-      .sort({ pinned: -1, createdAt: -1 })
-      .limit(3)
-      .select('title audience createdAt')
-      .lean();
+    const [announcements, circulars] = await Promise.all([
+      AnnouncementModel.find({ schoolId })
+        .sort({ pinned: -1, createdAt: -1 })
+        .limit(5)
+        .select('title audience createdAt')
+        .lean(),
+      CircularModel.find({ schoolId, status: 'published' })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('title audience createdAt')
+        .lean(),
+    ]);
 
-    return notices.map(n => ({
-      id: n._id.toString(),
-      title: n.title,
-      audience: n.audience && n.audience.length > 0 ? n.audience[0] : 'all',
-      publishedAt: n.createdAt ? new Date(n.createdAt).toISOString() : new Date().toISOString(),
-    }));
+    const combined = [
+      ...announcements.map((a) => ({
+        id: a._id.toString(),
+        title: a.title,
+        audience: a.audience && a.audience.length > 0 ? a.audience[0] : 'all',
+        publishedAt: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
+      })),
+      ...circulars.map((c) => ({
+        id: c._id.toString(),
+        title: c.title,
+        audience: c.audience && c.audience.length > 0 ? c.audience[0] : 'all',
+        publishedAt: c.createdAt ? new Date(c.createdAt).toISOString() : new Date().toISOString(),
+      })),
+    ];
+
+    combined.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+    return combined.slice(0, 3);
   }
 };

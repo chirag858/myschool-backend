@@ -17,6 +17,24 @@ export const studentsController = {
   async classSummary(req: Request, res: Response) {
     send(res, await studentsService.classSummary(schoolId(req)));
   },
+  async generateAdmissionNumber(req: Request, res: Response) {
+    send(res, await studentsService.generateAdmissionNumber(schoolId(req)));
+  },
+  async checkAdmissionNumber(req: Request, res: Response) {
+    const { admissionNumber } = req.body as { admissionNumber: string };
+    send(res, await studentsService.checkAdmissionNumber(schoolId(req), admissionNumber));
+  },
+  async admissionStats(req: Request, res: Response) {
+    send(res, await studentsService.admissionStats(schoolId(req)));
+  },
+  async checkDuplicate(req: Request, res: Response) {
+    const payload = req.body as { name: string; dateOfBirth: string; fatherName?: string };
+    send(res, await studentsService.checkDuplicate(schoolId(req), payload));
+  },
+  async checkMobile(req: Request, res: Response) {
+    const { mobile } = req.body as { mobile: string };
+    send(res, await studentsService.checkMobile(schoolId(req), mobile));
+  },
   async create(req: Request, res: Response) {
     created(res, await studentsService.create(schoolId(req), req.body));
   },

@@ -32,6 +32,7 @@ import { platformRoutes } from '../modules/platform/platform.routes';
 import { superAdminExtrasRoutes } from '../modules/superadmin/superadmin.routes';
 import { studentsRoutes } from '../modules/students/students.routes';
 import { supportRoutes } from '../modules/support/support.routes';
+import { enquiryRoutes } from '../modules/enquiries/enquiry.routes';
 import { reportsRoutes } from '../modules/reports/reports.routes';
 import { schoolReportsRoutes } from '../modules/reports/school-reports.routes';
 
@@ -49,6 +50,7 @@ apiRouter.use('/super-admin', platformRoutes);
 apiRouter.use('/super-admin/reports', reportsRoutes);
 apiRouter.use('/super-admin/school-reports', schoolReportsRoutes);
 apiRouter.use('/sessions', sessionRoutes);
+apiRouter.use('/enquiries', enquiryRoutes);
 apiRouter.use('/classes', classRoutes);
 apiRouter.use('/holidays', holidayRoutes);
 apiRouter.use('/students', studentsRoutes);

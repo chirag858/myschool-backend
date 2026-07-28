@@ -77,4 +77,9 @@ export const feeController = {
   async ledger(req: Request, res: Response) {
     send(res, await feeService.ledger(schoolId(req), req.query as Record<string, string>));
   },
+
+  // student ledger (single student — used by student profile fee tab)
+  async studentLedger(req: Request, res: Response) {
+    send(res, await feeService.studentLedger(schoolId(req), p(req, 'studentId')));
+  },
 };

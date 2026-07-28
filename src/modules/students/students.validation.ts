@@ -5,11 +5,11 @@ import { ADMISSION_TYPES, GENDERS, PROFILE_STATUSES } from './student.model';
 export const idParam = z.object({ id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id') });
 
 const addressInput = z.object({
-  line1: z.string().min(1),
+  line1: z.string().optional(),
   line2: z.string().optional(),
-  city: z.string().min(1),
-  state: z.string().min(1),
-  pinCode: z.string().min(1),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  pinCode: z.string().optional(),
 });
 
 const parentsInput = z.object({

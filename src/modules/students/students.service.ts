@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 
 import { ApiError } from '../../lib/api-error';
 import { StudentModel } from './student.model';
+import { EnquiryModel } from '../enquiries/enquiry.model';
 
 type Doc = Record<string, unknown> & { _id: unknown };
 
@@ -87,22 +88,50 @@ export const studentsService = {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.max(1, Number(query.pageSize) || 10);
 
-    const filter: Record<string, unknown> = { schoolId };
-    if (query.classKey && query.classKey !== 'all') filter.classKey = query.classKey;
-    if (query.section && query.section !== 'all') filter.section = query.section;
-    if (query.admissionType && query.admissionType !== 'all') filter.admissionType = query.admissionType;
-    if (query.profileStatus && query.profileStatus !== 'all') filter.profileStatus = query.profileStatus;
-    if (query.feeStatus && query.feeStatus !== 'all') filter.feeStatus = query.feeStatus;
+    const conditions: Record<string, unknown>[] = [{ schoolId }];
+
+    if (query.classKey && query.classKey !== 'all') {
+      const classTrimmed = query.classKey.trim();
+      const rx = new RegExp(`^${escapeRegex(classTrimmed)}(-|$)`, 'i');
+      conditions.push({
+        $or: [
+          { className: new RegExp(`^${escapeRegex(classTrimmed)}$`, 'i') },
+          { classKey: rx },
+        ],
+      });
+    }
+
+    if (query.section && query.section !== 'all') {
+      conditions.push({ section: query.section });
+    }
+
+    if (query.admissionType && query.admissionType !== 'all') {
+      conditions.push({ admissionType: query.admissionType });
+    }
+
+    if (query.profileStatus && query.profileStatus !== 'all') {
+      conditions.push({ profileStatus: query.profileStatus });
+    }
+
+    if (query.feeStatus && query.feeStatus !== 'all') {
+      conditions.push({ feeStatus: query.feeStatus });
+    }
+
     if (query.search?.trim()) {
       const rx = new RegExp(escapeRegex(query.search.trim()), 'i');
-      filter.$or = [{ name: rx }, { admissionNumber: rx }, { fatherName: rx }, { mobile: rx }];
+      conditions.push({
+        $or: [{ name: rx }, { admissionNumber: rx }, { fatherName: rx }, { mobile: rx }],
+      });
     }
+
     if (query.fromDate || query.toDate) {
       const range: Record<string, Date> = {};
       if (query.fromDate) range.$gte = new Date(query.fromDate);
       if (query.toDate) range.$lte = new Date(query.toDate);
-      filter.admittedAt = range;
+      conditions.push({ admittedAt: range });
     }
+
+    const filter = conditions.length === 1 ? conditions[0] : { $and: conditions };
 
     const [docs, total] = await Promise.all([
       StudentModel.find(filter)
@@ -117,19 +146,114 @@ export const studentsService = {
   },
 
   async classSummary(schoolId: string) {
+    // Group by className + section so each class-section card is unique.
+    // classKey is always normalised as `${className}-${section}` — grouping on
+    // both fields eliminates phantom duplicates caused by stale data where
+    // bulkTransfer/bulkPromote previously wrote classKey = className only.
     const agg = await StudentModel.aggregate<{
-      _id: { classKey: string; className: string };
+      _id: { className: string; section: string };
       count: number;
     }>([
       { $match: { schoolId: new Types.ObjectId(schoolId) } },
-      { $group: { _id: { classKey: '$classKey', className: '$className' }, count: { $sum: 1 } } },
-      { $sort: { '_id.className': 1 } },
+      { $group: { _id: { className: '$className', section: '$section' }, count: { $sum: 1 } } },
+      { $sort: { '_id.className': 1, '_id.section': 1 } },
     ]);
     return agg.map((a) => ({
-      classKey: a._id.classKey,
+      classKey: `${a._id.className}-${a._id.section}`,
       className: a._id.className,
+      section: a._id.section,
       studentCount: a.count,
     }));
+  },
+
+  async generateAdmissionNumber(schoolId: string) {
+    const count = await StudentModel.countDocuments({ schoolId });
+    const year = new Date().getFullYear();
+    let attempt = count + 1;
+    let candidate = `ADM-${year}-${String(attempt).padStart(3, '0')}`;
+    while (await StudentModel.exists({ schoolId, admissionNumber: candidate })) {
+      attempt++;
+      candidate = `ADM-${year}-${String(attempt).padStart(3, '0')}`;
+    }
+    return { admissionNumber: candidate };
+  },
+
+  async checkAdmissionNumber(schoolId: string, admissionNumber: string) {
+    const exists = await StudentModel.exists({ schoolId, admissionNumber });
+    return { taken: Boolean(exists) };
+  },
+
+  async admissionStats(schoolId: string) {
+    const [total, newCount, oldCount, pendingCount] = await Promise.all([
+      StudentModel.countDocuments({ schoolId }),
+      StudentModel.countDocuments({ schoolId, admissionType: 'new' }),
+      StudentModel.countDocuments({ schoolId, admissionType: 'old' }),
+      EnquiryModel.countDocuments({
+        schoolId: new Types.ObjectId(schoolId),
+        status: { $in: ['new', 'contacted', 'follow_up'] },
+      }),
+    ]);
+    return {
+      totalThisSession: total,
+      newStudents: newCount,
+      oldStudents: oldCount,
+      pendingApplications: pendingCount,
+    };
+  },
+
+  async checkDuplicate(
+    schoolId: string,
+    payload: { name: string; dateOfBirth: string; fatherName?: string },
+  ) {
+    if (!payload.name || !payload.dateOfBirth) return null;
+
+    const filter: Record<string, unknown> = {
+      schoolId,
+      name: new RegExp(escapeRegex(payload.name.trim()), 'i'),
+    };
+
+    // Only filter by DOB if it is a non-empty value
+    if (payload.dateOfBirth) {
+      filter.dateOfBirth = payload.dateOfBirth;
+    }
+
+    const doc = await StudentModel.findOne(filter)
+      .select('_id name className section admissionNumber')
+      .lean();
+
+    if (!doc) return null;
+    return {
+      studentId: String(doc._id),
+      studentName: doc.name as string,
+      className: `${doc.className ?? ''}-${doc.section ?? ''}`,
+      admissionNumber: doc.admissionNumber as string,
+    };
+  },
+
+  async checkMobile(schoolId: string, mobile: string) {
+    if (!mobile || mobile.length < 7) return null;
+
+    // Normalise: keep last 10 digits for flexible matching
+    const digits = mobile.replace(/\D/g, '').slice(-10);
+    const rx = new RegExp(`${digits}$`);
+
+    const doc = await StudentModel.findOne({
+      schoolId,
+      $or: [
+        { 'parents.fatherMobile': { $regex: rx } },
+        { 'parents.motherMobile': { $regex: rx } },
+      ],
+    })
+      .select('_id name className section')
+      .lean();
+
+    if (!doc) return null;
+    return {
+      parentId: String(doc._id),
+      studentId: String(doc._id),
+      studentName: doc.name as string,
+      className: `${doc.className ?? ''}-${doc.section ?? ''}`,
+    };
   },
 
   async create(schoolId: string, payload: Record<string, unknown>) {
@@ -190,9 +314,10 @@ export const studentsService = {
   },
 
   async bulkTransfer(schoolId: string, studentIds: string[], toClassName: string, toSection: string) {
+    // classKey must always be `${className}-${section}` — same format as `create`.
     const res = await StudentModel.updateMany(
       { schoolId, _id: { $in: studentIds } },
-      { className: toClassName, section: toSection, classKey: toClassName },
+      { className: toClassName, section: toSection, classKey: `${toClassName}-${toSection}` },
     );
     return { affected: res.matchedCount };
   },
@@ -204,9 +329,10 @@ export const studentsService = {
     toSection: string,
     toSession: string,
   ) {
+    // classKey must always be `${className}-${section}` — same format as `create`.
     const res = await StudentModel.updateMany(
       { schoolId, classKey: fromClassKey },
-      { className: toClassName, section: toSection, classKey: toClassName, sessionLabel: toSession },
+      { className: toClassName, section: toSection, classKey: `${toClassName}-${toSection}`, sessionLabel: toSession },
     );
     return { affected: res.matchedCount };
   },

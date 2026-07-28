@@ -396,7 +396,12 @@ export const staffHrService = {
   },
 
   calculateNoticePeriod(employmentType: string) {
-    const noticeDays = employmentType === 'permanent' ? 60 : employmentType === 'probation' ? 30 : employmentType === 'contract' ? 15 : 30;
+    // 'full_time' and 'permanent' are the same concept — both get 60 days.
+    const noticeDays =
+      employmentType === 'permanent' || employmentType === 'full_time' ? 60
+      : employmentType === 'probation' ? 30
+      : employmentType === 'contract' ? 15
+      : 30; // part_time + fallback
     return { noticeDays };
   },
 };

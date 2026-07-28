@@ -25,6 +25,24 @@ import {
 export const studentsRoutes = Router();
 studentsRoutes.use(authenticate, requireRole(...ACADEMIC_ADMIN_ROLES));
 
+studentsRoutes.get('/generate-number', asyncHandler(studentsController.generateAdmissionNumber));
+studentsRoutes.post('/check-number', asyncHandler(studentsController.checkAdmissionNumber));
+// Admission helper routes: also allow receptionist (they manage the admissions page).
+studentsRoutes.get(
+  '/admission-stats',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  asyncHandler(studentsController.admissionStats),
+);
+studentsRoutes.post(
+  '/check-duplicate',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  asyncHandler(studentsController.checkDuplicate),
+);
+studentsRoutes.post(
+  '/check-mobile',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  asyncHandler(studentsController.checkMobile),
+);
 studentsRoutes.get('/', validate({ query: studentsQuerySchema }), asyncHandler(studentsController.list));
 studentsRoutes.post('/', validate({ body: createStudentSchema }), asyncHandler(studentsController.create));
 studentsRoutes.get('/class-summary', asyncHandler(studentsController.classSummary));

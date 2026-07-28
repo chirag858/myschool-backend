@@ -297,6 +297,51 @@ export const feeService = {
     };
   },
 
+  // ── Student Ledger (single student, for student profile tab) ──
+  async studentLedger(schoolId: string, studentId: string) {
+    const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
+    if (!student) throw ApiError.notFound('Student not found');
+
+    const session = await activeSession(schoolId);
+    const annual = await annualByClass(schoolId, session);
+    const totalFee = annual[student.className ?? ''] ?? 0;
+
+    // All active receipts for this student
+    const receipts = await ReceiptModel.find({
+      schoolId,
+      studentId: student._id,
+      status: 'active',
+    })
+      .sort({ paymentDate: 1 })
+      .lean();
+
+    const paid = receipts.reduce((s, r) => s + Number(r.amount ?? 0), 0);
+    const balance = Math.max(0, totalFee - paid);
+
+    // Build per-receipt ledger rows
+    const rows = receipts.map((r) => {
+      const heads = (r.feeHeads as Array<{ name: string; amount: number }> | undefined) ?? [];
+      const months = (r.monthsCovered as string[] | undefined) ?? [];
+      return {
+        month: months.join(', ') || (r.paymentDate as string ?? '').slice(0, 7),
+        feeHead: heads.map((h) => h.name).join(', ') || 'Fee',
+        amount: Number(r.amount ?? 0),
+        paid: Number(r.amount ?? 0),
+        balance: 0,
+        status: 'paid' as const,
+        receiptNumber: r.receiptNumber as string | undefined,
+      };
+    });
+
+    return {
+      totalFees: totalFee,
+      paid,
+      balance,
+      concessionApplied: 0,
+      rows,
+    };
+  },
+
   // ── Ledger ──
   async ledger(schoolId: string, query: Record<string, string>) {
     const session = await activeSession(schoolId);

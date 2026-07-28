@@ -109,10 +109,14 @@ export const staffService = {
   async createStaff(schoolId: string, payload: Record<string, unknown>) {
     const employeeId = await nextEmployeeId(schoolId);
     const basic = Number(payload.basic) || 0;
+    // Derive category from department so stats() always returns correct
+    // teachingCount / nonTeachingCount regardless of what the frontend sends.
+    const category = payload.department === 'teaching' ? 'teaching' : 'non_teaching';
     const doc = await StaffModel.create({
       schoolId,
       ...payload,
       employeeId,
+      category,
       status: 'active',
       netSalary: round(basic * 1.37),
     });
