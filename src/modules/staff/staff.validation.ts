@@ -12,12 +12,28 @@ export const staffQuery = z.object({
   search: z.string().optional(),
 });
 
+const salaryAdjustment = z.object({
+  id: z.string().optional(),
+  type: z.string(),
+  customLabel: z.string().optional(),
+  amount: z.coerce.number(),
+  taxable: z.boolean().optional(),
+  recurring: z.boolean().optional(),
+});
+
 export const createStaffSchema = z
   .object({
     name: z.string().min(1),
     mobile: z.string().optional(),
     joiningDate: z.string().optional(),
     basic: z.coerce.number().optional(),
+    allowances: z.array(salaryAdjustment).optional(),
+    deductions: z.array(salaryAdjustment).optional(),
+    paymentMode: z.enum(['cash', 'bank', 'cheque']).optional(),
+    bankAccountNumber: z.string().optional(),
+    bankName: z.string().optional(),
+    branch: z.string().optional(),
+    ifsc: z.string().optional(),
   })
   .passthrough();
 

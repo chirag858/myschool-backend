@@ -588,7 +588,7 @@ export async function seedDemo() {
     const employeeId = `EMP${String(empN).padStart(4, '0')}`;
     await StaffModel.findOneAndUpdate(
       { schoolId: school._id, employeeId },
-      { schoolId: school._id, ...s, employeeId, employmentType: 'full_time', status: 'active', netSalary: Math.round(s.basic * 1.37) },
+      { schoolId: school._id, ...s, employeeId, employmentType: 'full_time', status: 'active', netSalary: s.basic },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
     empN += 1;

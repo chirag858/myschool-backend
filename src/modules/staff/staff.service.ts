@@ -85,8 +85,10 @@ export const staffService = {
     const onLeave = await StaffAttendanceModel.countDocuments({ schoolId, date: today(), status: 'leave' });
     return {
       totalStaff: all.length,
-      teachingCount: all.filter((s) => s.category === 'teaching').length,
-      nonTeachingCount: all.filter((s) => s.category !== 'teaching').length,
+      // Derive from `department` (the field the UI edits) rather than the
+      // separately-stored `category`, which can drift out of sync with it.
+      teachingCount: all.filter((s) => s.department === 'teaching').length,
+      nonTeachingCount: all.filter((s) => s.department !== 'teaching').length,
       onLeaveToday: onLeave,
       newJoiningsThisMonth: all.filter((s) => (s.joiningDate ?? '').startsWith(month)).length,
     };
@@ -112,13 +114,26 @@ export const staffService = {
     // Derive category from department so stats() always returns correct
     // teachingCount / nonTeachingCount regardless of what the frontend sends.
     const category = payload.department === 'teaching' ? 'teaching' : 'non_teaching';
+    const { allowances, deductions, paymentMode, bankAccountNumber, bankName, branch, ifsc, ...rest } = payload as {
+      allowances?: { amount: number }[];
+      deductions?: { amount: number }[];
+      paymentMode?: string;
+      bankAccountNumber?: string;
+      bankName?: string;
+      branch?: string;
+      ifsc?: string;
+      [key: string]: unknown;
+    };
+    const allowanceTotal = (allowances ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+    const deductionTotal = (deductions ?? []).reduce((s, d) => s + (Number(d.amount) || 0), 0);
     const doc = await StaffModel.create({
       schoolId,
-      ...payload,
+      ...rest,
       employeeId,
       category,
       status: 'active',
-      netSalary: round(basic * 1.37),
+      netSalary: round(basic + allowanceTotal - deductionTotal),
+      salaryStructure: { allowances: allowances ?? [], deductions: deductions ?? [], paymentMode, bankAccountNumber, bankName, branch, ifsc },
     });
     return toRow(doc.toObject());
   },

@@ -59,7 +59,7 @@ describe('Staff/HR API', () => {
       .set(auth(admin))
       .send({ name: 'New Teacher', designation: 'teacher', department: 'teaching', mobile: '9990001234', basic: 40000, joiningDate: '2025-08-01' });
     expect(create.status).toBe(201);
-    expect(create.body).toMatchObject({ employeeId: 'EMP0005', netSalary: 54800, status: 'active' });
+    expect(create.body).toMatchObject({ employeeId: 'EMP0005', netSalary: 40000, status: 'active' });
     const id = create.body.id;
 
     const profile = await request(app).get(`/api/staff/${id}`).set(auth(admin));
@@ -67,6 +67,30 @@ describe('Staff/HR API', () => {
 
     const st = await request(app).patch(`/api/staff/${id}/status`).set(auth(admin)).send({ status: 'inactive' });
     expect(st.body.status).toBe('inactive');
+  });
+
+  it('create staff with allowances/deductions computes net salary additively', async () => {
+    const create = await request(app)
+      .post('/api/staff')
+      .set(auth(admin))
+      .send({
+        name: 'Adjusted Teacher',
+        designation: 'teacher',
+        department: 'teaching',
+        mobile: '9990001235',
+        basic: 25000,
+        joiningDate: '2025-08-01',
+        allowances: [{ type: 'hra', amount: 8000 }, { type: 'da', amount: 2500 }],
+        deductions: [{ type: 'pf', amount: 3000 }, { type: 'professional_tax', amount: 200 }],
+      });
+    expect(create.status).toBe(201);
+    expect(create.body.netSalary).toBe(32300);
+
+    const profile = await request(app).get(`/api/staff/${create.body.id}`).set(auth(admin));
+    expect(profile.body.salaryStructure).toMatchObject({
+      allowances: [{ type: 'hra', amount: 8000 }, { type: 'da', amount: 2500 }],
+      deductions: [{ type: 'pf', amount: 3000 }, { type: 'professional_tax', amount: 200 }],
+    });
   });
 
   it('staff attendance: get roster → save → lock → report', async () => {

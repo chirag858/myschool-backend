@@ -12,6 +12,7 @@ import {
 type Doc = Record<string, unknown> & { _id: unknown };
 const nowIso = (): string => new Date().toISOString();
 const LEAVE_ALLOTMENT: Record<string, number> = { casual: 12, sick: 10, earned: 15, maternity: 90, paternity: 15, other: 5 };
+const sumAmounts = (rows?: { amount: number }[]): number => (rows ?? []).reduce((s, r) => s + (Number(r.amount) || 0), 0);
 
 async function requireStaff(schoolId: string, staffId: string): Promise<Doc> {
   const s = await StaffModel.findOne({ _id: staffId, schoolId });
@@ -112,14 +113,23 @@ export const staffHrService = {
       revisedBy: 'Admin',
       reason: payload.reason,
     });
-    (staff as unknown as { basic: number; salaryRevisions: unknown[] }).basic = payload.newBasic;
+    const structure = (staff as { salaryStructure?: { allowances?: { amount: number }[]; deductions?: { amount: number }[] } }).salaryStructure;
+    const netSalary = payload.newBasic + sumAmounts(structure?.allowances) - sumAmounts(structure?.deductions);
+    (staff as unknown as { basic: number; netSalary: number; salaryRevisions: unknown[] }).basic = payload.newBasic;
+    (staff as unknown as { netSalary: number }).netSalary = Math.round(netSalary);
     (staff as unknown as { salaryRevisions: unknown[] }).salaryRevisions = revisions;
     await (staff as unknown as { save: () => Promise<unknown> }).save();
     return { ok: true as const };
   },
 
   async saveSalaryStructure(schoolId: string, staffId: string, structure: Record<string, unknown>) {
-    const r = await StaffModel.updateOne({ _id: staffId, schoolId }, { $set: { salaryStructure: structure, basic: structure.basic } });
+    const basic = Number(structure.basic) || 0;
+    const netSalary = Math.round(
+      basic +
+        sumAmounts(structure.allowances as { amount: number }[] | undefined) -
+        sumAmounts(structure.deductions as { amount: number }[] | undefined),
+    );
+    const r = await StaffModel.updateOne({ _id: staffId, schoolId }, { $set: { salaryStructure: structure, basic, netSalary } });
     if (!r.matchedCount) throw ApiError.notFound('Staff not found');
   },
 
@@ -244,9 +254,11 @@ export const staffHrService = {
     const staff = await StaffModel.find({ schoolId, status: 'active' }).lean();
     for (const s of staff) {
       const basic = Number(s.basic ?? 0);
-      const allowances = Math.round(basic * 0.3);
+      const structure = s.salaryStructure as { allowances?: { amount: number }[]; deductions?: { amount: number }[] } | undefined;
+      const hasStructure = !!(structure?.allowances?.length || structure?.deductions?.length);
+      const allowances = hasStructure ? sumAmounts(structure!.allowances) : Math.round(basic * 0.3);
       const gross = basic + allowances;
-      const otherDeductions = Math.round(basic * 0.12);
+      const otherDeductions = hasStructure ? sumAmounts(structure!.deductions) : Math.round(basic * 0.12);
       const netPayable = gross - otherDeductions;
       await PayrollSlipModel.findOneAndUpdate(
         { schoolId, staffId: String(s._id), month, year },
