@@ -10,8 +10,17 @@ export const authController = {
   },
 
   async login(req: Request, res: Response) {
-    const { username, password } = req.body as { username: string; password: string };
-    send(res, await authService.staffLogin(username, password));
+    const { username, identifier, password } = req.body as {
+      username?: string;
+      identifier?: string;
+      password: string;
+    };
+    send(res, await authService.passwordLogin((identifier ?? username) as string, password));
+  },
+
+  async parentLogin(req: Request, res: Response) {
+    const { identifier, password } = req.body as { identifier: string; password: string };
+    send(res, await authService.passwordLogin(identifier, password));
   },
 
   async detect(req: Request, res: Response) {
@@ -20,13 +29,17 @@ export const authController = {
   },
 
   async sendOtp(req: Request, res: Response) {
-    const { mobile } = req.body as { mobile: string };
-    send(res, await authService.sendLoginOtp(mobile));
+    const { identifier, mobile } = req.body as { identifier?: string; mobile?: string };
+    send(res, await authService.sendLoginOtp((identifier ?? mobile) as string));
   },
 
   async verifyOtp(req: Request, res: Response) {
-    const { mobile, otp } = req.body as { mobile: string; otp: string };
-    send(res, await authService.verifyLoginOtp(mobile, otp));
+    const { identifier, mobile, otp } = req.body as {
+      identifier?: string;
+      mobile?: string;
+      otp: string;
+    };
+    send(res, await authService.verifyLoginOtp((identifier ?? mobile) as string, otp));
   },
 
   async refresh(req: Request, res: Response) {
@@ -45,17 +58,17 @@ export const authController = {
   },
 
   async forgotSendOtp(req: Request, res: Response) {
-    const { username, contact } = req.body as { username: string; contact: string };
-    send(res, await authService.forgotSendOtp(username, contact));
+    const { contact, username } = req.body as { contact: string; username?: string };
+    send(res, await authService.forgotSendOtp(contact, username));
   },
 
   async forgotReset(req: Request, res: Response) {
-    const { username, contact, otp, password } = req.body as {
-      username: string;
+    const { contact, username, otp, password } = req.body as {
       contact: string;
+      username?: string;
       otp: string;
       password: string;
     };
-    send(res, await authService.forgotReset(username, contact, otp, password));
+    send(res, await authService.forgotReset(contact, otp, password, username));
   },
 };

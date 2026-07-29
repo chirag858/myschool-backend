@@ -26,6 +26,15 @@ import { ReadjustmentModel, WaiveOffModel } from '../modules/fee/fee-adjust.mode
 import { RefundRequestModel } from '../modules/fee/fee-refunds.models';
 import { ParentComplaintModel } from '../modules/parent/parent.models';
 import { AuditLogModel, SubscriptionModel, TicketModel } from '../modules/superadmin/superadmin.models';
+import { ApprovalModel } from '../modules/admin-app/admin-app.models';
+import { AssessmentModel, TeacherContentModel } from '../modules/teacher-app/teacher-app.models';
+import {
+  ConversationModel,
+  MessageModel,
+  OutpassModel,
+  ParentRequestModel,
+  RewardModel,
+} from '../modules/parent-app/parent-app.models';
 import {
   TeacherAssignmentModel,
   TeacherClassModel,
@@ -744,6 +753,14 @@ export async function seedDemo() {
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
 
+  // Student app: link the demo student user (mobile 9990000002) to a Class 1-A
+  // roster record — the class the demo teacher posts assignments to, so the
+  // student app has assignments/notices to show.
+  const studentAppRecord = allStudents.find((s) => s.className === 'Class 1' && s.section === 'A');
+  if (studentAppRecord) {
+    await StudentModel.updateOne({ _id: studentAppRecord._id }, { $set: { mobile: '9990000002' } });
+  }
+
   // Parent portal: link the demo parent (mobile 9990000001) to two children via
   // motherMobile (unused elsewhere, so no existing assertion collides), seed a
   // paid receipt for the first child + one open complaint.
@@ -788,6 +805,38 @@ export async function seedDemo() {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
+
+    // Parent mobile app: an outpass awaiting approval, a reward, a conversation, a request.
+    const parentUser = await UserModel.findOne({ schoolId: school._id, role: 'parent' }).lean();
+    const childId = String(kid._id);
+    await OutpassModel.findOneAndUpdate(
+      { schoolId: school._id, childId, reason: 'Doctor appointment' },
+      { schoolId: school._id, childId, reason: 'Doctor appointment', date: '2025-05-06', requestedBy: 'Reception', status: 'awaiting_parent' },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+    await RewardModel.findOneAndUpdate(
+      { schoolId: school._id, childId, title: 'Star of the week' },
+      { schoolId: school._id, childId, title: 'Star of the week', points: 30, reason: 'Excellent participation', date: '2025-05-01' },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+    if (parentUser) {
+      const pid = String(parentUser._id);
+      const conv = await ConversationModel.findOneAndUpdate(
+        { schoolId: school._id, parentUserId: pid, name: 'Class Teacher' },
+        { schoolId: school._id, parentUserId: pid, childId, name: 'Class Teacher', role: 'Teacher', lastMessage: 'Please review the homework.', lastAt: '2025-05-04T10:00:00.000Z', unread: 1 },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+      await MessageModel.findOneAndUpdate(
+        { schoolId: school._id, conversationId: String(conv._id), body: 'Please review the homework.' },
+        { schoolId: school._id, conversationId: String(conv._id), body: 'Please review the homework.', at: '2025-05-04T10:00:00.000Z', senderIsParent: false, senderName: 'Class Teacher' },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+      await ParentRequestModel.findOneAndUpdate(
+        { schoolId: school._id, childId, type: 'leave', title: 'Family function' },
+        { schoolId: school._id, childId, parentUserId: pid, type: 'leave', title: 'Family function', createdAt: '2025-05-03T09:00:00.000Z', status: 'pending', fields: [{ label: 'Dates', value: '10–11 May' }], stages: [{ label: 'Class Teacher', state: 'current' }, { label: 'Principal', state: 'pending' }], canCancel: true },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+    }
   }
 
   // Teacher portal: assign the demo teacher to two classes + seed homework,
@@ -796,8 +845,8 @@ export async function seedDemo() {
   if (teacher) {
     const tid = String(teacher._id);
     const teacherClasses = [
-      { className: 'Class 1', section: 'A', subjects: ['Mathematics', 'Science'], periodsPerWeek: 8 },
-      { className: 'Class 2', section: 'A', subjects: ['English'], periodsPerWeek: 5 },
+      { className: 'Class 1', section: 'A', subjects: ['Mathematics', 'Science'], periodsPerWeek: 8, isClassTeacher: true },
+      { className: 'Class 2', section: 'A', subjects: ['English'], periodsPerWeek: 5, isClassTeacher: false },
     ];
     for (const tc of teacherClasses) {
       await TeacherClassModel.findOneAndUpdate(
@@ -843,6 +892,40 @@ export async function seedDemo() {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
+    // Marks assessment (components) + a content item for the mobile teacher app.
+    await AssessmentModel.findOneAndUpdate(
+      { schoolId: school._id, name: 'Unit Test 1', subject: 'Mathematics' },
+      {
+        schoolId: school._id,
+        name: 'Unit Test 1',
+        classSectionId: 'Class 1-A',
+        subject: 'Mathematics',
+        workflowState: 'draft',
+        components: [
+          { key: 'theory', label: 'Theory', max: 40 },
+          { key: 'practical', label: 'Practical', max: 10 },
+        ],
+        passPercent: 33,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+    await TeacherContentModel.findOneAndUpdate(
+      { schoolId: school._id, teacherUserId: tid, title: 'Read chapter 3' },
+      {
+        schoolId: school._id,
+        teacherUserId: tid,
+        type: 'homework',
+        classSectionId: 'Class 1-A',
+        classSectionLabel: 'Class 1-A',
+        subject: 'Mathematics',
+        title: 'Read chapter 3',
+        body: 'Read and summarise chapter 3.',
+        date: '2025-05-05',
+        active: true,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
     const teacherLeaves = [
       { type: 'casual', fromDate: '2025-04-10', toDate: '2025-04-11', days: 2, reason: 'Personal work', status: 'approved', referenceNumber: 'LV-0001', decidedBy: 'Principal' },
       { type: 'sick', fromDate: '2025-05-02', toDate: '2025-05-02', days: 1, reason: 'Fever', status: 'pending', referenceNumber: 'LV-0002' },
@@ -891,6 +974,20 @@ export async function seedDemo() {
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
     }
+  }
+
+  // Admin app: a few management approvals across types + levels.
+  const approvals = [
+    { type: 'concession', title: 'Merit concession — Aarav', subtitle: 'Class 5 · ₹6,000', currentLevel: 1, maxLevel: 2, amount: 6000, fields: [{ label: 'Reason', value: 'Merit scholarship' }], trail: [{ level: 0, roleLabel: 'Accountant', actorName: 'Accountant', at: '2025-05-01T09:00:00.000Z', decision: 'submitted' }] },
+    { type: 'refund', title: 'Fee refund — Priya', subtitle: 'Class 3 · ₹1,200', currentLevel: 2, maxLevel: 2, amount: 1200, fields: [{ label: 'Mode', value: 'Bank' }], trail: [{ level: 1, roleLabel: 'Accountant', actorName: 'Accountant', at: '2025-05-02T09:00:00.000Z', decision: 'endorsed' }] },
+    { type: 'leave', title: 'Staff leave — Teacher', subtitle: '2 days · casual', currentLevel: 1, maxLevel: 1, fields: [{ label: 'Dates', value: '10–11 Apr' }], trail: [] },
+  ];
+  for (const a of approvals) {
+    await ApprovalModel.findOneAndUpdate(
+      { schoolId: school._id, type: a.type, title: a.title },
+      { schoolId: school._id, status: 'pending', createdAt: '2025-05-02T09:00:00.000Z', ...a },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
   }
 
   // Super-admin platform data: subscription history, audit logs, support tickets.

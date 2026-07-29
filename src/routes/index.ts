@@ -21,14 +21,19 @@ import { hostelRoutes } from '../modules/hostel/hostel.routes';
 import { inventoryRoutes } from '../modules/inventory/inventory.routes';
 import { libraryRoutes } from '../modules/library/library.routes';
 import { parentRoutes } from '../modules/parent/parent.routes';
+import { parentAppRoutes } from '../modules/parent-app/parent-app.routes';
 import { receptionRoutes } from '../modules/reception/reception.routes';
 import { staffRoutes } from '../modules/staff/staff.routes';
 import { payrollRoutes, staffHrRoutes } from '../modules/staff/staff-hr.routes';
 import { homeworkRoutes, teacherRoutes } from '../modules/teacher/teacher.routes';
+import { teacherAppRoutes } from '../modules/teacher-app/teacher-app.routes';
 import { transportRoutes } from '../modules/transport/transport.routes';
+import { driverAppRoutes } from '../modules/driver-app/driver-app.routes';
 import { schoolRoutes } from '../modules/school/school.routes';
 import { superAdminExtrasRoutes } from '../modules/superadmin/superadmin.routes';
 import { studentsRoutes } from '../modules/students/students.routes';
+import { studentAppRoutes } from '../modules/student-app/student-app.routes';
+import { adminAppRoutes } from '../modules/admin-app/admin-app.routes';
 
 /** All domain routers mount here, under the server's `/api` base. */
 export const apiRouter = Router();
@@ -40,6 +45,8 @@ apiRouter.use('/sessions', sessionRoutes);
 apiRouter.use('/classes', classRoutes);
 apiRouter.use('/holidays', holidayRoutes);
 apiRouter.use('/students', studentsRoutes);
+apiRouter.use('/student', studentAppRoutes);
+apiRouter.use('/admin', adminAppRoutes);
 apiRouter.use('/attendance', attendanceRoutes);
 apiRouter.use('/exams', examRoutes);
 apiRouter.use('/fee', feeRoutes);
@@ -51,6 +58,7 @@ apiRouter.use('/expenses', expensesRoutes);
 apiRouter.use('/library', libraryRoutes);
 apiRouter.use('/hostel', hostelRoutes);
 apiRouter.use('/transport', transportRoutes);
+apiRouter.use('/driver', driverAppRoutes);
 apiRouter.use('/inventory', inventoryRoutes);
 apiRouter.use('/staff', staffRoutes);
 apiRouter.use('/staff', staffHrRoutes);
@@ -59,7 +67,9 @@ apiRouter.use('/reception', receptionRoutes);
 apiRouter.use('/coordinator', coordinatorRoutes);
 apiRouter.use('/gate-manager', gateManagerRoutes);
 apiRouter.use('/parent', parentRoutes);
+apiRouter.use('/parent', parentAppRoutes); // mobile parent paths fall through the web router
 apiRouter.use('/teacher', teacherRoutes);
+apiRouter.use('/teacher', teacherAppRoutes); // mobile teacher paths fall through the web router
 apiRouter.use('/homework', homeworkRoutes);
 apiRouter.use('/communication', communicationRoutes);
 apiRouter.use('/circulars', circularRoutes);

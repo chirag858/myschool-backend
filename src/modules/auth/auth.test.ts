@@ -132,4 +132,57 @@ describe('Auth API', () => {
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
   });
+
+  // ── Mobile auth contract ──
+  it('detect returns maskedContact + identifierType for a mobile', async () => {
+    const res = await request(app).post('/api/auth/detect').send({ identifier: '9990000001' });
+    expect(res.body).toMatchObject({
+      method: 'otp',
+      passwordFallback: true,
+      identifierType: 'mobile',
+      maskedContact: expect.stringContaining('0001'),
+    });
+  });
+
+  it('otp/request + otp/resend (identifier) return an OtpDispatch shape', async () => {
+    const req1 = await request(app).post('/api/auth/otp/request').send({ identifier: '9990000001' });
+    expect(req1.status).toBe(200);
+    expect(req1.body).toMatchObject({
+      expiresAt: expect.any(Number),
+      cooldownSeconds: expect.any(Number),
+      maskedContact: expect.stringContaining('0001'),
+    });
+    const otp = req1.body.otp as string;
+    const resend = await request(app).post('/api/auth/otp/resend').send({ identifier: '9990000001' });
+    expect(resend.status).toBe(200);
+    // verify with identifier (mobile field alias)
+    const verify = await request(app).post('/api/auth/otp/verify').send({ identifier: '9990000001', otp: resend.body.otp ?? otp });
+    expect(verify.status).toBe(200);
+    expect(verify.body.tokens.accessToken).toBeTruthy();
+  });
+
+  it('parent-login: password by mobile identifier → { user, tokens }', async () => {
+    const res = await request(app)
+      .post('/api/auth/parent-login')
+      .send({ identifier: '9990000001', password: 'demo1234', device: { deviceId: 'x', platform: 'ios', osVersion: '17', appVersion: '1' } });
+    expect(res.status).toBe(200);
+    expect(res.body.user.role).toBe('parent');
+    expect(res.body.tokens.accessToken).toBeTruthy();
+  });
+
+  it('login accepts `identifier` (mobile-app field) as well as `username`', async () => {
+    const res = await request(app).post('/api/auth/login').send({ identifier: 'schooladmin', password: 'demo1234', captcha: 'x' });
+    expect(res.status).toBe(200);
+    expect(res.body.user.role).toBe('school_admin');
+  });
+
+  it('forgot-password works with contact only (no username)', async () => {
+    const sendRes = await request(app).post('/api/auth/forgot-password/send-otp').send({ contact: '9990000001' });
+    expect(sendRes.status).toBe(200);
+    expect(sendRes.body.otp).toBeTruthy();
+    const reset = await request(app)
+      .post('/api/auth/forgot-password/reset')
+      .send({ contact: '9990000001', otp: sendRes.body.otp, password: 'newpass123' });
+    expect(reset.body).toMatchObject({ success: true });
+  });
 });

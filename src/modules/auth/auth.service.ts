@@ -33,6 +33,14 @@ function generateOtp(): string {
   return String(randomInt(100000, 1000000));
 }
 
+/** "9990000001" → "•••••• 0001" for OTP destination display. */
+function maskContact(contact: string): string {
+  const tail = contact.slice(-4);
+  return `•••••• ${tail}`;
+}
+
+const RESEND_COOLDOWN = 60;
+
 export const authService = {
   getConfig() {
     return {
@@ -45,11 +53,15 @@ export const authService = {
     };
   },
 
-  /** Web staff login (username/email + password). Returns { user, tokens }. */
-  async staffLogin(username: string, password: string): Promise<AuthResult> {
-    const key = username.toLowerCase();
+  /**
+   * Password login by identifier — resolves username, email, OR mobile. Serves
+   * both web staff login (`username`) and mobile (`identifier`, incl. a parent
+   * password fallback by mobile). Returns { user, tokens }.
+   */
+  async passwordLogin(identifier: string, password: string): Promise<AuthResult> {
+    const key = identifier.toLowerCase();
     const user = await UserModel.findOne({
-      $or: [{ username: key }, { email: key }],
+      $or: [{ username: key }, { email: key }, { mobile: identifier }],
     }).select('+passwordHash');
     if (!user || !user.passwordHash) throw ApiError.unauthorized('Invalid credentials');
     if (!(await bcrypt.compare(password, user.passwordHash))) {
@@ -60,16 +72,31 @@ export const authService = {
   },
 
   /** Identifier-first detection for mobile: mobile number → OTP, else password. */
-  async detect(identifier: string): Promise<{ method: 'otp' | 'password'; passwordFallback?: boolean }> {
+  async detect(identifier: string): Promise<{
+    method: 'otp' | 'password';
+    passwordFallback: boolean;
+    maskedContact?: string;
+    identifierType: 'mobile' | 'username';
+  }> {
     if (/^[6-9]\d{9}$/.test(identifier)) {
       const user = await UserModel.findOne({ mobile: identifier }).select('+passwordHash');
-      return { method: 'otp', passwordFallback: Boolean(user?.passwordHash) };
+      return {
+        method: 'otp',
+        passwordFallback: Boolean(user?.passwordHash),
+        maskedContact: maskContact(identifier),
+        identifierType: 'mobile',
+      };
     }
-    return { method: 'password' };
+    return { method: 'password', passwordFallback: false, identifierType: 'username' };
   },
 
-  /** Generate + store a login OTP for a mobile. Returns code in non-prod. */
-  async sendLoginOtp(mobile: string): Promise<{ expiresAt: number; otp?: string }> {
+  /** Generate + store a login OTP for a mobile. Returns OtpDispatch (+ code in non-prod). */
+  async sendLoginOtp(mobile: string): Promise<{
+    expiresAt: number;
+    cooldownSeconds: number;
+    maskedContact: string;
+    otp?: string;
+  }> {
     const user = await UserModel.findOne({ mobile });
     if (!user) throw ApiError.notFound('No account for this number');
     const code = generateOtp();
@@ -77,6 +104,8 @@ export const authService = {
     await OtpModel.create({ channel: mobile, purpose: 'login', code, expiresAt: expires });
     return {
       expiresAt: expires.getTime(),
+      cooldownSeconds: RESEND_COOLDOWN,
+      maskedContact: maskContact(mobile),
       ...(env.NODE_ENV !== 'production' ? { otp: code } : {}),
     };
   },
@@ -117,24 +146,39 @@ export const authService = {
     return user.toJSON();
   },
 
-  async forgotSendOtp(username: string, contact: string): Promise<{ expiresAt: number; otp?: string }> {
-    const key = username.toLowerCase();
-    const user = await UserModel.findOne({ $or: [{ username: key }, { email: key }] });
+  /** Resolve a user by an explicit username/email, else by the contact (mobile/email). */
+  async _findForForgot(contact: string, username?: string) {
+    if (username) {
+      const key = username.toLowerCase();
+      return UserModel.findOne({ $or: [{ username: key }, { email: key }] }).select('+passwordHash');
+    }
+    return UserModel.findOne({ $or: [{ mobile: contact }, { email: contact.toLowerCase() }] }).select(
+      '+passwordHash',
+    );
+  },
+
+  async forgotSendOtp(
+    contact: string,
+    username?: string,
+  ): Promise<{ expiresAt: number; cooldownSeconds: number; maskedContact: string; otp?: string }> {
+    const user = await this._findForForgot(contact, username);
     if (!user) throw ApiError.notFound('No account found');
     const code = generateOtp();
     const expires = new Date(Date.now() + OTP_TTL_MS);
     await OtpModel.create({ channel: contact, purpose: 'forgot', code, expiresAt: expires });
     return {
       expiresAt: expires.getTime(),
+      cooldownSeconds: RESEND_COOLDOWN,
+      maskedContact: maskContact(contact),
       ...(env.NODE_ENV !== 'production' ? { otp: code } : {}),
     };
   },
 
   async forgotReset(
-    username: string,
     contact: string,
     otp: string,
     password: string,
+    username?: string,
   ): Promise<{ success: true }> {
     const record = await OtpModel.findOne({
       channel: contact,
@@ -144,10 +188,7 @@ export const authService = {
     if (!record || record.code !== otp) throw ApiError.unauthorized('Invalid OTP');
     if (record.expiresAt.getTime() < Date.now()) throw ApiError.unauthorized('OTP expired');
 
-    const key = username.toLowerCase();
-    const user = await UserModel.findOne({ $or: [{ username: key }, { email: key }] }).select(
-      '+passwordHash',
-    );
+    const user = await this._findForForgot(contact, username);
     if (!user) throw ApiError.notFound('No account found');
 
     user.passwordHash = await bcrypt.hash(password, 10);
