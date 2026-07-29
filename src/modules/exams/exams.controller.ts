@@ -10,6 +10,7 @@ function schoolId(req: Request): string {
   return id;
 }
 const p = (req: Request, key: string): string => String(req.params[key]);
+const actor = (req: Request): string => String(req.user?.role ?? 'System');
 
 export const examController = {
   async list(req: Request, res: Response) {
@@ -43,11 +44,11 @@ export const examController = {
   },
   async saveDraft(req: Request, res: Response) {
     const { classKey, subjectId, rows } = req.body;
-    send(res, await examService.saveMarks(schoolId(req), p(req, 'id'), classKey, subjectId, rows, false));
+    send(res, await examService.saveMarks(schoolId(req), p(req, 'id'), classKey, subjectId, rows, false, actor(req)));
   },
   async submit(req: Request, res: Response) {
     const { classKey, subjectId, rows } = req.body;
-    send(res, await examService.saveMarks(schoolId(req), p(req, 'id'), classKey, subjectId, rows, true));
+    send(res, await examService.saveMarks(schoolId(req), p(req, 'id'), classKey, subjectId, rows, true, actor(req)));
   },
 
   async calculate(req: Request, res: Response) {

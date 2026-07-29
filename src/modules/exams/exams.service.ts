@@ -1,5 +1,6 @@
 import { ApiError } from '../../lib/api-error';
 import { StudentModel } from '../students/student.model';
+import { ExamAuditLogModel } from './exams-progress.models';
 import { ExamMarkModel, ExamModel } from './exams.models';
 
 type Doc = Record<string, unknown> & { _id: unknown };
@@ -213,6 +214,7 @@ export const examService = {
     subjectId: string,
     rows: Array<{ studentId: string; theory?: number | null; practical?: number | null; internal?: number | null; isAbsent?: boolean; remarks?: string }>,
     submitted: boolean,
+    performedBy = 'System',
   ) {
     await Promise.all(
       rows.map((r) =>
@@ -237,6 +239,16 @@ export const examService = {
         ),
       ),
     );
+    await ExamAuditLogModel.create({
+      schoolId,
+      examId,
+      classKey,
+      subjectId,
+      action: submitted ? 'marks_submitted' : 'marks_draft_saved',
+      performedBy,
+      details: `${rows.length} row(s) ${submitted ? 'submitted' : 'saved as draft'}`,
+      timestamp: new Date().toISOString(),
+    });
     return submitted ? { submitted: rows.length } : { saved: rows.length };
   },
 
