@@ -50,4 +50,7 @@ export const staffController = {
   async report(req: Request, res: Response) {
     send(res, await staffService.report(schoolId(req)));
   },
+  async attendanceMonth(req: Request, res: Response) {
+    send(res, await staffService.getAttendanceMonth(schoolId(req), p(req, 'id'), Number(req.query.month), Number(req.query.year)));
+  },
 };

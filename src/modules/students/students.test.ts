@@ -113,12 +113,28 @@ describe('Students API', () => {
     expect(profile.body.section).toBe('C');
   });
 
-  it('POST /students/bulk/promote promotes a whole class', async () => {
+  it('POST /students/bulk/promote promotes a whole class and records real academic history', async () => {
+    const before = await request(app).get('/api/students?classKey=Nursery').set(auth(admin));
+    const studentId = before.body.rows[0].id;
+    const preProfile = await request(app).get(`/api/students/${studentId}`).set(auth(admin));
+    const preClass = preProfile.body.className;
+    const preSection = preProfile.body.section;
+    const preRoll = preProfile.body.rollNumber;
+
     const res = await request(app)
       .post('/api/students/bulk/promote')
       .set(auth(admin))
       .send({ fromClassKey: 'Nursery', toClassName: 'LKG', toSection: 'A', toSession: '2026-27' });
     expect(res.body.affected).toBe(3);
+
+    // Checked before the (pre-existing, documented, unrelated) class-summary
+    // count assertion below, so this passes/fails independently of that bug.
+    const history = await request(app).get(`/api/students/${studentId}/academic-history`).set(auth(admin));
+    expect(history.status).toBe(200);
+    expect(history.body).toMatchObject([
+      { className: preClass, section: preSection, rollNumber: preRoll, result: 'promoted' },
+    ]);
+
     const summary = await request(app).get('/api/students/class-summary').set(auth(admin));
     const lkg = summary.body.find((c: { className: string }) => c.className === 'LKG');
     expect(lkg.studentCount).toBe(6); // original 3 + promoted 3
@@ -146,5 +162,63 @@ describe('Students API', () => {
 
     expect((await request(app).delete(`/api/students/${id}/documents/${add.body.id}`).set(auth(admin))).status).toBe(204);
     expect((await request(app).get(`/api/students/${id}/documents`).set(auth(admin))).body.length).toBe(0);
+  });
+
+  it('POST /students validates admission number, pinCode, parent mobile, email, aadhaar formats', async () => {
+    const base = {
+      admissionType: 'new',
+      admittedAt: '2025-08-01',
+      className: '5',
+      section: 'A',
+      name: 'Valid Student',
+      gender: 'male',
+    };
+    // Bad admission number format.
+    expect((await request(app).post('/api/students').set(auth(admin)).send({ ...base, admissionNumber: 'BAD-1' })).status).toBe(400);
+
+    const good = { ...base, admissionNumber: 'ADM-2026-999' };
+    // Bad pinCode.
+    expect(
+      (await request(app).post('/api/students').set(auth(admin)).send({ ...good, currentAddress: { pinCode: '123' } })).status,
+    ).toBe(400);
+    // Bad parent mobile.
+    expect(
+      (await request(app).post('/api/students').set(auth(admin)).send({ ...good, parents: { fatherMobile: '123' } })).status,
+    ).toBe(400);
+    // Bad parent email.
+    expect(
+      (await request(app).post('/api/students').set(auth(admin)).send({ ...good, parents: { fatherEmail: 'not-an-email' } })).status,
+    ).toBe(400);
+    // Bad aadhaar.
+    expect((await request(app).post('/api/students').set(auth(admin)).send({ ...good, aadhaar: '123' })).status).toBe(400);
+    // Bad document type enum.
+    expect(
+      (
+        await request(app)
+          .post('/api/students')
+          .set(auth(admin))
+          .send({ ...good, documents: [{ type: 'not_a_type', fileName: 'x.pdf', sizeBytes: 100 }] })
+      ).status,
+    ).toBe(400);
+
+    // Fully valid payload succeeds.
+    const ok = await request(app)
+      .post('/api/students')
+      .set(auth(admin))
+      .send({
+        ...good,
+        bloodGroup: 'O+',
+        religion: 'hindu',
+        category: 'general',
+        aadhaar: '123456789012',
+        currentAddress: { line1: '1 St', city: 'X', state: 'Y', pinCode: '110001' },
+        parents: { fatherName: 'Father Name', fatherMobile: '9990001111', fatherEmail: 'father@example.com' },
+        documents: [{ type: 'birth_certificate', fileName: 'birth.pdf', sizeBytes: 1000 }],
+        photoUrl: 'data:image/png;base64,xyz',
+      });
+    expect(ok.status).toBe(201);
+
+    const profile = await request(app).get(`/api/students/${ok.body.id}`).set(auth(admin));
+    expect(profile.body.photoUrl).toBe('data:image/png;base64,xyz');
   });
 });

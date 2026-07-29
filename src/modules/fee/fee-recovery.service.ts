@@ -1,4 +1,4 @@
-import { SessionModel } from '../academics/academics.models';
+import { getActiveSessionName } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { sendBulk, type MessagingChannel } from '../../lib/messaging-provider';
 import { StudentModel } from '../students/student.model';
@@ -14,11 +14,6 @@ import {
 type Doc = Record<string, unknown> & { _id: unknown };
 
 const MONTHS = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
-
-async function activeSession(schoolId: string): Promise<string> {
-  const s = await SessionModel.findOne({ schoolId, status: 'active' }).lean();
-  return s?.name ?? '2025-26';
-}
 
 async function annualByClass(schoolId: string, session: string): Promise<Record<string, number>> {
   const structure = await FeeStructureModel.find({ schoolId, session }).lean();
@@ -49,7 +44,7 @@ export function agingBucketFor(daysOverdue: number): '0_30' | '30_60' | '60_90' 
 
 /** Live-computed defaulter rows — no stored collection, always reflects current receipts. */
 async function computeDefaulters(schoolId: string): Promise<Array<ReturnType<typeof toDefaulter>>> {
-  const session = await activeSession(schoolId);
+  const session = await getActiveSessionName(schoolId);
   const annual = await annualByClass(schoolId, session);
   const students = await StudentModel.find({ schoolId }).lean();
   const receipts = await ReceiptModel.find({ schoolId, status: 'active' }).lean();

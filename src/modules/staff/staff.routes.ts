@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { staffController } from './staff.controller';
 import {
+  attendanceMonthQuery,
   createStaffSchema,
   idParam,
   lockSchema,
@@ -28,5 +29,6 @@ staffRoutes.post('/attendance/save', validate({ body: saveAttendanceSchema }), a
 staffRoutes.patch('/attendance/lock', validate({ body: lockSchema }), asyncHandler(staffController.lock));
 staffRoutes.get('/attendance/report', asyncHandler(staffController.report));
 
+staffRoutes.get('/:id/attendance-month', validate({ params: idParam, query: attendanceMonthQuery }), asyncHandler(staffController.attendanceMonth));
 staffRoutes.get('/:id', validate({ params: idParam }), asyncHandler(staffController.profile));
 staffRoutes.patch('/:id/status', validate({ params: idParam, body: statusSchema }), asyncHandler(staffController.updateStatus));

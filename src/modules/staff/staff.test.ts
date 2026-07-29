@@ -64,6 +64,9 @@ describe('Staff/HR API', () => {
 
     const profile = await request(app).get(`/api/staff/${id}`).set(auth(admin));
     expect(profile.body).toMatchObject({ id, name: 'New Teacher', qualifications: expect.any(Array), salaryStructure: expect.any(Object) });
+    // salaryStructure.basic must mirror the top-level basic even though
+    // createStaff never writes `basic` inside the nested structure itself.
+    expect(profile.body.salaryStructure).toMatchObject({ basic: 40000, allowances: [], deductions: [] });
 
     const st = await request(app).patch(`/api/staff/${id}/status`).set(auth(admin)).send({ status: 'inactive' });
     expect(st.body.status).toBe('inactive');
@@ -93,6 +96,73 @@ describe('Staff/HR API', () => {
     });
   });
 
+  it('create staff persists and reads back the full wizard payload (personal, qualification, employment extras)', async () => {
+    const create = await request(app)
+      .post('/api/staff')
+      .set(auth(admin))
+      .send({
+        name: 'Full Wizard Teacher',
+        designation: 'teacher',
+        department: 'teaching',
+        mobile: '9990009999',
+        joiningDate: '2025-08-01',
+        basic: 30000,
+        dateOfBirth: '1990-05-15',
+        gender: 'female',
+        bloodGroup: 'O+',
+        religion: 'hindu',
+        nationality: 'Indian',
+        aadhaar: '123456789012',
+        pan: 'ABCDE1234F',
+        personalEmail: 'teacher@example.com',
+        emergencyContactName: 'Emergency Contact',
+        emergencyContactMobile: '9998887777',
+        photoUrl: 'data:image/png;base64,xyz',
+        currentAddress: { line1: '123 Main St', city: 'Gurgaon', state: 'Haryana', pinCode: '122001' },
+        permanentSameAsCurrent: false,
+        permanentAddress: { line1: '456 Other St', city: 'Delhi', state: 'Delhi', pinCode: '110001' },
+        qualifications: [{ id: 'q1', degree: 'B.Ed', institution: 'Delhi University', yearOfPassing: 2012, grade: 'A' }],
+        experience: [{ id: 'e1', organization: 'Old School', designation: 'Teacher', fromDate: '2012-01-01', toDate: '2020-01-01' }],
+        teachingSubjects: ['Math'],
+        teachingClasses: ['5', '6'],
+        teachingExperienceYears: 8,
+        probationEndDate: '2026-02-01',
+        reportingToId: 'staff_999',
+        reportingToName: 'Principal Name',
+        workingHoursPerDay: 7,
+        weeklyOffDays: ['sun', 'sat'],
+      });
+    expect(create.status).toBe(201);
+
+    const profile = await request(app).get(`/api/staff/${create.body.id}`).set(auth(admin));
+    expect(profile.body).toMatchObject({
+      dateOfBirth: '1990-05-15',
+      gender: 'female',
+      bloodGroup: 'O+',
+      religion: 'hindu',
+      nationality: 'Indian',
+      aadhaar: '123456789012',
+      pan: 'ABCDE1234F',
+      personalEmail: 'teacher@example.com',
+      emergencyContactName: 'Emergency Contact',
+      emergencyContactMobile: '9998887777',
+      photoUrl: 'data:image/png;base64,xyz',
+      currentAddress: { line1: '123 Main St', city: 'Gurgaon', state: 'Haryana', pinCode: '122001' },
+      permanentSameAsCurrent: false,
+      permanentAddress: { line1: '456 Other St', city: 'Delhi', state: 'Delhi', pinCode: '110001' },
+      teachingSubjects: ['Math'],
+      teachingClasses: ['5', '6'],
+      teachingExperienceYears: 8,
+      probationEndDate: '2026-02-01',
+      reportingToId: 'staff_999',
+      reportingToName: 'Principal Name',
+      workingHoursPerDay: 7,
+      weeklyOffDays: ['sun', 'sat'],
+    });
+    expect(profile.body.qualifications).toMatchObject([{ degree: 'B.Ed', institution: 'Delhi University', yearOfPassing: 2012, grade: 'A' }]);
+    expect(profile.body.experience).toMatchObject([{ organization: 'Old School', designation: 'Teacher' }]);
+  });
+
   it('staff attendance: get roster → save → lock → report', async () => {
     const get1 = await request(app).get(`/api/staff/attendance?date=${DATE}`).set(auth(admin));
     expect(get1.body.locked).toBe(false);
@@ -120,7 +190,61 @@ describe('Staff/HR API', () => {
     expect(report.body[0]).toMatchObject({ workingDays: expect.any(Number), present: expect.any(Number), percentage: expect.any(Number) });
   });
 
+  it('attendance-month: per-staff day-by-day view for one month', async () => {
+    const roster = await request(app).get(`/api/staff/attendance?date=${DATE}`).set(auth(admin));
+    const staffId = roster.body.rows[0].id as string;
+
+    await request(app)
+      .post('/api/staff/attendance/save')
+      .set(auth(admin))
+      .send({ date: DATE, attendance: [{ staffId, status: 'absent' }] });
+    await request(app)
+      .post('/api/staff/attendance/save')
+      .set(auth(admin))
+      .send({ date: '2025-09-16', attendance: [{ staffId, status: 'present' }] });
+
+    const month = await request(app).get(`/api/staff/${staffId}/attendance-month?month=9&year=2025`).set(auth(admin));
+    expect(month.status).toBe(200);
+    expect(month.body).toMatchObject({ year: 2025, month: 9, present: 1, absent: 1, workingDays: 2 });
+    expect(month.body.days.length).toBe(30);
+    expect(month.body.days.find((d: { date: string }) => d.date === DATE)).toMatchObject({ date: DATE, status: 'absent' });
+    expect(month.body.days.find((d: { date: string }) => d.date === '2025-09-16')).toMatchObject({ status: 'present' });
+  });
+
   it('rejects invalid create payload (400)', async () => {
     expect((await request(app).post('/api/staff').set(auth(admin)).send({ mobile: '999' })).status).toBe(400);
+  });
+
+  it('rejects malformed field formats on create (aadhaar, pan, pinCode, email, mobile)', async () => {
+    const base = { name: 'Bad Data', designation: 'teacher', department: 'teaching', joiningDate: '2025-08-01' };
+    expect((await request(app).post('/api/staff').set(auth(admin)).send({ ...base, mobile: '12345' })).status).toBe(400);
+    expect((await request(app).post('/api/staff').set(auth(admin)).send({ ...base, mobile: '9990001111', aadhaar: '12345' })).status).toBe(400);
+    expect((await request(app).post('/api/staff').set(auth(admin)).send({ ...base, mobile: '9990001111', pan: 'not-a-pan' })).status).toBe(400);
+    expect((await request(app).post('/api/staff').set(auth(admin)).send({ ...base, mobile: '9990001111', personalEmail: 'not-an-email' })).status).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post('/api/staff')
+          .set(auth(admin))
+          .send({ ...base, mobile: '9990001111', currentAddress: { line1: '1 St', city: 'X', state: 'Y', pinCode: 'abc' } })
+      ).status,
+    ).toBe(400);
+
+    expect((await request(app).post('/api/staff').set(auth(admin)).send({ ...base, mobile: '9990001111', ifsc: 'not-ifsc' })).status).toBe(400);
+    expect((await request(app).post('/api/staff').set(auth(admin)).send({ ...base, mobile: '9990001111', bankAccountNumber: 'abc123' })).status).toBe(400);
+    expect((await request(app).post('/api/staff').set(auth(admin)).send({ ...base, mobile: '9990001111', designation: 'not_a_role' })).status).toBe(400);
+    expect((await request(app).post('/api/staff').set(auth(admin)).send({ ...base, mobile: '9990001111', department: 'not_a_dept' })).status).toBe(400);
+
+    const ok = await request(app).post('/api/staff').set(auth(admin)).send({
+      ...base,
+      mobile: '9990001111',
+      aadhaar: '123456789012',
+      pan: 'ABCDE1234F',
+      personalEmail: 'valid@example.com',
+      currentAddress: { line1: '1 St', city: 'X', state: 'Y', pinCode: '110001' },
+      ifsc: 'SBIN0001234',
+      bankAccountNumber: '123456789012',
+    });
+    expect(ok.status).toBe(201);
   });
 });

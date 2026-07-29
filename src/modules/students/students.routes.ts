@@ -62,6 +62,8 @@ studentsRoutes.get(
 );
 // Student exam results (Exams domain).
 studentsRoutes.get('/:id/exams', validate({ params: idParam }), asyncHandler(examController.studentExams));
+// Student academic/promotion history (embedded).
+studentsRoutes.get('/:id/academic-history', validate({ params: idParam }), asyncHandler(studentsController.academicHistory));
 // Student hostel allocation (Hostel domain).
 studentsRoutes.get('/:id/hostel', validate({ params: idParam }), asyncHandler(hostelController.studentHostel));
 // Student transport assignment (Transport domain).

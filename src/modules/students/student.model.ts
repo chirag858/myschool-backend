@@ -34,6 +34,18 @@ const prevAcademicSchema = new Schema(
   { _id: false },
 );
 
+const academicHistorySchema = new Schema(
+  {
+    sessionLabel: { type: String, default: '' },
+    className: { type: String, default: '' },
+    section: { type: String, default: '' },
+    rollNumber: { type: String, default: '' },
+    result: { type: String, enum: ['promoted', 'detained'], default: 'promoted' },
+    remarks: String,
+  },
+  { _id: false, timestamps: true },
+);
+
 const documentSchema = new Schema({
   type: { type: String, default: 'other' },
   customLabel: String,
@@ -75,6 +87,7 @@ const studentSchema = new Schema(
     permanentAddress: { type: addressSchema, default: () => ({}) },
     permanentSameAsCurrent: { type: Boolean, default: true },
     previousAcademic: { type: prevAcademicSchema, default: undefined },
+    academicHistory: { type: [academicHistorySchema], default: [] },
     documents: { type: [documentSchema], default: [] },
   },
   { timestamps: true },

@@ -41,6 +41,9 @@ export const studentsController = {
   async profile(req: Request, res: Response) {
     send(res, await studentsService.profile(schoolId(req), String(req.params.id)));
   },
+  async academicHistory(req: Request, res: Response) {
+    send(res, await studentsService.academicHistory(schoolId(req), String(req.params.id)));
+  },
   async bulkStatus(req: Request, res: Response) {
     const { studentIds, status } = req.body as { studentIds: string[]; status: string };
     send(res, await studentsService.bulkStatus(schoolId(req), studentIds, status));

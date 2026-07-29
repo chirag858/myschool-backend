@@ -12,6 +12,19 @@ function daysBetween(start: string, end: string): number {
   return Math.floor((b - a) / 86400000) + 1;
 }
 
+/**
+ * Single source of truth for "the active session name" — several modules
+ * (fee, fee-recovery) previously duplicated this exact lookup with their own
+ * hardcoded '2025-26' fallback, which could silently drift out of sync.
+ * Falls back to the same default only when no school has ever activated a
+ * session yet (via /admin/academics/sessions) — that's a real setup gap,
+ * not something this helper can fix on its own.
+ */
+export async function getActiveSessionName(schoolId: string): Promise<string> {
+  const s = await SessionModel.findOne({ schoolId, status: 'active' }).lean();
+  return s?.name ?? '2025-26';
+}
+
 function toSession(d: Doc) {
   return {
     id: String(d._id),

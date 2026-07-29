@@ -41,6 +41,7 @@ function toProfile(d: Doc) {
     currentAddress: d.currentAddress ?? {},
     permanentSameAsCurrent: d.permanentSameAsCurrent ?? true,
     permanentAddress: d.permanentAddress ?? {},
+    probationEndDate: d.probationEndDate,
     reportingToName: d.reportingToName,
     reportingToId: d.reportingToId,
     workingHoursPerDay: d.workingHoursPerDay ?? 8,
@@ -50,7 +51,18 @@ function toProfile(d: Doc) {
     teachingSubjects: d.teachingSubjects ?? [],
     teachingClasses: d.teachingClasses ?? [],
     teachingExperienceYears: d.teachingExperienceYears,
-    salaryStructure: d.salaryStructure ?? {},
+    // `basic`/`netSalary` on the staff doc are the source of truth (kept in
+    // sync by reviseSalary/saveSalaryStructure) — mirror `basic` into the
+    // nested structure too, since staff created before a structure was ever
+    // saved only have it at the top level and `salaryStructure` is otherwise
+    // `{}`, which breaks anything reading `salaryStructure.basic` directly.
+    salaryStructure: {
+      paymentMode: 'bank',
+      ...(d.salaryStructure as Record<string, unknown> | undefined ?? {}),
+      basic: d.basic ?? 0,
+      allowances: (d.salaryStructure as { allowances?: unknown[] } | undefined)?.allowances ?? [],
+      deductions: (d.salaryStructure as { deductions?: unknown[] } | undefined)?.deductions ?? [],
+    },
     salaryRevisions: d.salaryRevisions ?? [],
   };
 }
@@ -221,5 +233,46 @@ export const staffService = {
         percentage: workingDays ? round((present / workingDays) * 100) : 0,
       };
     });
+  },
+
+  async getAttendanceMonth(schoolId: string, staffId: string, month: number, year: number) {
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const start = `${year}-${pad(month)}-01`;
+    const end = `${year}-${pad(month)}-${pad(daysInMonth)}`;
+    const records = await StaffAttendanceModel.find({ schoolId, staffId, date: { $gte: start, $lte: end } }).lean();
+    const byDate = new Map(records.map((r) => [r.date, r.status]));
+
+    let present = 0;
+    let absent = 0;
+    let leave = 0;
+    let halfDay = 0;
+    let workingDays = 0;
+    const days = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = `${year}-${pad(month)}-${pad(day)}`;
+      const recorded = byDate.get(date);
+      const isWeekend = new Date(year, month - 1, day).getDay() % 6 === 0;
+      const status = recorded ?? (isWeekend ? 'weekend' : 'holiday');
+      if (recorded) {
+        workingDays += 1;
+        if (recorded === 'present') present += 1;
+        else if (recorded === 'absent') absent += 1;
+        else if (recorded === 'leave') leave += 1;
+        else if (recorded === 'half_day') halfDay += 1;
+      }
+      days.push({ date, status });
+    }
+    return {
+      year,
+      month,
+      workingDays,
+      present,
+      absent,
+      leave,
+      halfDay,
+      percentage: workingDays ? round((present / workingDays) * 100) : 0,
+      days,
+    };
   },
 };

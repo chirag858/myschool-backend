@@ -73,6 +73,11 @@ describe('Fee API', () => {
     const sid = await class1StudentId();
     const res = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
     expect(res.status).toBe(200);
+
+    // Principal uses this exact endpoint via the Fee Collection page — must not 403.
+    const principal = await token('principal');
+    expect((await request(app).get(`/api/fee/pending/${sid}`).set(auth(principal))).status).toBe(200);
+
     expect(res.body).toMatchObject({
       studentId: sid,
       studentName: expect.any(String),
@@ -143,9 +148,45 @@ describe('Fee API', () => {
     expect(row).toMatchObject({ totalFee: expect.any(Number), paid: 5000, status: expect.any(String) });
     expect(row.totalFee).toBeGreaterThan(0);
     expect(row.balance).toBe(Math.max(0, row.totalFee - 5000));
+
+    // Month filter: April (the paid month) shows a small monthly due with
+    // paid=5000; a different month shows the same monthly due but paid=0 —
+    // proving `month` actually changes the numbers, not just annual totals.
+    const april = await request(app).get('/api/fee/ledger?month=Apr').set(auth(acc));
+    const aprilRow = april.body.find((r: { studentId: string }) => r.studentId === sid);
+    expect(aprilRow.totalFee).toBe(Math.round(row.totalFee / 12));
+    expect(aprilRow.paid).toBe(5000);
+    expect(aprilRow.status).toBe(aprilRow.balance <= 0 ? 'paid' : 'partial');
+
+    const july = await request(app).get('/api/fee/ledger?month=Jul').set(auth(acc));
+    const julyRow = july.body.find((r: { studentId: string }) => r.studentId === sid);
+    expect(julyRow.totalFee).toBe(aprilRow.totalFee);
+    expect(julyRow.paid).toBe(0);
+    expect(julyRow.status).toBe('pending');
   });
 
   it('rejects invalid collect payload (400)', async () => {
     expect((await request(app).post('/api/fee/collect').set(auth(acc)).send({ studentId: 'x' })).status).toBe(400);
+  });
+
+  it('GET /fee/student-ledger/:studentId is reachable by principal and coordinator, not just admin/accountant', async () => {
+    const studentId = await class1StudentId();
+    const principal = await token('principal');
+    const coordinator = await token('coordinator');
+
+    const asPrincipal = await request(app).get(`/api/fee/student-ledger/${studentId}`).set(auth(principal));
+    expect(asPrincipal.status).toBe(200);
+    expect(asPrincipal.body).toMatchObject({ totalFees: expect.any(Number), paid: expect.any(Number), balance: expect.any(Number) });
+
+    const asCoordinator = await request(app).get(`/api/fee/student-ledger/${studentId}`).set(auth(coordinator));
+    expect(asCoordinator.status).toBe(200);
+
+    // Every /api/fee/* route now also allows principal — matches every fee
+    // screen's frontend ProtectedRoute — but roles outside admin/accountant/
+    // principal/coordinator still get 403.
+    expect((await request(app).get('/api/fee/heads').set(auth(principal))).status).toBe(200);
+    const teacher = await token('teacher');
+    expect((await request(app).get(`/api/fee/student-ledger/${studentId}`).set(auth(teacher))).status).toBe(403);
+    expect((await request(app).get('/api/fee/heads').set(auth(teacher))).status).toBe(403);
   });
 });

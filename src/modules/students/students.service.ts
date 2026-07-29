@@ -269,6 +269,7 @@ export const studentsService = {
       admissionNumber,
       rollNumber: payload.rollNumber ?? '',
       name: payload.name,
+      photoUrl: payload.photoUrl,
       fatherName: (payload.parents as Record<string, unknown> | undefined)?.fatherName ?? '',
       className,
       section,
@@ -329,12 +330,50 @@ export const studentsService = {
     toSection: string,
     toSession: string,
   ) {
+    // Capture pre-promotion state as a real history entry before overwriting.
+    const outgoing = await StudentModel.find({ schoolId, classKey: fromClassKey }).lean();
+    await Promise.all(
+      outgoing.map((s) =>
+        StudentModel.updateOne(
+          { _id: s._id },
+          {
+            $push: {
+              academicHistory: {
+                sessionLabel: s.sessionLabel ?? '',
+                className: s.className ?? '',
+                section: s.section ?? '',
+                rollNumber: s.rollNumber ?? '',
+                result: 'promoted',
+              },
+            },
+          },
+        ),
+      ),
+    );
+
     // classKey must always be `${className}-${section}` — same format as `create`.
     const res = await StudentModel.updateMany(
       { schoolId, classKey: fromClassKey },
       { className: toClassName, section: toSection, classKey: `${toClassName}-${toSection}`, sessionLabel: toSession },
     );
     return { affected: res.matchedCount };
+  },
+
+  async academicHistory(schoolId: string, id: string) {
+    const s = await StudentModel.findOne({ _id: id, schoolId }).lean();
+    if (!s) throw ApiError.notFound('Student not found');
+    const rows = (s.academicHistory as unknown as Array<Record<string, unknown>> | undefined) ?? [];
+    return rows
+      .slice()
+      .reverse()
+      .map((r) => ({
+        session: r.sessionLabel,
+        className: r.className,
+        section: r.section,
+        rollNumber: r.rollNumber,
+        result: r.result,
+        remarks: r.remarks,
+      }));
   },
 
   // ─── Documents (embedded on the student doc) ───

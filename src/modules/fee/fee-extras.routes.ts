@@ -14,9 +14,13 @@ import {
   waiveSchema,
 } from './fee-extras.validation';
 
-/** Second router mounted at /api/fee — fines + concessions. Accountant + school_admin. */
+/**
+ * Second router mounted at /api/fee — fines + concessions. Accountant +
+ * school_admin + principal (fine-management-page.tsx and concession-page.tsx
+ * both allow principal on the frontend — must match here too).
+ */
 export const feeExtrasRoutes = Router();
-feeExtrasRoutes.use(authenticate, requireRole('school_admin', 'accountant'));
+feeExtrasRoutes.use(authenticate, requireRole('school_admin', 'principal', 'accountant'));
 
 // Fine rules
 feeExtrasRoutes.get('/fine-rules', asyncHandler(feeExtrasController.listFineRules));

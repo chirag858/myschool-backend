@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { validate } from '../../middleware/validate';
 import { enquiryController } from './enquiry.controller';
+import { createEnquirySchema, idParam, updateStatusSchema } from './enquiry.validation';
 
 /**
  * Mounted at /api/enquiries.
@@ -15,7 +17,7 @@ enquiryRoutes.use(
 );
 
 enquiryRoutes.get('/', asyncHandler(enquiryController.list));
-enquiryRoutes.post('/', asyncHandler(enquiryController.create));
-enquiryRoutes.patch('/:id/status', asyncHandler(enquiryController.updateStatus));
-enquiryRoutes.patch('/:id/convert', asyncHandler(enquiryController.convert));
-enquiryRoutes.delete('/:id', asyncHandler(enquiryController.delete));
+enquiryRoutes.post('/', validate({ body: createEnquirySchema }), asyncHandler(enquiryController.create));
+enquiryRoutes.patch('/:id/status', validate({ params: idParam, body: updateStatusSchema }), asyncHandler(enquiryController.updateStatus));
+enquiryRoutes.patch('/:id/convert', validate({ params: idParam }), asyncHandler(enquiryController.convert));
+enquiryRoutes.delete('/:id', validate({ params: idParam }), asyncHandler(enquiryController.delete));

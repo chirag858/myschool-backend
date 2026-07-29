@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 
-import { SessionModel } from '../academics/academics.models';
+import { getActiveSessionName } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { StudentModel } from '../students/student.model';
 import {
@@ -12,10 +12,11 @@ import {
 
 type Doc = Record<string, unknown> & { _id: unknown };
 
-async function activeSession(schoolId: string): Promise<string> {
-  const s = await SessionModel.findOne({ schoolId, status: 'active' }).lean();
-  return s?.name ?? '2025-26';
-}
+/** UI sends the 3-letter abbreviation; receipts store the full month name in `monthsCovered`. */
+const MONTH_ABBR_TO_FULL: Record<string, string> = {
+  Apr: 'April', May: 'May', Jun: 'June', Jul: 'July', Aug: 'August', Sep: 'September',
+  Oct: 'October', Nov: 'November', Dec: 'December', Jan: 'January', Feb: 'February', Mar: 'March',
+};
 
 async function nextReceiptNumber(schoolId: string): Promise<string> {
   const count = await ReceiptModel.countDocuments({ schoolId });
@@ -95,7 +96,7 @@ export const feeService = {
 
   // ── Structure ──
   async getStructure(schoolId: string) {
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     const rows = await FeeStructureModel.find({ schoolId, session }).lean();
     const classes = (await StudentModel.distinct('className', { schoolId })) as string[];
     return {
@@ -105,7 +106,7 @@ export const feeService = {
     };
   },
   async saveStructure(schoolId: string, rows: Array<{ feeHeadId: string; frequency: string; amounts: Record<string, number> }>) {
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     await Promise.all(
       rows.map((r) =>
         FeeStructureModel.updateOne(
@@ -126,7 +127,7 @@ export const feeService = {
   async studentContext(schoolId: string, studentId: string) {
     const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
     if (!student) throw ApiError.notFound('Student not found');
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     const structure = await FeeStructureModel.find({ schoolId, session }).lean();
     const heads = await FeeHeadModel.find({ schoolId }).lean();
     const headMap = new Map(heads.map((h) => [String(h._id), h.name]));
@@ -302,7 +303,7 @@ export const feeService = {
     const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
     if (!student) throw ApiError.notFound('Student not found');
 
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     const annual = await annualByClass(schoolId, session);
     const totalFee = annual[student.className ?? ''] ?? 0;
 
@@ -344,27 +345,56 @@ export const feeService = {
 
   // ── Ledger ──
   async ledger(schoolId: string, query: Record<string, string>) {
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     const annual = await annualByClass(schoolId, session);
     const filter: Record<string, unknown> = { schoolId };
     if (query.className && query.className !== 'all') filter.className = query.className;
     if (query.section && query.section !== 'all') filter.section = query.section;
     const students = await StudentModel.find(filter).lean();
 
-    const paidAgg = await ReceiptModel.aggregate<{ _id: unknown; paid: number; last: string }>([
-      { $match: { schoolId: new Types.ObjectId(schoolId), status: 'active', studentId: { $in: students.map((s) => s._id) } } },
-      { $group: { _id: '$studentId', paid: { $sum: '$amount' }, last: { $max: '$paymentDate' } } },
-    ]);
-    const paidMap = new Map(paidAgg.map((p) => [String(p._id), p]));
+    const receipts = await ReceiptModel.find({
+      schoolId: new Types.ObjectId(schoolId),
+      status: 'active',
+      studentId: { $in: students.map((s) => s._id) },
+    }).lean();
+    const byStudent = new Map<string, typeof receipts>();
+    for (const r of receipts) {
+      const sid = String(r.studentId ?? '');
+      const list = byStudent.get(sid) ?? [];
+      list.push(r);
+      byStudent.set(sid, list);
+    }
+
+    const monthFull = MONTH_ABBR_TO_FULL[query.month ?? ''];
+    const latestOf = (list: typeof receipts): string | undefined =>
+      list.reduce<string | undefined>((latest, r) => {
+        const d = (r.paymentDate as string | undefined) ?? '';
+        return !latest || d > latest ? d : latest;
+      }, undefined);
 
     let rows = students.map((s) => {
-      const totalFee = annual[s.className ?? ''] ?? 0;
-      const p = paidMap.get(String(s._id));
-      const paid = p?.paid ?? 0;
+      const sid = String(s._id);
+      const studentReceipts = byStudent.get(sid) ?? [];
+      const annualFee = annual[s.className ?? ''] ?? 0;
+
+      let totalFee: number;
+      let paid: number;
+      let lastPaymentDate: string | undefined;
+      if (monthFull) {
+        totalFee = Math.round(annualFee / 12);
+        const monthReceipts = studentReceipts.filter((r) => ((r.monthsCovered as string[] | undefined) ?? []).includes(monthFull));
+        paid = monthReceipts.reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
+        lastPaymentDate = latestOf(monthReceipts);
+      } else {
+        totalFee = annualFee;
+        paid = studentReceipts.reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
+        lastPaymentDate = latestOf(studentReceipts);
+      }
+
       const balance = Math.max(0, totalFee - paid);
       const status = paid <= 0 ? 'pending' : balance <= 0 ? 'paid' : 'partial';
       return {
-        studentId: String(s._id),
+        studentId: sid,
         admissionNumber: s.admissionNumber,
         studentName: s.name,
         className: s.className ?? '',
@@ -378,7 +408,7 @@ export const feeService = {
         fine: 0,
         waived: 0,
         status,
-        lastPaymentDate: p?.last,
+        lastPaymentDate,
       };
     });
     if (query.status && query.status !== 'all') rows = rows.filter((r) => r.status === query.status);
