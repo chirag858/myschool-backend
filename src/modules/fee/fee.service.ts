@@ -298,6 +298,32 @@ export const feeService = {
     };
   },
 
+  /** School-wide outstanding balance: sum of (class annual fee - paid) across students with dues. */
+  async getTotalOutstanding(schoolId: string): Promise<{ amount: number; studentsCount: number }> {
+    const session = await getActiveSessionName(schoolId);
+    const annual = await annualByClass(schoolId, session);
+    const [students, receipts] = await Promise.all([
+      StudentModel.find({ schoolId, profileStatus: 'active' }, { className: 1 }).lean(),
+      ReceiptModel.find({ schoolId, status: 'active' }, { studentId: 1, amount: 1 }).lean(),
+    ]);
+    const paidByStudent = new Map<string, number>();
+    for (const r of receipts) {
+      const key = String(r.studentId);
+      paidByStudent.set(key, (paidByStudent.get(key) ?? 0) + Number(r.amount ?? 0));
+    }
+    let amount = 0;
+    let studentsCount = 0;
+    for (const s of students) {
+      const totalFee = annual[s.className ?? ''] ?? 0;
+      const due = Math.max(0, totalFee - (paidByStudent.get(String(s._id)) ?? 0));
+      if (due > 0) {
+        amount += due;
+        studentsCount += 1;
+      }
+    }
+    return { amount, studentsCount };
+  },
+
   // ── Student Ledger (single student, for student profile tab) ──
   async studentLedger(schoolId: string, studentId: string) {
     const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();

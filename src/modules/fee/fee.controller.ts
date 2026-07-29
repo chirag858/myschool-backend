@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { UserModel } from '../user/user.model';
 import { feeService } from './fee.service';
 
 function schoolId(req: Request): string {
@@ -15,7 +16,10 @@ function tenantScope(req: Request): string | undefined {
   if (req.user?.role === 'super_admin') return req.user.schoolId;
   return schoolId(req);
 }
-const actor = (req: Request): string => String(req.user?.role ?? 'accountant');
+async function actor(req: Request): Promise<string> {
+  const u = await UserModel.findById(req.user?._id).lean();
+  return (u?.name as string) ?? String(req.user?.role ?? 'accountant');
+}
 const p = (req: Request, key: string): string => String(req.params[key]);
 
 export const feeController = {
@@ -52,7 +56,7 @@ export const feeController = {
     send(res, await feeService.studentContext(schoolId(req), p(req, 'studentId')));
   },
   async collect(req: Request, res: Response) {
-    created(res, await feeService.collect(schoolId(req), req.body, actor(req)));
+    created(res, await feeService.collect(schoolId(req), req.body, await actor(req)));
   },
 
   // receipts
@@ -67,7 +71,7 @@ export const feeController = {
   },
   async cancelReceipt(req: Request, res: Response) {
     const { reason } = req.body as { reason: string };
-    send(res, await feeService.cancelReceipt(tenantScope(req), p(req, 'id'), reason, actor(req)));
+    send(res, await feeService.cancelReceipt(tenantScope(req), p(req, 'id'), reason, await actor(req)));
   },
   async stats(req: Request, res: Response) {
     send(res, await feeService.stats(schoolId(req)));

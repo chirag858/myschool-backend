@@ -5,8 +5,11 @@ import { StaffModel, StaffAttendanceModel } from '../staff/staff.models';
 import { StaffLeaveApplicationModel } from '../staff/staff-hr.models';
 import { RefundRequestModel } from '../fee/fee-refunds.models';
 import { AnnouncementModel, CircularModel } from '../communication/communication.models';
+import { AttendanceModel } from '../attendance/attendance.models';
 import { attendanceService } from '../attendance/attendance.service';
+import { feeService } from '../fee/fee.service';
 import { StudentLeaveModel } from '../coordinator/coordinator.models';
+import { EnquiryModel } from '../enquiries/enquiry.model';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const startOfMonth = () => {
@@ -26,8 +29,9 @@ export const adminDashboardService = {
     const [
       totalStudents,
       newStudentsThisMonth,
-      pendingDuesStudentsCount,
+      outstandingDues,
       attendanceStats,
+      leaveCount,
       staffCount,
       teachingStaffCount,
       staffAttendanceToday,
@@ -35,8 +39,9 @@ export const adminDashboardService = {
     ] = await Promise.all([
       StudentModel.countDocuments({ schoolId, profileStatus: 'active' }),
       StudentModel.countDocuments({ schoolId, admittedAt: { $gte: dStartMonth } }),
-      StudentModel.countDocuments({ schoolId, feeStatus: { $in: ['pending', 'partial'] } }),
+      feeService.getTotalOutstanding(schoolId),
       attendanceService.dashboard(schoolId, dToday),
+      AttendanceModel.countDocuments({ schoolId, date: dToday, status: 'leave' }),
       StaffModel.countDocuments({ schoolId }),
       StaffModel.countDocuments({ schoolId, category: 'teaching' }),
       StaffAttendanceModel.find({ schoolId, date: dToday }).lean(),
@@ -93,12 +98,9 @@ export const adminDashboardService = {
         presentPct: attendanceStats.overallPercent,
         presentCount: attendanceStats.totalPresent,
         absentCount: attendanceStats.totalAbsent,
-        leaveCount: 0, // from attendanceStats if available
+        leaveCount,
       },
-      pendingDues: {
-        amount: pendingDuesStudentsCount * 5000, // estimated lightweight amount for dashboard
-        studentsCount: pendingDuesStudentsCount,
-      },
+      pendingDues: outstandingDues,
       staff: {
         total: staffCount,
         teachingCount: teachingStaffCount,
@@ -110,6 +112,30 @@ export const adminDashboardService = {
         nonTeachingPresent,
       },
     };
+  },
+
+  async getStaffAttendanceByDept(schoolId: string) {
+    const dToday = today();
+    const [staff, attendanceToday] = await Promise.all([
+      StaffModel.find({ schoolId }, { department: 1, departmentLabel: 1 }).lean(),
+      StaffAttendanceModel.find({ schoolId, date: dToday }, { staffId: 1, status: 1 }).lean(),
+    ]);
+    const statusByStaffId = new Map(attendanceToday.map((a) => [String(a.staffId), a.status]));
+
+    const byDept = new Map<string, { total: number; present: number; absent: number; onLeave: number; notMarked: number }>();
+    for (const s of staff) {
+      const dept = (s.departmentLabel as string) || (s.department as string) || 'Other';
+      const row = byDept.get(dept) ?? { total: 0, present: 0, absent: 0, onLeave: 0, notMarked: 0 };
+      row.total += 1;
+      const status = statusByStaffId.get(String(s._id));
+      if (status === 'present' || status === 'late' || status === 'half_day') row.present += 1;
+      else if (status === 'absent') row.absent += 1;
+      else if (status === 'leave') row.onLeave += 1;
+      else row.notMarked += 1;
+      byDept.set(dept, row);
+    }
+
+    return [...byDept.entries()].map(([dept, row]) => ({ dept, ...row }));
   },
 
   async getIncomeBreakdown(schoolId: string) {
@@ -184,11 +210,12 @@ export const adminDashboardService = {
   },
 
   async getPendingApprovals(schoolId: string) {
-    const [concessions, staffLeave, refunds, studentLeave] = await Promise.all([
+    const [concessions, staffLeave, refunds, studentLeave, pendingAdmissions] = await Promise.all([
       WaiveOffModel.countDocuments({ schoolId, status: 'pending_approval' }).catch(() => 0),
       StaffLeaveApplicationModel.countDocuments({ schoolId, status: 'pending', currentLevel: 1 }).catch(() => 0),
       RefundRequestModel.countDocuments({ schoolId, status: 'pending_approval' }).catch(() => 0),
       StudentLeaveModel.countDocuments({ schoolId, status: 'pending' }).catch(() => 0),
+      EnquiryModel.countDocuments({ schoolId, status: { $in: ['new', 'contacted', 'follow_up'] } }).catch(() => 0),
     ]);
 
     // get oldest requestedAt for each
@@ -205,13 +232,14 @@ export const adminDashboardService = {
     const slOldest = await getOldest(StaffLeaveApplicationModel, { schoolId, status: 'pending', currentLevel: 1 }, 'appliedOn');
     const rOldest = await getOldest(RefundRequestModel, { schoolId, status: 'pending_approval' }, 'requestedAt');
     const stOldest = await getOldest(StudentLeaveModel, { schoolId, status: 'pending' }, 'appliedOn');
+    const aOldest = await getOldest(EnquiryModel, { schoolId, status: { $in: ['new', 'contacted', 'follow_up'] } }, 'createdAt');
 
     return [
       { id: '1', kind: 'concession', count: concessions, oldestPendingSince: cOldest },
       { id: '2', kind: 'staff_leave', count: staffLeave, oldestPendingSince: slOldest },
       { id: '3', kind: 'refund', count: refunds, oldestPendingSince: rOldest },
       { id: '4', kind: 'student_leave', count: studentLeave, oldestPendingSince: stOldest },
-      { id: '5', kind: 'admission', count: 0 },
+      { id: '5', kind: 'admission', count: pendingAdmissions, oldestPendingSince: aOldest },
     ];
   },
 

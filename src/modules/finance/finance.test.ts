@@ -82,4 +82,15 @@ describe('Finance API (bank deposits + income + vendor payments)', () => {
   it('rejects invalid income payload (400)', async () => {
     expect((await request(app).post('/api/expenses/income').set(auth(acc)).send({ amount: 100 })).status).toBe(400);
   });
+
+  it('principal (not just school_admin/accountant) can reach income + vendor-payments', async () => {
+    const principal = await token('principal');
+    const income = await request(app).get('/api/expenses/income').set(auth(principal));
+    expect(income.status).toBe(200);
+    expect(income.body.length).toBeGreaterThan(0);
+
+    const vendorPayments = await request(app).get('/api/expenses/vendor-payments').set(auth(principal));
+    expect(vendorPayments.status).toBe(200);
+    expect(vendorPayments.body.length).toBeGreaterThan(0);
+  });
 });

@@ -12,6 +12,15 @@ export const adminDashboardController = {
     }
   },
 
+  async getStaffAttendanceByDept(req: Request, res: Response) {
+    try {
+      const data = await adminDashboardService.getStaffAttendanceByDept(req.user!.schoolId!);
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get staff attendance by department' });
+    }
+  },
+
   async getIncomeBreakdown(req: Request, res: Response) {
     try {
       const data = await adminDashboardService.getIncomeBreakdown(req.user!.schoolId!);

@@ -10,6 +10,7 @@ router.use(requireRole('school_admin', 'principal', 'super_admin'));
 router.get('/stats', adminDashboardController.getStats);
 router.get('/income-breakdown', adminDashboardController.getIncomeBreakdown);
 router.get('/attendance-overview', adminDashboardController.getAttendanceOverview);
+router.get('/staff-attendance-by-dept', adminDashboardController.getStaffAttendanceByDept);
 router.get('/pending-approvals', adminDashboardController.getPendingApprovals);
 router.get('/recent-admissions', adminDashboardController.getRecentAdmissions);
 router.get('/notices', adminDashboardController.getNotices);
