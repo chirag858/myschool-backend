@@ -38,6 +38,7 @@ authRoutes.post(
 );
 authRoutes.post('/refresh', validate({ body: refreshSchema }), asyncHandler(authController.refresh));
 authRoutes.get('/profile', authenticate, asyncHandler(authController.profile));
+authRoutes.get('/context', authenticate, asyncHandler(authController.context));
 authRoutes.put(
   '/profile',
   authenticate,

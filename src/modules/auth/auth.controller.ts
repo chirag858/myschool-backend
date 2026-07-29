@@ -52,6 +52,11 @@ export const authController = {
     send(res, await authService.getProfile(req.user._id));
   },
 
+  async context(req: Request, res: Response) {
+    if (!req.user) throw ApiError.unauthorized();
+    send(res, await authService.getContext(req.user._id));
+  },
+
   async updateProfile(req: Request, res: Response) {
     if (!req.user) throw ApiError.unauthorized();
     send(res, await authService.updateProfile(req.user._id, req.body));

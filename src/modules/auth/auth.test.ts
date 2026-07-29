@@ -65,6 +65,28 @@ describe('Auth API', () => {
     expect(res.body._id).toEqual(expect.any(String));
   });
 
+  it('GET /api/auth/context requires a token (401 without one)', async () => {
+    const res = await request(app).get('/api/auth/context');
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /api/auth/context returns the tenant context (school, session, modules, availability)', async () => {
+    const token = (await login('schooladmin')).body.tokens.accessToken;
+    const res = await request(app).get('/api/auth/context').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    // real school (not a hardcoded stub)
+    expect(res.body.school).toMatchObject({ id: expect.any(String), name: expect.any(String) });
+    expect(res.body.school.id).not.toBe('');
+    // module flags cover every mobile module key
+    for (const key of ['transport', 'fee', 'homework', 'exam', 'attendance', 'complaint']) {
+      expect(typeof res.body.modules[key]).toBe('boolean');
+    }
+    // per-app availability + operational config
+    expect(res.body.availability).toMatchObject({ parent: true, teacher: true, driver: true });
+    expect(res.body.config).toMatchObject({ attendanceLockTime: expect.any(String) });
+    expect(Array.isArray(res.body.sessions)).toBe(true);
+  });
+
   it('POST /api/auth/detect: mobile → otp, username → password', async () => {
     const otp = await request(app).post('/api/auth/detect').send({ identifier: '9990000001' });
     expect(otp.body.method).toBe('otp');

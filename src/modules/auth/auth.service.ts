@@ -5,10 +5,25 @@ import bcrypt from 'bcryptjs';
 import { env } from '../../config/env';
 import { ApiError } from '../../lib/api-error';
 import { signTokens, verifyRefresh, type TokenPair } from '../../lib/jwt';
+import { SessionModel } from '../academics/academics.models';
+import { SchoolModel } from '../school/school.model';
 import { OtpModel } from './otp.model';
 import { UserModel } from '../user/user.model';
 
 const OTP_TTL_MS = 5 * 60 * 1000;
+
+/** Module keys the mobile app gates tiles on. */
+const MOBILE_MODULE_KEYS = [
+  'transport', 'fee', 'onlinePayment', 'homework', 'exam', 'result', 'library', 'timetable',
+  'attendance', 'lessonPlan', 'assignment', 'syllabus', 'classwork', 'circular', 'ptm', 'leave',
+  'outpass', 'appointment', 'activities', 'video', 'onlineClass', 'complaint', 'rewards', 'bag',
+] as const;
+/** Mobile module → the backend school-module that gates it (others default on). */
+const MODULE_ALIAS: Record<string, string> = { circular: 'communication', result: 'exam' };
+/** Only these are gated by the school's module list; the rest are always-on sub-features. */
+const GATED_MOBILE_MODULES = new Set([
+  'transport', 'fee', 'onlinePayment', 'library', 'timetable', 'exam', 'attendance', 'circular', 'result', 'gate',
+]);
 
 interface AuthResult {
   user: unknown; // toJSON() → frontend `User` shape
@@ -147,6 +162,49 @@ export const authService = {
     const user = await UserModel.findById(userId);
     if (!user) throw ApiError.notFound('User not found');
     return user.toJSON();
+  },
+
+  /**
+   * The logged-in user's tenant context for the mobile app — real school,
+   * active session, per-module flags, app availability and operational config.
+   * Replaces the mobile app's hardcoded school/session/module stubs.
+   */
+  async getContext(userId: string) {
+    const user = await UserModel.findById(userId).lean();
+    const school = user?.schoolId ? await SchoolModel.findById(user.schoolId).lean() : null;
+
+    const schoolDto = school
+      ? { id: String(school._id), name: (school.name as string) ?? 'School', shortName: (school.code as string) ?? '' }
+      : { id: '', name: 'MySmartCampus', shortName: 'MSC' };
+
+    const sessionDocs = school ? await SessionModel.find({ schoolId: school._id }).sort({ startDate: -1 }).lean() : [];
+    const sessionDto = (s: Record<string, unknown>) => {
+      const start = String(s.startDate ?? '').slice(0, 4);
+      const end = String(s.endDate ?? '').slice(0, 4);
+      return { id: String(s._id), name: (s.name as string) ?? '', financialYear: start && end ? `${start}-${end}` : (s.name as string) ?? '' };
+    };
+    const activeSession = sessionDocs.find((s) => s.status === 'active') ?? sessionDocs[0];
+
+    const schoolMods = new Set<string>((school?.modules as string[]) ?? []);
+    const modules: Record<string, boolean> = {};
+    for (const key of MOBILE_MODULE_KEYS) {
+      if (!GATED_MOBILE_MODULES.has(key)) {
+        modules[key] = true; // granular sub-feature the backend doesn't gate
+      } else {
+        const backendKey = MODULE_ALIAS[key] ?? key;
+        modules[key] = schoolMods.has(backendKey) || schoolMods.has(key);
+      }
+    }
+
+    return {
+      school: schoolDto,
+      schools: [schoolDto],
+      session: activeSession ? sessionDto(activeSession) : { id: '', name: '', financialYear: '' },
+      sessions: sessionDocs.map(sessionDto),
+      modules,
+      availability: { parent: true, student: true, teacher: true, driver: true, admin: true },
+      config: { attendanceLockTime: '11:00', locationCadenceSeconds: 5, locationDistanceFilterM: 25 },
+    };
   },
 
   async updateProfile(
