@@ -73,8 +73,12 @@ apiRouter.use('/payroll', payrollRoutes);
 apiRouter.use('/reception', receptionRoutes);
 apiRouter.use('/coordinator', coordinatorRoutes);
 apiRouter.use('/gate-manager', gateManagerRoutes);
+// Mobile parent-app FIRST: it allows parent+student and owns the /app-* + mobile
+// paths. Its router-level role gate must run before the web parent router's
+// stricter parent-only gate, else a student is 403'd before reaching /app-*.
+// Non-mobile paths (/children, /fee-summary, …) fall through to the web router.
+apiRouter.use('/parent', parentAppRoutes);
 apiRouter.use('/parent', parentRoutes);
-apiRouter.use('/parent', parentAppRoutes); // mobile parent paths fall through the web router
 apiRouter.use('/teacher', teacherRoutes);
 apiRouter.use('/teacher', teacherAppRoutes); // mobile teacher paths fall through the web router
 apiRouter.use('/homework', homeworkRoutes);

@@ -111,6 +111,20 @@ describe('Parent App API (mobile)', () => {
     expect(Array.isArray((await request(app).get(`/api/parent/online-classes?childId=${childId}`).set(auth(parent))).body)).toBe(true);
   });
 
+  it('merged app: a STUDENT drives the parent app scoped to their own record', async () => {
+    const student = await token('student');
+    const kids = await request(app).get('/api/parent/app-children').set(auth(student));
+    expect(kids.status).toBe(200);
+    expect(kids.body.length).toBe(1); // the student themselves — the single subject
+    const selfId = kids.body[0].id;
+    // and the parent screens work for that student subject
+    expect((await request(app).get(`/api/parent/dashboard-summary?childId=${selfId}`).set(auth(student))).status).toBe(200);
+    expect((await request(app).get(`/api/parent/app-attendance?childId=${selfId}`).set(auth(student))).status).toBe(200);
+    expect((await request(app).get(`/api/parent/fees/dues?childId=${selfId}`).set(auth(student))).status).toBe(200);
+    // a student still cannot read someone else's record
+    expect((await request(app).get('/api/parent/profile?childId=000000000000000000000000').set(auth(student))).status).toBe(404);
+  });
+
   it('transport + payment stubs return valid shapes', async () => {
     expect((await request(app).get(`/api/parent/transport/live?childId=${childId}`).set(auth(parent))).body).toMatchObject({ tripStatus: expect.any(String), stops: expect.any(Array) });
     const order = await request(app).post('/api/parent/fees/payment/order').set(auth(parent)).send({ childId, amount: 5000, selectedDueIds: ['tuition'] });

@@ -12,7 +12,9 @@ import { parentAppController as C } from './parent-app.controller';
  * calls these /app-* paths.
  */
 export const parentAppRoutes = Router();
-parentAppRoutes.use(authenticate, requireRole('parent'));
+// Parent + student: the mobile merges the student experience into the parent
+// app, so a student hits these paths too (scoped to their own record).
+parentAppRoutes.use(authenticate, requireRole('parent', 'student'));
 
 parentAppRoutes.get('/app-children', asyncHandler(C.children));
 parentAppRoutes.get('/dashboard-summary', asyncHandler(C.dashboardSummary));

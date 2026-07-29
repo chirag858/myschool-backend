@@ -26,11 +26,23 @@ const ATT_OUT: Record<string, string> = { present: 'present', absent: 'absent', 
 async function parentMobile(userId: string): Promise<string> {
   const u = await UserModel.findById(userId).lean();
   const m = (u?.mobile as string) ?? '';
-  if (!m) throw ApiError.forbidden('Parent has no linked mobile');
+  if (!m) throw ApiError.forbidden('No linked mobile');
   return m;
 }
+/**
+ * The subject records for this user. For a PARENT: their children (matched by
+ * guardian mobile). For a STUDENT (the merged app — a student lands in the
+ * parent UI): just their own roster record. So the same parent screens serve
+ * both roles, scoped to the right subject.
+ */
 async function childrenOf(schoolId: string, userId: string): Promise<Doc[]> {
-  const mobile = await parentMobile(userId);
+  const u = await UserModel.findById(userId).lean();
+  const mobile = (u?.mobile as string) ?? '';
+  if (!mobile) throw ApiError.forbidden('No linked mobile');
+  if (u?.role === 'student') {
+    const self = await StudentModel.findOne({ schoolId, mobile }).lean();
+    return (self ? [self] : []) as unknown as Doc[];
+  }
   return StudentModel.find({
     schoolId,
     $or: [{ 'parents.fatherMobile': mobile }, { 'parents.motherMobile': mobile }, { 'parents.guardianMobile': mobile }],
