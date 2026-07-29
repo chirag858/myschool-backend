@@ -1,9 +1,12 @@
 import { ApiError } from '../../lib/api-error';
+import { SchoolModel } from '../school/school.model';
+import { TicketModel } from '../superadmin/superadmin.models';
 import {
   AnnouncementModel,
   CircularModel,
   NotificationModel,
   NotificationPrefsModel,
+  PlatformNotificationReadModel,
 } from './communication.models';
 
 type Doc = Record<string, unknown> & { _id: unknown };
@@ -143,4 +146,90 @@ export const communicationService = {
     await NotificationPrefsModel.updateOne({ schoolId }, { $set: { schoolId, ...prefs } }, { upsert: true });
     return this.getPreferences(schoolId);
   },
+
+  // ── Platform notifications (super_admin/support_engineer) ──
+  // No cross-module event bus exists yet, so these are derived from real
+  // data (recent onboarding, expiring subscriptions, open tickets) rather
+  // than stored documents; read-state is tracked per user separately.
+  async getPlatformNotifications(userId: string) {
+    const [items, readDoc] = await Promise.all([
+      derivePlatformNotifications(),
+      PlatformNotificationReadModel.findOne({ userId }).lean(),
+    ]);
+    const readIds = new Set(readDoc?.readIds ?? []);
+    return items.map((item) => ({ ...item, read: readIds.has(item.id) }));
+  },
+  async markAllPlatformRead(userId: string) {
+    const items = await derivePlatformNotifications();
+    await PlatformNotificationReadModel.updateOne(
+      { userId },
+      { $addToSet: { readIds: { $each: items.map((item) => item.id) } } },
+      { upsert: true },
+    );
+    return { success: true };
+  },
 };
+
+const ONBOARDED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const EXPIRING_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+async function derivePlatformNotifications(): Promise<
+  Array<{ id: string; category: string; title: string; description: string; createdAt: string }>
+> {
+  const now = Date.now();
+  const items: Array<{ id: string; category: string; title: string; description: string; createdAt: string }> = [];
+
+  const recentSchools = await SchoolModel.find({
+    createdAt: { $gte: new Date(now - ONBOARDED_WINDOW_MS) },
+  })
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .lean();
+  for (const school of recentSchools) {
+    items.push({
+      id: `school:${String(school._id)}:onboarded`,
+      category: 'success',
+      title: 'New school onboarded',
+      description: `${school.name} completed signup.`,
+      createdAt: new Date((school as { createdAt?: Date }).createdAt ?? now).toISOString(),
+    });
+  }
+
+  const candidates = await SchoolModel.find({ expiryDate: { $ne: '' } })
+    .select('name expiryDate')
+    .lean();
+  const expiringSoon = candidates.filter((school) => {
+    const expiry = new Date(school.expiryDate as string).getTime();
+    return Number.isFinite(expiry) && expiry >= now && expiry - now <= EXPIRING_WINDOW_MS;
+  });
+  if (expiringSoon.length > 0) {
+    const names = expiringSoon.slice(0, 3).map((school) => school.name).join(', ');
+    items.push({
+      id: 'schools:expiring-soon',
+      category: 'warning',
+      title: 'Subscriptions expiring soon',
+      description:
+        expiringSoon.length > 3
+          ? `${names} and ${expiringSoon.length - 3} more expire within 14 days.`
+          : `${names} expire${expiringSoon.length === 1 ? 's' : ''} within 14 days.`,
+      createdAt: new Date(now).toISOString(),
+    });
+  }
+
+  const openTickets = await TicketModel.find({ status: { $in: ['open', 'in_progress'] } })
+    .sort({ createdAt: -1 })
+    .select('createdAt')
+    .lean();
+  if (openTickets.length > 0) {
+    const latest = openTickets[0] as { createdAt?: Date };
+    items.push({
+      id: 'tickets:open',
+      category: 'info',
+      title: 'Open support tickets',
+      description: `${openTickets.length} ticket${openTickets.length === 1 ? '' : 's'} awaiting response.`,
+      createdAt: new Date(latest.createdAt ?? now).toISOString(),
+    });
+  }
+
+  return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}

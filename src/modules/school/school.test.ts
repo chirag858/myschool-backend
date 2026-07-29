@@ -141,12 +141,12 @@ describe('Super-Admin Schools API', () => {
     expect(detail.body.status).toBe('suspended');
   });
 
-  it('GET/PUT /schools/:id/modules returns a full 19-key record and persists changes', async () => {
+  it('GET/PUT /schools/:id/modules returns a full 21-key record and persists changes', async () => {
     const list = await request(app).get('/api/super-admin/schools/list').set(auth(sa));
     const id = list.body[0].id;
     const get = await request(app).get(`/api/super-admin/schools/${id}/modules`).set(auth(sa));
     expect(get.status).toBe(200);
-    expect(Object.keys(get.body).length).toBe(19);
+    expect(Object.keys(get.body).length).toBe(21);
     expect(get.body).toMatchObject({ fee_mgmt: expect.any(Boolean), transport: expect.any(Boolean) });
 
     const put = await request(app)

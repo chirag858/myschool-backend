@@ -231,10 +231,12 @@ export const feeService = {
   },
 
   // ── Receipts ──
-  async listReceipts(schoolId: string, query: Record<string, string>) {
+  // schoolId is undefined only for super_admin's cross-tenant Utilize tool —
+  // every other caller is tenant-scoped via the controller's schoolId() helper.
+  async listReceipts(schoolId: string | undefined, query: Record<string, string>) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.max(1, Number(query.pageSize) || 10);
-    const filter: Record<string, unknown> = { schoolId };
+    const filter: Record<string, unknown> = schoolId ? { schoolId } : {};
     if (query.status && query.status !== 'all') filter.status = query.status;
     if (query.mode && query.mode !== 'all') filter.paymentMode = query.mode;
     if (query.className && query.className !== 'all') filter.className = query.className;
@@ -252,14 +254,14 @@ export const feeService = {
     return { rows: docs.map(toReceipt), total, page, pageSize };
   },
 
-  async getReceipt(schoolId: string, id: string) {
-    const d = await ReceiptModel.findOne({ _id: id, schoolId }).lean();
+  async getReceipt(schoolId: string | undefined, id: string) {
+    const d = await ReceiptModel.findOne(schoolId ? { _id: id, schoolId } : { _id: id }).lean();
     if (!d) throw ApiError.notFound('Receipt not found');
     return toReceipt(d);
   },
 
-  async duplicateReceipt(schoolId: string, id: string) {
-    const original = await ReceiptModel.findOne({ _id: id, schoolId });
+  async duplicateReceipt(schoolId: string | undefined, id: string) {
+    const original = await ReceiptModel.findOne(schoolId ? { _id: id, schoolId } : { _id: id });
     if (!original) throw ApiError.notFound('Receipt not found');
     original.status = 'duplicate_issued';
     await original.save();
@@ -272,9 +274,9 @@ export const feeService = {
     return toReceipt(dup.toObject());
   },
 
-  async cancelReceipt(schoolId: string, id: string, reason: string, by: string) {
+  async cancelReceipt(schoolId: string | undefined, id: string, reason: string, by: string) {
     const doc = await ReceiptModel.findOneAndUpdate(
-      { _id: id, schoolId },
+      schoolId ? { _id: id, schoolId } : { _id: id },
       { status: 'cancelled', cancelledReason: reason, cancelledBy: by, cancelledAt: new Date().toISOString() },
       { new: true },
     );

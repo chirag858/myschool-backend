@@ -14,6 +14,7 @@ import {
   bulkPromoteSchema,
   bulkStatusSchema,
   bulkTransferSchema,
+  createStudentSchema,
   docIdParam,
   documentSchema,
   idParam,
@@ -25,6 +26,7 @@ export const studentsRoutes = Router();
 studentsRoutes.use(authenticate, requireRole(...ACADEMIC_ADMIN_ROLES));
 
 studentsRoutes.get('/', validate({ query: studentsQuerySchema }), asyncHandler(studentsController.list));
+studentsRoutes.post('/', validate({ body: createStudentSchema }), asyncHandler(studentsController.create));
 studentsRoutes.get('/class-summary', asyncHandler(studentsController.classSummary));
 studentsRoutes.post('/bulk/status', validate({ body: bulkStatusSchema }), asyncHandler(studentsController.bulkStatus));
 studentsRoutes.post('/bulk/transfer', validate({ body: bulkTransferSchema }), asyncHandler(studentsController.bulkTransfer));

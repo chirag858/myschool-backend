@@ -9,6 +9,12 @@ function schoolId(req: Request): string {
   if (!id) throw ApiError.forbidden('No school scope');
   return id;
 }
+/** Like schoolId(), but super_admin gets `undefined` (cross-tenant) instead of a 403 —
+ * used by the receipt endpoints the platform-wide Utilize tool needs. */
+function tenantScope(req: Request): string | undefined {
+  if (req.user?.role === 'super_admin') return req.user.schoolId;
+  return schoolId(req);
+}
 const actor = (req: Request): string => String(req.user?.role ?? 'accountant');
 const p = (req: Request, key: string): string => String(req.params[key]);
 
@@ -51,17 +57,17 @@ export const feeController = {
 
   // receipts
   async listReceipts(req: Request, res: Response) {
-    send(res, await feeService.listReceipts(schoolId(req), req.query as Record<string, string>));
+    send(res, await feeService.listReceipts(tenantScope(req), req.query as Record<string, string>));
   },
   async getReceipt(req: Request, res: Response) {
-    send(res, await feeService.getReceipt(schoolId(req), p(req, 'id')));
+    send(res, await feeService.getReceipt(tenantScope(req), p(req, 'id')));
   },
   async duplicateReceipt(req: Request, res: Response) {
-    send(res, await feeService.duplicateReceipt(schoolId(req), p(req, 'id')));
+    send(res, await feeService.duplicateReceipt(tenantScope(req), p(req, 'id')));
   },
   async cancelReceipt(req: Request, res: Response) {
     const { reason } = req.body as { reason: string };
-    send(res, await feeService.cancelReceipt(schoolId(req), p(req, 'id'), reason, actor(req)));
+    send(res, await feeService.cancelReceipt(tenantScope(req), p(req, 'id'), reason, actor(req)));
   },
   async stats(req: Request, res: Response) {
     send(res, await feeService.stats(schoolId(req)));

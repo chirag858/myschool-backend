@@ -30,10 +30,14 @@ import { teacherAppRoutes } from '../modules/teacher-app/teacher-app.routes';
 import { transportRoutes } from '../modules/transport/transport.routes';
 import { driverAppRoutes } from '../modules/driver-app/driver-app.routes';
 import { schoolRoutes } from '../modules/school/school.routes';
+import { platformRoutes } from '../modules/platform/platform.routes';
 import { superAdminExtrasRoutes } from '../modules/superadmin/superadmin.routes';
 import { studentsRoutes } from '../modules/students/students.routes';
 import { studentAppRoutes } from '../modules/student-app/student-app.routes';
 import { adminAppRoutes } from '../modules/admin-app/admin-app.routes';
+import { supportRoutes } from '../modules/support/support.routes';
+import { reportsRoutes } from '../modules/reports/reports.routes';
+import { schoolReportsRoutes } from '../modules/reports/school-reports.routes';
 
 /** All domain routers mount here, under the server's `/api` base. */
 export const apiRouter = Router();
@@ -41,6 +45,9 @@ export const apiRouter = Router();
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/super-admin', schoolRoutes);
 apiRouter.use('/super-admin', superAdminExtrasRoutes);
+apiRouter.use('/super-admin', platformRoutes);
+apiRouter.use('/super-admin/reports', reportsRoutes);
+apiRouter.use('/super-admin/school-reports', schoolReportsRoutes);
 apiRouter.use('/sessions', sessionRoutes);
 apiRouter.use('/classes', classRoutes);
 apiRouter.use('/holidays', holidayRoutes);
@@ -75,4 +82,5 @@ apiRouter.use('/communication', communicationRoutes);
 apiRouter.use('/circulars', circularRoutes);
 apiRouter.use('/announcements', announcementRoutes);
 apiRouter.use('/notifications', notificationRoutes);
+apiRouter.use('/support', supportRoutes);
 // ↑ Remaining: fee-extras, HR extras (payroll/leave), portals + deferred.

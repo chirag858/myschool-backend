@@ -14,6 +14,11 @@ const userSchema = new Schema(
     schoolId: { type: Schema.Types.ObjectId, ref: 'School', index: true },
     schoolName: { type: String },
     active: { type: Boolean, default: true },
+    dateOfBirth: { type: String, default: '' },
+    address: { type: String, default: '' },
+    photoUrl: { type: String, default: '' },
+    lastLoginAt: { type: Date, default: null },
+    lastLoginIp: { type: String, default: '' },
   },
   { timestamps: true },
 );

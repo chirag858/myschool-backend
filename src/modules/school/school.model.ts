@@ -11,7 +11,7 @@ export const MODULE_KEYS = [
   'student_mgmt', 'fee_mgmt', 'attendance', 'timetable', 'examinations',
   'transport', 'hostel', 'library', 'inventory', 'payroll', 'communication',
   'parent_app', 'teacher_app', 'student_app', 'driver_app', 'online_payment',
-  'whatsapp', 'sms', 'email',
+  'whatsapp', 'sms', 'email', 'gate', 'analytics',
 ] as const;
 
 const brandingSchema = new Schema(
@@ -65,6 +65,7 @@ const schoolSchema = new Schema(
     logoUrl: String,
     active: { type: Boolean, default: true },
     lastLoginAt: { type: Date, default: null },
+    suspensionReason: { type: String, default: '' },
     branding: { type: brandingSchema, default: () => ({}) },
     subscription: { type: subscriptionSchema, default: null },
     /** Record<ModuleKey, boolean>; unset → treated as all-enabled. */

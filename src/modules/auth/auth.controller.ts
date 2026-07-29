@@ -15,12 +15,12 @@ export const authController = {
       identifier?: string;
       password: string;
     };
-    send(res, await authService.passwordLogin((identifier ?? username) as string, password));
+    send(res, await authService.passwordLogin((identifier ?? username) as string, password, req.ip ?? ''));
   },
 
   async parentLogin(req: Request, res: Response) {
     const { identifier, password } = req.body as { identifier: string; password: string };
-    send(res, await authService.passwordLogin(identifier, password));
+    send(res, await authService.passwordLogin(identifier, password, req.ip ?? ''));
   },
 
   async detect(req: Request, res: Response) {
@@ -50,6 +50,17 @@ export const authController = {
   async profile(req: Request, res: Response) {
     if (!req.user) throw ApiError.unauthorized();
     send(res, await authService.getProfile(req.user._id));
+  },
+
+  async updateProfile(req: Request, res: Response) {
+    if (!req.user) throw ApiError.unauthorized();
+    send(res, await authService.updateProfile(req.user._id, req.body));
+  },
+
+  async changePassword(req: Request, res: Response) {
+    if (!req.user) throw ApiError.unauthorized();
+    const { currentPassword, newPassword } = req.body as { currentPassword: string; newPassword: string };
+    send(res, await authService.changePassword(req.user._id, currentPassword, newPassword));
   },
 
   async logout(_req: Request, res: Response) {

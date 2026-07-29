@@ -18,6 +18,16 @@ export const superAdminController = {
   async renewSubscription(req: Request, res: Response) {
     created(res, await superAdminService.renewSubscription(id(req), req.body));
   },
+  async billingOverview(_req: Request, res: Response) {
+    send(res, await superAdminService.getBillingOverview());
+  },
+  async billingRenew(req: Request, res: Response) {
+    created(res, await superAdminService.renewBilling(req.body));
+  },
+  async billingGracePeriod(req: Request, res: Response) {
+    const { days } = req.body as { days: number };
+    send(res, await superAdminService.addGracePeriod(id(req), days));
+  },
   async getSchoolUsers(req: Request, res: Response) {
     send(res, await superAdminService.getSchoolUsers(id(req)));
   },
@@ -36,5 +46,12 @@ export const superAdminController = {
   },
   async ticketStats(_req: Request, res: Response) {
     send(res, await superAdminService.ticketStats());
+  },
+  async getFullAuditLogs(req: Request, res: Response) {
+    const { module, action, search } = req.query as { module?: string; action?: string; search?: string };
+    send(res, await superAdminService.getFullAuditLogs({ module, action, search }));
+  },
+  async getAuditLogDetail(req: Request, res: Response) {
+    send(res, await superAdminService.getAuditLogDetail(id(req)));
   },
 };

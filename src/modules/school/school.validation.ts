@@ -58,6 +58,7 @@ export const createSchoolSchema = z.object({
 
 export const statusSchema = z.object({
   status: z.enum(SCHOOL_STATUSES),
+  reason: z.string().optional(),
 });
 
 // Full or partial Record<ModuleKey, boolean>; unknown keys are dropped in the service.

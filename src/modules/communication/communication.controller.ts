@@ -2,7 +2,12 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { PLATFORM_ROLES } from '../user/roles';
 import { communicationService } from './communication.service';
+
+function isPlatformRole(req: Request): boolean {
+  return PLATFORM_ROLES.includes(req.user?.role as (typeof PLATFORM_ROLES)[number]);
+}
 
 function schoolId(req: Request): string {
   const id = req.user?.schoolId;
@@ -47,12 +52,20 @@ export const communicationController = {
 
   // notifications
   async getNotifications(req: Request, res: Response) {
+    if (isPlatformRole(req)) {
+      send(res, await communicationService.getPlatformNotifications(req.user!._id));
+      return;
+    }
     send(res, await communicationService.getNotifications(schoolId(req), q(req)));
   },
   async markRead(req: Request, res: Response) {
     send(res, await communicationService.markRead(schoolId(req), p(req, 'id')));
   },
   async markAllRead(req: Request, res: Response) {
+    if (isPlatformRole(req)) {
+      send(res, await communicationService.markAllPlatformRead(req.user!._id));
+      return;
+    }
     send(res, await communicationService.markAllRead(schoolId(req)));
   },
   async clearRead(req: Request, res: Response) {

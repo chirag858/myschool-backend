@@ -7,6 +7,13 @@ import { AuditLogModel, SubscriptionModel, TicketModel } from './superadmin.mode
 type Doc = Record<string, unknown> & { _id: unknown };
 const nowIso = (): string => new Date().toISOString();
 
+// School.subscription.paymentMethod uses PAYMENT_METHODS ('bank_transfer'),
+// but the frontend billing page's vocabulary is 'bank' — translate here
+// rather than making the frontend aware of the backend's enum spelling.
+function toPaymentMode(method: unknown): string {
+  return method === 'bank_transfer' ? 'bank' : String(method ?? 'cash');
+}
+
 function subscriptionView(d: Doc): Record<string, unknown> {
   return {
     id: String(d._id),
@@ -34,6 +41,43 @@ function auditView(d: Doc): Record<string, unknown> {
     module: d.module ?? '',
     status: d.status ?? 'success',
     ipAddress: d.ipAddress,
+  };
+}
+
+// AuditLog.action is stored as free-text ("Collected fee", "Logged in") —
+// the full audit-logs page instead wants one of a fixed set of categories
+// for its filter dropdown/badge translations. Bucket by keyword; anything
+// unrecognized falls back to 'updated' rather than showing an untranslated
+// raw string.
+function normalizeAuditAction(text: unknown): string {
+  const s = String(text ?? '').toLowerCase();
+  if (s.includes('login') || s.includes('logged in') || s.includes('log in')) return 'login';
+  if (s.includes('logout') || s.includes('logged out') || s.includes('log out')) return 'logout';
+  if (s.includes('fee') || s.includes('payment') || s.includes('collected')) return 'payment';
+  if (s.includes('readjust')) return 'readjustment';
+  if (s.includes('delete')) return 'deleted';
+  if (s.includes('export')) return 'exported';
+  if (s.includes('approve')) return 'approved';
+  if (s.includes('reject')) return 'rejected';
+  if (s.includes('override')) return 'override';
+  if (s.includes('created') || s.includes('added')) return 'created';
+  return 'updated';
+}
+
+function fullAuditView(d: Doc, schoolName: string): Record<string, unknown> {
+  return {
+    id: String(d._id),
+    timestamp: d.timestamp ?? '',
+    userName: d.actorName ?? '',
+    role: d.actorRole ?? '',
+    schoolName,
+    module: d.module ?? '',
+    action: normalizeAuditAction(d.action),
+    recordAffected: '',
+    description: d.action ?? '',
+    oldValue: null,
+    newValue: null,
+    ipAddress: d.ipAddress ?? '',
   };
 }
 
@@ -102,6 +146,106 @@ export const superAdminService = {
     return subscriptionView(doc.toObject() as Doc);
   },
 
+  async getBillingOverview() {
+    const [schools, subs] = await Promise.all([
+      SchoolModel.find({}).lean(),
+      SubscriptionModel.find({}).sort({ createdAt: -1 }).lean(),
+    ]);
+    const schoolNameById = new Map(schools.map((s) => [String(s._id), s.name]));
+    const now = Date.now();
+
+    const subscriptions = schools.map((s) => {
+      const sub = (s.subscription as Record<string, unknown> | undefined) ?? {};
+      const endDate = String(sub.endDate ?? s.expiryDate ?? '');
+      const startDate = String(sub.startDate ?? '');
+      const daysRemaining = endDate
+        ? Math.round((new Date(endDate).getTime() - now) / (24 * 60 * 60 * 1000))
+        : 0;
+      const graceDays = Number(sub.graceDays ?? 0);
+      const status =
+        s.status === 'trial'
+          ? 'trial'
+          : daysRemaining > 0
+            ? 'active'
+            : daysRemaining >= -graceDays
+              ? 'grace'
+              : 'expired';
+      return {
+        id: String(s._id),
+        schoolId: String(s._id),
+        schoolName: s.name,
+        planType: s.plan,
+        startDate,
+        endDate,
+        daysRemaining,
+        amount: Number(sub.amountPaid ?? 0),
+        paymentStatus: Number(sub.amountPaid ?? 0) > 0 ? 'paid' : 'pending',
+        lastPaymentDate: sub.createdAt ? new Date(String(sub.createdAt)).toISOString() : undefined,
+        status,
+      };
+    });
+
+    const payments = subs.map((d) => ({
+      id: String(d._id),
+      schoolId: String(d.schoolId),
+      schoolName: schoolNameById.get(String(d.schoolId)) ?? 'Unknown school',
+      planType: d.plan,
+      amount: Number(d.amountPaid ?? 0),
+      date: d.createdAt ? new Date(String(d.createdAt)).toISOString() : now.toString(),
+      paymentMode: toPaymentMode(d.paymentMethod),
+      reference: d.paymentReference ?? '',
+      processedBy: d.addedBy ?? 'Super Admin',
+      status: d.status === 'pending' ? 'pending' : 'paid',
+      invoiceNumber: `INV-${String(d._id).slice(-6).toUpperCase()}`,
+    }));
+
+    return { subscriptions, payments };
+  },
+
+  async renewBilling(payload: {
+    schoolId: string;
+    plan: string;
+    amount: number;
+    paymentMethod: string;
+    paymentReference: string;
+  }) {
+    const durationDays: Record<string, number> = {
+      monthly: 30,
+      quarterly: 91,
+      half_yearly: 182,
+      yearly: 365,
+    };
+    const startDate = nowIso().slice(0, 10);
+    const endDate = new Date(Date.now() + (durationDays[payload.plan] ?? 365) * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    return this.renewSubscription(payload.schoolId, {
+      plan: payload.plan,
+      startDate,
+      endDate,
+      graceDays: 7,
+      paymentMethod: payload.paymentMethod,
+      paymentReference: payload.paymentReference,
+      amountPaid: payload.amount,
+    });
+  },
+
+  async addGracePeriod(schoolId: string, days: number) {
+    const school = await requireSchool(schoolId);
+    const sub = (school.subscription as Record<string, unknown> | undefined) ?? {};
+    const currentEnd = String(sub.endDate ?? school.expiryDate ?? nowIso().slice(0, 10));
+    const newGraceDays = Number(sub.graceDays ?? 0) + days;
+    await SchoolModel.updateOne(
+      { _id: schoolId },
+      {
+        $set: {
+          'subscription.graceDays': newGraceDays,
+        },
+      },
+    );
+    return { schoolId, graceDays: newGraceDays, currentEnd };
+  },
+
   async getSchoolUsers(schoolId: string) {
     await requireSchool(schoolId);
     const users = await UserModel.find({ schoolId, role: { $in: ['school_admin', 'principal'] } }).lean();
@@ -160,6 +304,33 @@ export const superAdminService = {
 
   async getAuditLogs(limit: number) {
     return (await AuditLogModel.find({}).sort({ timestamp: -1 }).limit(limit).lean()).map(auditView);
+  },
+
+  async getFullAuditLogs(filter: { module?: string; action?: string; search?: string }) {
+    const query: Record<string, unknown> = {};
+    if (filter.module && filter.module !== 'all') query.module = filter.module;
+    if (filter.search?.trim()) {
+      const rx = new RegExp(filter.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ actorName: rx }, { action: rx }];
+    }
+
+    const docs = await AuditLogModel.find(query).sort({ timestamp: -1 }).limit(500).lean();
+    const schoolIds = [...new Set(docs.map((d) => String(d.schoolId)))];
+    const schools = await SchoolModel.find({ _id: { $in: schoolIds } }).select('name').lean();
+    const schoolNameById = new Map(schools.map((s) => [String(s._id), s.name]));
+
+    let rows = docs.map((d) => fullAuditView(d as Doc, schoolNameById.get(String(d.schoolId)) ?? 'Unknown school'));
+    if (filter.action && filter.action !== 'all') {
+      rows = rows.filter((r) => r.action === filter.action);
+    }
+    return rows;
+  },
+
+  async getAuditLogDetail(id: string) {
+    const doc = await AuditLogModel.findById(id).lean();
+    if (!doc) return null;
+    const school = doc.schoolId ? await SchoolModel.findById(doc.schoolId).select('name').lean() : null;
+    return fullAuditView(doc as Doc, school?.name ?? 'Unknown school');
   },
 
   async ticketStats() {

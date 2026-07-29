@@ -14,3 +14,15 @@ export const renewSchema = z
     notes: z.string().optional(),
   })
   .passthrough();
+
+export const billingRenewSchema = z.object({
+  schoolId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid schoolId'),
+  plan: z.enum(['monthly', 'quarterly', 'half_yearly', 'yearly']),
+  amount: z.number().nonnegative(),
+  paymentMethod: z.string().min(1).default('online'),
+  paymentReference: z.string().default(''),
+});
+
+export const gracePeriodSchema = z.object({
+  days: z.number().int().positive(),
+});

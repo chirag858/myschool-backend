@@ -66,3 +66,18 @@ const prefsSchema = new Schema(
 );
 export type PrefsDoc = InferSchemaType<typeof prefsSchema>;
 export const NotificationPrefsModel = model('NotificationPrefs', prefsSchema);
+
+/** Per-user read-state for platform-wide (super_admin/support_engineer) notifications,
+ * which are derived on read from real data rather than stored as documents. */
+const platformNotificationReadSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+    readIds: { type: [String], default: [] },
+  },
+  { timestamps: true },
+);
+export type PlatformNotificationReadDoc = InferSchemaType<typeof platformNotificationReadSchema>;
+export const PlatformNotificationReadModel = model(
+  'PlatformNotificationRead',
+  platformNotificationReadSchema,
+);

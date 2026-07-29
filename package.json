@@ -18,11 +18,13 @@
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.5",
     "morgan": "^1.10.0",
+    "pdfkit": "^0.19.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -32,6 +34,7 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.10.5",
+    "@types/pdfkit": "^0.17.6",
     "@types/supertest": "^6.0.2",
     "mongodb-memory-server": "^10.1.4",
     "supertest": "^7.0.0",

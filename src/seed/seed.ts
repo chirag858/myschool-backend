@@ -93,9 +93,24 @@ const DEMO_USERS: SeedUser[] = [
 
 /** A few extra tenants so the super-admin list/dashboard have data. */
 const EXTRA_SCHOOLS = [
-  { code: 'GVN', name: 'Green Valley National School', city: 'Ludhiana', state: 'Punjab', status: 'active', plan: 'yearly', amountPaid: 44999 },
-  { code: 'SPS', name: 'Sunrise Public School', city: 'Amritsar', state: 'Punjab', status: 'trial', plan: 'monthly', amountPaid: 0 },
-  { code: 'HRT', name: 'Heritage International', city: 'Chandigarh', state: 'Chandigarh', status: 'expired', plan: 'quarterly', amountPaid: 13499 },
+  {
+    code: 'GVN', name: 'Green Valley National School', city: 'Ludhiana', state: 'Punjab',
+    status: 'active', plan: 'yearly', amountPaid: 44999, startDate: '2026-01-01', expiryDate: '2026-12-31',
+    contactMobile: '9888100001', contactEmail: 'admin@greenvalley.test', principalName: 'Ravinder Kaur',
+    adminName: 'Green Valley Admin', adminUsername: 'gvn_admin',
+  },
+  {
+    code: 'SPS', name: 'Sunrise Public School', city: 'Amritsar', state: 'Punjab',
+    status: 'trial', plan: 'monthly', amountPaid: 0, startDate: '2026-07-01', expiryDate: '2026-12-31',
+    contactMobile: '9888100002', contactEmail: 'admin@sunrisepublic.test', principalName: 'Harpreet Singh',
+    adminName: 'Sunrise Admin', adminUsername: 'sps_admin',
+  },
+  {
+    code: 'HRT', name: 'Heritage International', city: 'Chandigarh', state: 'Chandigarh',
+    status: 'expired', plan: 'quarterly', amountPaid: 13499, startDate: '2026-04-01', expiryDate: '2026-06-30',
+    contactMobile: '9888100003', contactEmail: 'admin@heritageintl.test', principalName: 'Anjali Mehta',
+    adminName: 'Heritage Admin', adminUsername: 'hrt_admin',
+  },
 ] as const;
 
 export async function seedDemo() {
@@ -111,32 +126,63 @@ export async function seedDemo() {
       expiryDate: '2027-03-31',
       active: true,
       modules: ALL_MODULES,
+      subscription: {
+        id: 'sub_msc',
+        plan: 'yearly',
+        startDate: '2026-04-01',
+        endDate: '2027-03-31',
+        amountPaid: 44999,
+        status: 'active',
+        addedBy: 'Seed',
+        createdAt: '2026-04-01T00:00:00.000Z',
+      },
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   if (!school) throw new Error('Failed to seed demo school');
 
   for (const s of EXTRA_SCHOOLS) {
-    await SchoolModel.findOneAndUpdate(
+    const extraSchool = await SchoolModel.findOneAndUpdate(
       { code: s.code },
       {
         name: s.name,
         code: s.code,
         city: s.city,
         state: s.state,
+        contactMobile: s.contactMobile,
+        contactEmail: s.contactEmail,
+        principalName: s.principalName,
         status: s.status,
         plan: s.plan,
-        expiryDate: '2026-12-31',
+        expiryDate: s.expiryDate,
         active: s.status === 'active' || s.status === 'trial',
         subscription: {
           id: `sub_${s.code.toLowerCase()}`,
           plan: s.plan,
-          endDate: '2026-12-31',
+          startDate: s.startDate,
+          endDate: s.expiryDate,
           amountPaid: s.amountPaid,
-          status: 'active',
+          status: s.status === 'expired' ? 'expired' : 'active',
           addedBy: 'Seed',
-          createdAt: '2026-01-01T00:00:00.000Z',
+          createdAt: `${s.startDate}T00:00:00.000Z`,
         },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+    if (!extraSchool) continue;
+    const adminPasswordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
+    await UserModel.findOneAndUpdate(
+      { username: s.adminUsername },
+      {
+        name: s.adminName,
+        username: s.adminUsername,
+        email: s.contactEmail,
+        mobile: s.contactMobile,
+        role: 'school_admin',
+        passwordHash: adminPasswordHash,
+        schoolId: extraSchool._id,
+        schoolName: extraSchool.name,
+        active: true,
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
@@ -1015,15 +1061,34 @@ export async function seedDemo() {
     );
   }
   const tickets = [
-    { subject: 'Cannot print receipt', status: 'open' },
-    { subject: 'Attendance sync delay', status: 'in_progress' },
-    { subject: 'New report format', status: 'testing' },
-    { subject: 'Login OTP not received', status: 'resolved' },
+    {
+      ticketNumber: 'TKT-2026-001', subject: 'Cannot print receipt', title: 'Cannot print receipt',
+      description: 'Fee receipt PDF fails to generate for cash payments.', category: 'technical_bug',
+      priority: 'high', status: 'open', reporterName: 'School Admin', reporterRole: 'school_admin',
+    },
+    {
+      ticketNumber: 'TKT-2026-002', subject: 'Attendance sync delay', title: 'Attendance sync delay',
+      description: 'Mobile app attendance takes 10+ minutes to reflect on the web dashboard.', category: 'technical_bug',
+      priority: 'medium', status: 'in_progress', reporterName: 'Coordinator', reporterRole: 'coordinator',
+      assignedTo: 'Support Engineer',
+    },
+    {
+      ticketNumber: 'TKT-2026-003', subject: 'New report format', title: 'New report format',
+      description: 'Requesting a class-wise summary export in addition to the existing detailed report.',
+      category: 'feature_request', priority: 'low', status: 'testing', reporterName: 'Principal', reporterRole: 'principal',
+      assignedTo: 'Support Engineer',
+    },
+    {
+      ticketNumber: 'TKT-2026-004', subject: 'Login OTP not received', title: 'Login OTP not received',
+      description: 'Parent app OTP SMS not arriving for some mobile numbers.', category: 'authentication',
+      priority: 'critical', status: 'resolved', reporterName: 'Parent Demo', reporterRole: 'parent',
+      assignedTo: 'Support Engineer', resolvedAt: '2026-07-20T10:00:00.000Z',
+    },
   ];
   for (const t of tickets) {
     await TicketModel.findOneAndUpdate(
       { schoolId: school._id, subject: t.subject },
-      { schoolId: school._id, ...t },
+      { schoolId: school._id, schoolName: school.name, ...t },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
   }

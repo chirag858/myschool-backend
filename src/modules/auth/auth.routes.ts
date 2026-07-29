@@ -5,6 +5,7 @@ import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { authController } from './auth.controller';
 import {
+  changePasswordSchema,
   detectSchema,
   forgotResetSchema,
   forgotSendSchema,
@@ -12,6 +13,7 @@ import {
   otpRequestSchema,
   parentLoginSchema,
   refreshSchema,
+  updateProfileSchema,
   verifyOtpSchema,
 } from './auth.validation';
 
@@ -36,6 +38,18 @@ authRoutes.post(
 );
 authRoutes.post('/refresh', validate({ body: refreshSchema }), asyncHandler(authController.refresh));
 authRoutes.get('/profile', authenticate, asyncHandler(authController.profile));
+authRoutes.put(
+  '/profile',
+  authenticate,
+  validate({ body: updateProfileSchema }),
+  asyncHandler(authController.updateProfile),
+);
+authRoutes.post(
+  '/change-password',
+  authenticate,
+  validate({ body: changePasswordSchema }),
+  asyncHandler(authController.changePassword),
+);
 authRoutes.post('/logout', asyncHandler(authController.logout));
 authRoutes.post(
   '/forgot-password/send-otp',

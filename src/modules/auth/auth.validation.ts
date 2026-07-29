@@ -66,3 +66,17 @@ export const forgotResetSchema = z.object({
 
 // Retained for callers importing the strict mobile-number schema.
 export const sendOtpSchema = z.object({ mobile });
+
+export const updateProfileSchema = z.object({
+  name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  mobile: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  address: z.string().optional(),
+  photoUrl: z.string().optional(),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6),
+});
