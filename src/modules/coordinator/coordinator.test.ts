@@ -40,6 +40,17 @@ describe('Coordinator API (student leaves)', () => {
     expect(res.body.recentStudentLeaves.length).toBe(3);
   });
 
+  it('dashboard computes pendingStaffLeaves and pendingTasks from real data', async () => {
+    const res = await request(app).get('/api/coordinator/dashboard').set(auth(coord));
+    expect(res.status).toBe(200);
+    // Seed has 1 L1-pending staff leave and 3 pending student leaves.
+    expect(res.body.pendingStaffLeaves).toBe(1);
+    expect(res.body.pendingTasks.length).toBeGreaterThan(0);
+    expect(res.body.pendingTasks[0]).toMatchObject({ id: expect.any(String), description: expect.any(String), category: expect.any(String), priority: expect.any(Number) });
+    expect(typeof res.body.attendanceTodayPercent).toBe('number');
+    expect(typeof res.body.classesNotMarkedYet).toBe('number');
+  });
+
   it('student leaves: list seeded (pending), filter by status', async () => {
     const list = await request(app).get('/api/coordinator/student-leaves').set(auth(coord));
     expect(list.body.length).toBe(3);
@@ -129,5 +140,66 @@ describe('Coordinator API (staff leaves + marks + staff overview)', () => {
     const attendance = await request(app).get('/api/coordinator/staff-attendance').set(auth(coord));
     expect(attendance.body.length).toBe(4);
     expect(attendance.body[0]).toMatchObject({ name: expect.any(String), status: 'not_marked' });
+  });
+
+  it('exports students and staff-attendance as real .xlsx files', async () => {
+    const students = await request(app).get('/api/coordinator/students/export').set(auth(coord));
+    expect(students.status).toBe(200);
+    expect(students.headers['content-type']).toContain('spreadsheetml');
+    expect(students.headers['content-disposition']).toContain('coordinator-students.xlsx');
+
+    const attendance = await request(app).get('/api/coordinator/staff-attendance/export').set(auth(coord));
+    expect(attendance.status).toBe(200);
+    expect(attendance.headers['content-type']).toContain('spreadsheetml');
+    expect(attendance.headers['content-disposition']).toContain('coordinator-staff-attendance.xlsx');
+  });
+
+  it('messages a staff member by id and logs it to message history', async () => {
+    const staffRes = await request(app).get('/api/coordinator/staff-overview').set(auth(coord));
+    const staffId = staffRes.body[0].id;
+
+    const res = await request(app)
+      .post(`/api/coordinator/staff/${staffId}/message`)
+      .set(auth(coord))
+      .send({ body: 'Please submit pending marks by Friday.' });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: expect.any(String), status: expect.stringMatching(/delivered|failed/), recipientName: expect.any(String) });
+
+    // Too-short body is rejected.
+    expect((await request(app).post(`/api/coordinator/staff/${staffId}/message`).set(auth(coord)).send({ body: 'Hi' })).status).toBe(400);
+    // Unknown staff id 404s.
+    expect((await request(app).post('/api/coordinator/staff/000000000000000000000000/message').set(auth(coord)).send({ body: 'Hello there' })).status).toBe(404);
+  });
+
+  it('students: scoped to the coordinator\'s assigned classes with real attendancePercent', async () => {
+    const res = await request(app).get('/api/coordinator/students').set(auth(coord));
+    expect(res.status).toBe(200);
+    // Seed assigns the demo coordinator to Class 1-A and Class 2-A only.
+    expect(res.body.length).toBeGreaterThan(0);
+    for (const row of res.body) {
+      expect(['Class 1-A', 'Class 2-A']).toContain(`${row.className}-${row.section}`);
+      expect(typeof row.attendancePercent).toBe('number');
+    }
+  });
+
+  it('assigned-classes: school_admin can set them, coordinator cannot', async () => {
+    const admin = await token('schooladmin');
+    const users = await request(app).get('/api/coordinator/students').set(auth(coord));
+    void users;
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+
+    const forbidden = await request(app)
+      .patch(`/api/coordinator/assigned-classes/${coordId}`)
+      .set(auth(coord))
+      .send({ classKeys: ['Class 1-A'] });
+    expect(forbidden.status).toBe(403);
+
+    const ok = await request(app)
+      .patch(`/api/coordinator/assigned-classes/${coordId}`)
+      .set(auth(admin))
+      .send({ classKeys: ['Class 2-A'] });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ id: coordId, assignedClasses: ['Class 2-A'] });
   });
 });

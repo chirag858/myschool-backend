@@ -12,3 +12,7 @@ export const applyLeaveSchema = z
 
 export const remarksSchema = z.object({ remarks: z.string().optional() });
 export const reasonSchema = z.object({ reason: z.string().min(1) });
+export const userIdParam = z.object({ userId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id') });
+export const assignedClassesSchema = z.object({ classKeys: z.array(z.string().min(1)) });
+export const staffIdParam = z.object({ staffId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id') });
+export const messageBodySchema = z.object({ body: z.string().min(5) });

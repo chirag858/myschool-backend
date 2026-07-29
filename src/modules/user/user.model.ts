@@ -19,6 +19,8 @@ const userSchema = new Schema(
     photoUrl: { type: String, default: '' },
     lastLoginAt: { type: Date, default: null },
     lastLoginIp: { type: String, default: '' },
+    /** Class-section keys (e.g. "V-A") a coordinator/teacher supervises. */
+    assignedClasses: { type: [String], default: [] },
   },
   { timestamps: true },
 );

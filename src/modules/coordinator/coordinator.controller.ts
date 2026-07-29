@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { sendExcel } from '../reports/reports.export';
 import { coordinatorService } from './coordinator.service';
 
 function schoolId(req: Request): string {
@@ -9,11 +10,26 @@ function schoolId(req: Request): string {
   if (!id) throw ApiError.forbidden('No school scope');
   return id;
 }
+function userId(req: Request): string {
+  const id = req.user?._id;
+  if (!id) throw ApiError.unauthorized();
+  return id;
+}
 const p = (req: Request, key: string): string => String(req.params[key]);
 
 export const coordinatorController = {
   async dashboard(req: Request, res: Response) {
-    send(res, await coordinatorService.dashboard(schoolId(req)));
+    send(res, await coordinatorService.dashboard(schoolId(req), userId(req)));
+  },
+  async getStudents(req: Request, res: Response) {
+    send(
+      res,
+      await coordinatorService.getStudents(schoolId(req), userId(req), req.query as Record<string, string>),
+    );
+  },
+  async setAssignedClasses(req: Request, res: Response) {
+    const { classKeys } = req.body as { classKeys: string[] };
+    send(res, await coordinatorService.setAssignedClasses(schoolId(req), p(req, 'userId'), classKeys));
   },
   async getStudentLeaves(req: Request, res: Response) {
     send(res, await coordinatorService.getStudentLeaves(schoolId(req), req.query as Record<string, string>));
@@ -53,5 +69,21 @@ export const coordinatorController = {
   },
   async getStaffAttendance(req: Request, res: Response) {
     send(res, await coordinatorService.getStaffAttendance(schoolId(req), req.query.department ? String(req.query.department) : undefined));
+  },
+
+  async exportStudents(req: Request, res: Response) {
+    const report = await coordinatorService.exportStudentsReport(schoolId(req), userId(req), req.query as Record<string, string>);
+    await sendExcel(res, report, 'coordinator-students');
+  },
+  async exportStaffAttendance(req: Request, res: Response) {
+    const report = await coordinatorService.exportStaffAttendanceReport(
+      schoolId(req),
+      req.query.department ? String(req.query.department) : undefined,
+    );
+    await sendExcel(res, report, 'coordinator-staff-attendance');
+  },
+  async messageStaff(req: Request, res: Response) {
+    const { body } = req.body as { body: string };
+    created(res, await coordinatorService.messageStaff(schoolId(req), p(req, 'staffId'), body));
   },
 };

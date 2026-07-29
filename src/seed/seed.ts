@@ -64,6 +64,7 @@ interface SeedUser {
   role: UserRole;
   password: string;
   tenant: boolean;
+  assignedClasses?: string[];
 }
 
 /** Mirrors the frontend DEMO_CREDENTIALS + the mobile parent/student/driver. */
@@ -72,7 +73,7 @@ const DEMO_USERS: SeedUser[] = [
   { name: 'Support Engineer', username: 'support', email: 'support@msc.test', role: 'support_engineer', password: DEMO_PASSWORD, tenant: false },
   { name: 'School Admin', username: 'schooladmin', email: 'schooladmin@msc.test', role: 'school_admin', password: DEMO_PASSWORD, tenant: true },
   { name: 'Principal', username: 'principal', email: 'principal@msc.test', role: 'principal', password: DEMO_PASSWORD, tenant: true },
-  { name: 'Coordinator', username: 'coordinator', email: 'coordinator@msc.test', role: 'coordinator', password: DEMO_PASSWORD, tenant: true },
+  { name: 'Coordinator', username: 'coordinator', email: 'coordinator@msc.test', role: 'coordinator', password: DEMO_PASSWORD, tenant: true, assignedClasses: ['Class 1-A', 'Class 2-A'] },
   { name: 'Accountant', username: 'accountant', email: 'accountant@msc.test', role: 'accountant', password: DEMO_PASSWORD, tenant: true },
   { name: 'Teacher', username: 'teacher', email: 'teacher@msc.test', role: 'teacher', password: DEMO_PASSWORD, tenant: true },
   { name: 'Receptionist', username: 'receptionist', email: 'receptionist@msc.test', role: 'receptionist', password: DEMO_PASSWORD, tenant: true },
@@ -194,6 +195,7 @@ export async function seedDemo() {
         schoolId: u.tenant ? school._id : undefined,
         schoolName: u.tenant ? school.name : undefined,
         active: true,
+        assignedClasses: u.assignedClasses ?? [],
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
