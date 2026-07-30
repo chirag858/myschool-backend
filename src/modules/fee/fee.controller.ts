@@ -76,6 +76,9 @@ export const feeController = {
   async stats(req: Request, res: Response) {
     send(res, await feeService.stats(schoolId(req)));
   },
+  async accountantDashboard(req: Request, res: Response) {
+    send(res, await feeService.accountantDashboard(schoolId(req)));
+  },
 
   // ledger
   async ledger(req: Request, res: Response) {

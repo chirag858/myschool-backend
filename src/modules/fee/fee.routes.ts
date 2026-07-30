@@ -47,6 +47,7 @@ feeRoutes.post('/collect', staffOnly, validate({ body: collectSchema }), asyncHa
 // Receipts
 feeRoutes.get('/receipts', staffOnly, validate({ query: receiptsQuery }), asyncHandler(feeController.listReceipts));
 feeRoutes.get('/stats/today', staffOnly, asyncHandler(feeController.stats));
+feeRoutes.get('/accountant/dashboard', staffOnly, asyncHandler(feeController.accountantDashboard));
 feeRoutes.get('/receipts/:id', staffOnly, validate({ params: idParam }), asyncHandler(feeController.getReceipt));
 feeRoutes.post('/receipts/:id/duplicate', staffOnly, validate({ params: idParam }), asyncHandler(feeController.duplicateReceipt));
 feeRoutes.patch('/receipts/:id/cancel', staffOnly, validate({ params: idParam, body: cancelSchema }), asyncHandler(feeController.cancelReceipt));

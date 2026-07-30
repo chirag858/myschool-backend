@@ -324,6 +324,51 @@ export const feeService = {
     return { amount, studentsCount };
   },
 
+  /** Accountant dashboard — today's collection, pending/defaulter/online counts, outstanding by class. */
+  async accountantDashboard(schoolId: string) {
+    const today = new Date().toISOString().slice(0, 10);
+    const session = await getActiveSessionName(schoolId);
+    const annual = await annualByClass(schoolId, session);
+    const [students, receipts, todayReceipts] = await Promise.all([
+      StudentModel.find({ schoolId, profileStatus: 'active' }, { className: 1, feeStatus: 1 }).lean(),
+      ReceiptModel.find({ schoolId, status: 'active' }, { studentId: 1, amount: 1 }).lean(),
+      ReceiptModel.find(
+        { schoolId, status: 'active', paymentDate: { $regex: `^${today}` } },
+        { amount: 1, paymentMode: 1 },
+      ).lean(),
+    ]);
+    const paidByStudent = new Map<string, number>();
+    for (const r of receipts) {
+      const key = String(r.studentId);
+      paidByStudent.set(key, (paidByStudent.get(key) ?? 0) + Number(r.amount ?? 0));
+    }
+    const byClass = new Map<string, { dues: number; amount: number }>();
+    let pendingCount = 0;
+    for (const s of students) {
+      if (s.feeStatus === 'pending' || s.feeStatus === 'partial') pendingCount += 1;
+      const className = s.className ?? 'Unassigned';
+      const totalFee = annual[className] ?? 0;
+      const due = Math.max(0, totalFee - (paidByStudent.get(String(s._id)) ?? 0));
+      if (due > 0) {
+        const cur = byClass.get(className) ?? { dues: 0, amount: 0 };
+        cur.dues += 1;
+        cur.amount += due;
+        byClass.set(className, cur);
+      }
+    }
+    const outstandingByClass = [...byClass.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([className, v]) => ({ className, dues: v.dues, amount: v.amount }));
+
+    return {
+      todayCollection: todayReceipts.reduce((s, r) => s + (r.amount ?? 0), 0),
+      pendingCount,
+      defaultersCount: outstandingByClass.reduce((s, c) => s + c.dues, 0),
+      onlineCount: todayReceipts.filter((r) => r.paymentMode === 'online').length,
+      outstandingByClass,
+    };
+  },
+
   // ── Student Ledger (single student, for student profile tab) ──
   async studentLedger(schoolId: string, studentId: string) {
     const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();

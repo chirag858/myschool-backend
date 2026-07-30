@@ -50,6 +50,12 @@ feeRecoveryRoutes.patch(
 );
 feeRecoveryRoutes.delete('/reminder-rules/:id', validate({ params: idParam }), asyncHandler(feeRecoveryController.deleteRule));
 feeRecoveryRoutes.get('/reminder-log', asyncHandler(feeRecoveryController.getReminderLog));
+// Cross-tenant — the daily cron calls the same service method; this lets an admin trigger it on demand.
+feeRecoveryRoutes.post(
+  '/reminder-rules/run-now',
+  requireRole('super_admin'),
+  asyncHandler(feeRecoveryController.runReminderRulesNow),
+);
 
 feeRecoveryRoutes.get('/sibling-groups', asyncHandler(feeRecoveryController.listSiblingGroups));
 feeRecoveryRoutes.post('/sibling-groups/scan', asyncHandler(feeRecoveryController.scanSiblings));

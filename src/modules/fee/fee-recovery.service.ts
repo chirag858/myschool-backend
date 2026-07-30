@@ -367,4 +367,94 @@ export const feeRecoveryService = {
       failed: results.filter((r) => r.status === 'failed').length,
     };
   },
+
+  /**
+   * Auto-executes active reminder rules across every school. Handles the
+   * `after_due` and `every_n_days_overdue` triggers, which map directly onto
+   * the already-computed defaulter list. `before_due` / `on_due` need an
+   * upcoming-installment lookahead (StudentInstallmentModel.schedule) and are
+   * not implemented yet — those rules are skipped, not silently misfired.
+   */
+  async runReminderRules(): Promise<{ rulesRun: number; sent: number; failed: number }> {
+    const rules = await ReminderRuleModel.find({ active: true }).lean();
+    const bySchool = new Map<string, typeof rules>();
+    for (const r of rules) {
+      const key = String(r.schoolId);
+      const list = bySchool.get(key) ?? [];
+      list.push(r);
+      bySchool.set(key, list);
+    }
+
+    let rulesRun = 0;
+    let sent = 0;
+    let failed = 0;
+    const today = new Date().toISOString().slice(0, 10);
+
+    for (const [schoolId, schoolRules] of bySchool.entries()) {
+      const defaulters = await computeDefaulters(schoolId);
+      for (const rule of schoolRules) {
+        const kind = (rule.trigger as { kind: string; days?: number }).kind;
+        const days = (rule.trigger as { kind: string; days?: number }).days ?? 0;
+        if (kind !== 'after_due' && kind !== 'every_n_days_overdue') continue;
+
+        let matches = defaulters.filter((d) =>
+          kind === 'after_due' ? d.daysOverdue === days : days > 0 && d.daysOverdue % days === 0,
+        );
+        if (rule.audience === 'specific_classes' && (rule.audienceClassKeys ?? []).length > 0) {
+          const keys = new Set(rule.audienceClassKeys as string[]);
+          matches = matches.filter((d) => keys.has(`${d.className}-${d.section}`));
+        } else if (rule.audience === 'above_threshold' && typeof rule.audienceMinAmount === 'number') {
+          matches = matches.filter((d) => d.totalDue >= rule.audienceMinAmount!);
+        }
+        if (matches.length === 0) continue;
+
+        // Skip students already reminded by this rule today.
+        const alreadySent = await ReminderLogModel.find({
+          schoolId,
+          ruleId: String(rule._id),
+          sentAt: { $regex: `^${today}` },
+        })
+          .select('studentId')
+          .lean();
+        const alreadySentIds = new Set(alreadySent.map((l) => String(l.studentId)));
+        matches = matches.filter((d) => !alreadySentIds.has(d.studentId));
+        if (matches.length === 0) continue;
+
+        const students = await StudentModel.find({
+          _id: { $in: matches.map((d) => d.studentId) },
+          schoolId,
+        }).lean();
+        const recipients = students.map((s) => ({
+          id: String(s._id),
+          name: s.name,
+          mobile: (s.parents as { fatherMobile?: string } | undefined)?.fatherMobile ?? s.mobile ?? '',
+        }));
+        const results = await sendBulk(recipients, rule.channel as MessagingChannel, 'Fee payment reminder');
+        const byId = new Map(matches.map((d) => [d.studentId, d]));
+        const now = new Date().toISOString();
+        await ReminderLogModel.insertMany(
+          results.map((r) => ({
+            schoolId,
+            ruleId: String(rule._id),
+            ruleName: rule.name,
+            studentId: r.recipientId,
+            studentName: r.recipientName,
+            className: byId.get(r.recipientId)
+              ? `${byId.get(r.recipientId)!.className}-${byId.get(r.recipientId)!.section}`
+              : '',
+            amountDue: byId.get(r.recipientId)?.totalDue ?? 0,
+            channel: rule.channel,
+            status: r.status,
+            messagePreview: `Dear Parent, fee payment is due for ${r.recipientName}. Please pay at the earliest.`,
+            sentAt: now,
+          })),
+        );
+        await ReminderRuleModel.updateOne({ _id: rule._id }, { $set: { lastRunAt: now } });
+        rulesRun += 1;
+        sent += results.filter((r) => r.status === 'delivered').length;
+        failed += results.filter((r) => r.status === 'failed').length;
+      }
+    }
+    return { rulesRun, sent, failed };
+  },
 };

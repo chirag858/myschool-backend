@@ -81,4 +81,7 @@ export const feeRecoveryController = {
     const { studentIds, channel } = req.body as { studentIds: string[]; channel: 'sms' | 'whatsapp' | 'both' };
     send(res, await feeRecoveryService.sendReminder(schoolId(req), studentIds, channel));
   },
+  async runReminderRulesNow(_req: Request, res: Response) {
+    send(res, await feeRecoveryService.runReminderRules());
+  },
 };
