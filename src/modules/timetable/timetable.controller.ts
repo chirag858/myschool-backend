@@ -101,4 +101,27 @@ export const timetableController = {
     const conflicts = await timetableService.scanAllConflicts(req.user!.schoolId!);
     res.json(conflicts);
   },
+
+  // ── Teacher load ──────────────────────────────────────────────────
+  getTeacherLoads: async (req: Request, res: Response) => {
+    const loads = await timetableService.getTeacherLoads(req.user!.schoolId!);
+    res.json(loads);
+  },
+
+  // ── Subject-Teacher Assignment ───────────────────────────────────
+  getSubjectAssignments: async (req: Request, res: Response) => {
+    const { classId, section } = req.query as Record<string, string>;
+    const rows = await timetableService.getSubjectAssignments(req.user!.schoolId!, classId, section);
+    res.json(rows);
+  },
+  saveSubjectAssignments: async (req: Request, res: Response) => {
+    const { classId, section, rows } = req.body;
+    const result = await timetableService.saveSubjectAssignments(req.user!.schoolId!, classId, section, rows);
+    res.json(result);
+  },
+  autoAssignSubjects: async (req: Request, res: Response) => {
+    const { classId, section } = req.body;
+    const rows = await timetableService.autoAssignSubjects(req.user!.schoolId!, classId, section);
+    res.json(rows);
+  },
 };

@@ -10,9 +10,11 @@ import {
   createRoomSchema,
   createSubjectSchema,
   idParam,
+  saveSubjectAssignmentsSchema,
   savePeriodsSchema,
   saveSlotSchema,
   slotCheckSchema,
+  subjectAssignmentQuery,
   togglePublishSchema,
   updateRoomSchema,
   updateSubjectSchema,
@@ -47,6 +49,27 @@ timetableRoutes.get('/master', ...readGate, asyncHandler(timetableController.get
 // Check/Copy/Save
 timetableRoutes.post('/check-conflicts', ...editGate, validate({ body: slotCheckSchema }), asyncHandler(timetableController.checkConflicts));
 timetableRoutes.post('/copy-day', ...editGate, validate({ body: copyDaySchema }), asyncHandler(timetableController.copyDay));
+
+// Teacher load + subject assignment (static — must stay above the /:classId catch-all)
+timetableRoutes.get('/teacher-loads', ...readGate, asyncHandler(timetableController.getTeacherLoads));
+timetableRoutes.get(
+  '/subject-assignments',
+  ...readGate,
+  validate({ query: subjectAssignmentQuery }),
+  asyncHandler(timetableController.getSubjectAssignments),
+);
+timetableRoutes.post(
+  '/subject-assignments',
+  ...editGate,
+  validate({ body: saveSubjectAssignmentsSchema }),
+  asyncHandler(timetableController.saveSubjectAssignments),
+);
+timetableRoutes.post(
+  '/subject-assignments/auto-assign',
+  ...editGate,
+  validate({ body: subjectAssignmentQuery }),
+  asyncHandler(timetableController.autoAssignSubjects),
+);
 
 // Specific class endpoints (Note: these should not conflict with above static routes, so they use /class or /slot namespaces or specific HTTP methods where possible)
 timetableRoutes.get('/teacher/:staffId', ...readGate, asyncHandler(timetableController.getTeacherSchedule));

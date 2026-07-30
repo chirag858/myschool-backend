@@ -47,3 +47,32 @@ const examMarkSchema = new Schema(
 examMarkSchema.index({ examId: 1, subjectId: 1, studentId: 1 }, { unique: true });
 export type ExamMarkDoc = InferSchemaType<typeof examMarkSchema>;
 export const ExamMarkModel = model('ExamMark', examMarkSchema);
+
+// Teacher/principal remarks on a student's overall report card for one exam.
+const reportCardRemarksSchema = new Schema(
+  {
+    schoolId: { type: Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    examId: { type: Schema.Types.ObjectId, ref: 'Exam', required: true, index: true },
+    studentId: { type: Schema.Types.ObjectId, ref: 'Student', required: true },
+    teacherRemarks: String,
+    principalRemarks: String,
+  },
+  { timestamps: true },
+);
+reportCardRemarksSchema.index({ examId: 1, studentId: 1 }, { unique: true });
+export type ReportCardRemarksDoc = InferSchemaType<typeof reportCardRemarksSchema>;
+export const ReportCardRemarksModel = model('ReportCardRemarks', reportCardRemarksSchema);
+
+// Tracks when a student/staff ID card was last generated (for the "Generated" status badge).
+const idCardLogSchema = new Schema(
+  {
+    schoolId: { type: Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    kind: { type: String, enum: ['student', 'staff'], required: true },
+    personId: { type: String, required: true },
+    generatedAt: { type: Date, required: true },
+  },
+  { timestamps: true },
+);
+idCardLogSchema.index({ schoolId: 1, kind: 1, personId: 1 }, { unique: true });
+export type IdCardLogDoc = InferSchemaType<typeof idCardLogSchema>;
+export const IdCardLogModel = model('IdCardLog', idCardLogSchema);

@@ -77,3 +77,19 @@ export const copyDaySchema = z.object({
   fromDay: z.enum([...DAY_OF_WEEK] as [string, ...string[]]),
   toDays: z.array(z.enum([...DAY_OF_WEEK] as [string, ...string[]])).min(1),
 });
+
+export const subjectAssignmentQuery = z.object({
+  classId: z.string().min(1),
+  section: z.string().min(1),
+});
+
+export const saveSubjectAssignmentsSchema = z.object({
+  classId: z.string().min(1),
+  section: z.string().min(1),
+  rows: z.array(
+    z.object({
+      subjectId: z.string().min(1),
+      teacherId: z.string().nullable(),
+    }),
+  ),
+});

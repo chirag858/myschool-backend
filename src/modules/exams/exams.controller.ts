@@ -37,6 +37,9 @@ export const examController = {
   async remove(req: Request, res: Response) {
     send(res, await examService.remove(schoolId(req), p(req, 'id')));
   },
+  async saveDateSheet(req: Request, res: Response) {
+    send(res, await examService.saveDateSheet(schoolId(req), p(req, 'id'), req.body.dateSheet));
+  },
 
   async getMarks(req: Request, res: Response) {
     const { classKey, subjectId } = req.query as Record<string, string>;
@@ -68,8 +71,35 @@ export const examController = {
     send(res, await examService.unpublishResults(schoolId(req), p(req, 'id'), classKey));
   },
 
+  async analytics(req: Request, res: Response) {
+    const { classKey } = req.query as Record<string, string>;
+    send(res, await examService.analytics(schoolId(req), p(req, 'id'), classKey));
+  },
+  async reportCard(req: Request, res: Response) {
+    send(res, await examService.reportCard(schoolId(req), p(req, 'id'), p(req, 'studentId')));
+  },
+  async bulkReportCards(req: Request, res: Response) {
+    const { classKey } = req.query as Record<string, string>;
+    send(res, await examService.bulkReportCards(schoolId(req), p(req, 'id'), classKey));
+  },
+  async updateRemarks(req: Request, res: Response) {
+    send(res, await examService.updateRemarks(schoolId(req), p(req, 'id'), p(req, 'studentId'), req.body));
+  },
+
   // Served under /students/:id/exams
   async studentExams(req: Request, res: Response) {
     send(res, await examService.studentExams(schoolId(req), p(req, 'id')));
+  },
+
+  // ── ID cards ──
+  async studentIdSelections(req: Request, res: Response) {
+    send(res, await examService.studentIdSelections(schoolId(req)));
+  },
+  async staffIdSelections(req: Request, res: Response) {
+    send(res, await examService.staffIdSelections(schoolId(req)));
+  },
+  async logIdCards(req: Request, res: Response) {
+    const { kind, ids } = req.body as { kind: 'student' | 'staff'; ids: string[] };
+    send(res, await examService.logIdCardGeneration(schoolId(req), kind, ids));
   },
 };

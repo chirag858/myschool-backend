@@ -133,6 +133,46 @@ describe('Exams API', () => {
     expect(pub.body.success).toBe(true);
   });
 
+  it('GET /exams/:id/analytics matches the results it summarizes; report card + remarks round-trip', async () => {
+    const id = await firstExamId(admin);
+    await request(app).post(`/api/exams/${id}/results/calculate`).set(auth(admin)).send({ classKey: 'Class 1' });
+
+    const analytics = await request(app).get(`/api/exams/${id}/analytics?classKey=Class 1`).set(auth(admin));
+    expect(analytics.status).toBe(200);
+    expect(analytics.body).toMatchObject({
+      totalStudents: 3,
+      pass: expect.any(Number),
+      fail: expect.any(Number),
+      absent: expect.any(Number),
+      classAverage: expect.any(Number),
+    });
+    expect(analytics.body.pass + analytics.body.fail + analytics.body.absent).toBe(3);
+
+    const sid = await class1StudentId(admin);
+    const card = await request(app).get(`/api/exams/${id}/report-card/${sid}`).set(auth(admin));
+    expect(card.status).toBe(200);
+    expect(card.body).toMatchObject({
+      studentId: sid,
+      studentName: expect.any(String),
+      admissionNumber: expect.any(String),
+      subjects: expect.any(Array),
+      totalObtained: expect.any(Number),
+      passFail: expect.any(String),
+    });
+
+    const remarks = await request(app)
+      .post(`/api/exams/${id}/report-card/${sid}/remarks`)
+      .set(auth(admin))
+      .send({ teacherRemarks: 'Great improvement', principalRemarks: 'Keep it up' });
+    expect(remarks.status).toBe(200);
+
+    const cardAfter = await request(app).get(`/api/exams/${id}/report-card/${sid}`).set(auth(admin));
+    expect(cardAfter.body).toMatchObject({
+      teacherRemarks: 'Great improvement',
+      principalRemarks: 'Keep it up',
+    });
+  });
+
   it('GET /students/:id/exams returns published exam results for the student', async () => {
     const sid = await class1StudentId(admin);
     const res = await request(app).get(`/api/students/${sid}/exams`).set(auth(admin));

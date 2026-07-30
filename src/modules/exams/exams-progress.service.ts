@@ -26,7 +26,7 @@ export const examsProgressService = {
         const subjectIds = await ExamMarkModel.distinct('subjectId', { schoolId, examId, classKey });
         subjects = subjectIds.map((s) => ({ subjectId: s, subjectName: s }));
       }
-      const studentCount = await StudentModel.countDocuments({ schoolId, className: classKey });
+      const studentCount = await StudentModel.countDocuments({ schoolId, $or: [{ classKey }, { className: classKey }] });
       let marksEntered = 0;
       for (const subj of subjects) {
         const submittedCount = await ExamMarkModel.countDocuments({
@@ -58,7 +58,7 @@ export const examsProgressService = {
       const subjectIds = await ExamMarkModel.distinct('subjectId', { schoolId, examId, classKey });
       subjects = subjectIds.map((s) => ({ subjectId: s, subjectName: s }));
     }
-    const studentCount = await StudentModel.countDocuments({ schoolId, className: classKey });
+    const studentCount = await StudentModel.countDocuments({ schoolId, $or: [{ classKey }, { className: classKey }] });
 
     const out = [];
     for (const subj of subjects) {

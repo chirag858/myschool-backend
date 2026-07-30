@@ -60,8 +60,10 @@ describe('Students API', () => {
   it('GET /students/class-summary groups by class', async () => {
     const res = await request(app).get('/api/students/class-summary').set(auth(admin));
     expect(res.status).toBe(200);
-    expect(res.body.length).toBe(5);
-    expect(res.body[0]).toMatchObject({ classKey: expect.any(String), className: expect.any(String), studentCount: 3 });
+    // classKey is `${className}-${section}` — seed round-robins 3 students
+    // across 2 sections per class (5 classes), so 10 distinct groups.
+    expect(res.body.length).toBe(10);
+    expect(res.body[0]).toMatchObject({ classKey: expect.any(String), className: expect.any(String), studentCount: expect.any(Number) });
     const total = res.body.reduce((s: number, c: { studentCount: number }) => s + c.studentCount, 0);
     expect(total).toBe(15);
   });
@@ -136,8 +138,11 @@ describe('Students API', () => {
     ]);
 
     const summary = await request(app).get('/api/students/class-summary').set(auth(admin));
-    const lkg = summary.body.find((c: { className: string }) => c.className === 'LKG');
-    expect(lkg.studentCount).toBe(6); // original 3 + promoted 3
+    // classKey groups by section, so sum across every LKG-* group (original 3 + promoted 3).
+    const lkgTotal = summary.body
+      .filter((c: { className: string }) => c.className === 'LKG')
+      .reduce((s: number, c: { studentCount: number }) => s + c.studentCount, 0);
+    expect(lkgTotal).toBe(6);
   });
 
   it('rejects invalid bulk payloads (400)', async () => {

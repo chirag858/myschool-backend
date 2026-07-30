@@ -1,7 +1,9 @@
 import { ApiError } from '../../lib/api-error';
+import { StaffModel } from '../staff/staff.models';
 import {
   PeriodModel,
   RoomModel,
+  SubjectAssignmentModel,
   SubjectModel,
   TimetableClassModel,
 } from './timetable.models';
@@ -66,6 +68,18 @@ function toTimetableClass(d: AnyDoc) {
     })),
     published: obj.published,
   };
+}
+
+/** Weekly period count per teacherId, from actual scheduled timetable slots. */
+async function teacherWeeklyLoads(schoolId: string): Promise<Map<string, number>> {
+  const items = await TimetableClassModel.find({ schoolId }, { slots: 1 }).lean();
+  const loads = new Map<string, number>();
+  for (const tt of items) {
+    for (const slot of (tt.slots as AnyDoc[]) ?? []) {
+      loads.set(slot.teacherId, (loads.get(slot.teacherId) ?? 0) + 1);
+    }
+  }
+  return loads;
 }
 
 export const timetableService = {
@@ -326,5 +340,86 @@ export const timetableService = {
     }
     
     return conflictRows;
-  }
+  },
+
+  // ── Teacher load ──────────────────────────────────────────────────
+  getTeacherLoads: async (schoolId: string) => {
+    const loads = await teacherWeeklyLoads(schoolId);
+    return Object.fromEntries(loads);
+  },
+
+  // ── Subject-Teacher Assignment ───────────────────────────────────
+  getSubjectAssignments: async (schoolId: string, classId: string, section: string) => {
+    const [subjects, assignments, loads] = await Promise.all([
+      SubjectModel.find({ schoolId }).sort({ name: 1 }).lean(),
+      SubjectAssignmentModel.find({ schoolId, classId, section }).lean(),
+      teacherWeeklyLoads(schoolId),
+    ]);
+    const applicable = subjects.filter(
+      (s) => s.applicableClasses === 'all' || (s.applicableClasses as string[])?.includes(classId),
+    );
+    const byId = new Map(assignments.map((a) => [a.subjectId, a]));
+    const teacherIds = assignments.map((a) => a.teacherId).filter((id): id is string => Boolean(id));
+    const teachers = await StaffModel.find({ _id: { $in: teacherIds } }, { name: 1 }).lean();
+    const teacherNameById = new Map(teachers.map((t) => [String(t._id), t.name]));
+
+    return applicable.map((s) => {
+      const a = byId.get(String(s._id));
+      const teacherId = a?.teacherId ?? null;
+      return {
+        subjectId: String(s._id),
+        subjectName: s.name,
+        subjectCode: s.code,
+        subjectType: s.type,
+        teacherId,
+        teacherName: teacherId ? (teacherNameById.get(teacherId) ?? null) : null,
+        teacherWeeklyLoad: teacherId ? (loads.get(teacherId) ?? 0) : 0,
+        periodsPerWeek: s.maxWeeklyPeriods,
+      };
+    });
+  },
+
+  saveSubjectAssignments: async (
+    schoolId: string,
+    classId: string,
+    section: string,
+    rows: Array<{ subjectId: string; teacherId: string | null }>,
+  ) => {
+    await Promise.all(
+      rows.map((r) =>
+        SubjectAssignmentModel.updateOne(
+          { schoolId, classId, section, subjectId: r.subjectId },
+          { $set: { teacherId: r.teacherId } },
+          { upsert: true },
+        ),
+      ),
+    );
+    return { success: true };
+  },
+
+  autoAssignSubjects: async (schoolId: string, classId: string, section: string) => {
+    const [current, loads, teachingStaff] = await Promise.all([
+      timetableService.getSubjectAssignments(schoolId, classId, section),
+      teacherWeeklyLoads(schoolId),
+      StaffModel.find({ schoolId, category: 'teaching' }, { name: 1 }).lean(),
+    ]);
+    // Least-loaded-first: each auto-assignment nudges that teacher's running
+    // count so a single teacher doesn't get every unassigned subject.
+    const runningLoad = new Map(teachingStaff.map((t) => [String(t._id), loads.get(String(t._id)) ?? 0]));
+    const rows = current.map((row) => {
+      if (row.teacherId) return { subjectId: row.subjectId, teacherId: row.teacherId };
+      let pick: string | null = null;
+      let min = Infinity;
+      for (const [id, load] of runningLoad) {
+        if (load < min) {
+          min = load;
+          pick = id;
+        }
+      }
+      if (pick) runningLoad.set(pick, min + 1);
+      return { subjectId: row.subjectId, teacherId: pick };
+    });
+    await timetableService.saveSubjectAssignments(schoolId, classId, section, rows);
+    return timetableService.getSubjectAssignments(schoolId, classId, section);
+  },
 };

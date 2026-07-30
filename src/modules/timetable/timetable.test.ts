@@ -540,4 +540,64 @@ describe('Timetable API', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
   });
+
+  // ─── Subject-Teacher Assignment ──────────────────────────────────────
+  it('subject assignments: lists applicable subjects, saves, auto-assigns, and reflects real teacher load', async () => {
+    const subject = await request(app)
+      .post('/api/timetable/config/subjects')
+      .set(auth(admin))
+      .send({
+        name: 'Geography',
+        code: 'GEO',
+        type: 'core',
+        applicableClasses: 'all',
+        maxWeeklyPeriods: 5,
+        color: '#10B981',
+      });
+    const subjectId = subject.body.id;
+
+    const list = await request(app)
+      .get('/api/timetable/subject-assignments?classId=Class-3&section=A')
+      .set(auth(admin));
+    expect(list.status).toBe(200);
+    expect(list.body.some((r: { subjectId: string }) => r.subjectId === subjectId)).toBe(true);
+    expect(list.body[0]).toMatchObject({
+      subjectId: expect.any(String),
+      subjectName: expect.any(String),
+      teacherId: null,
+      teacherWeeklyLoad: 0,
+    });
+
+    const staff = await request(app).get('/api/staff?department=teaching&pageSize=5').set(auth(admin));
+    const teacherId = staff.body.rows[0].id;
+
+    const save = await request(app)
+      .post('/api/timetable/subject-assignments')
+      .set(auth(admin))
+      .send({ classId: 'Class-3', section: 'A', rows: [{ subjectId, teacherId }] });
+    expect(save.status).toBe(200);
+
+    const afterSave = await request(app)
+      .get('/api/timetable/subject-assignments?classId=Class-3&section=A')
+      .set(auth(admin));
+    const savedRow = afterSave.body.find((r: { subjectId: string }) => r.subjectId === subjectId);
+    expect(savedRow).toMatchObject({ teacherId });
+
+    // Teacher-editing forbidden.
+    expect(
+      (
+        await request(app)
+          .post('/api/timetable/subject-assignments')
+          .set(auth(teacher))
+          .send({ classId: 'Class-3', section: 'A', rows: [] })
+      ).status,
+    ).toBe(403);
+
+    const auto = await request(app)
+      .post('/api/timetable/subject-assignments/auto-assign')
+      .set(auth(admin))
+      .send({ classId: 'Class-3', section: 'B' });
+    expect(auto.status).toBe(200);
+    expect(auto.body.every((r: { teacherId: string | null }) => r.teacherId !== null)).toBe(true);
+  });
 });

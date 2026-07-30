@@ -263,7 +263,7 @@ export async function seedDemo() {
           className: cls.name,
           sectionId: sec?._id,
           section: sec?.name ?? 'A',
-          classKey: cls.name,
+          classKey: `${cls.name}-${sec?.name ?? 'A'}`,
           admissionType: i % 2 === 0 ? 'new' : 'old',
           admittedAt: new Date('2025-04-05'),
           feeStatus: FEE[n % FEE.length],

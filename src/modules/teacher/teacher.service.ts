@@ -99,6 +99,59 @@ export const teacherService = {
     return rows;
   },
 
+  async getDashboardSummary(schoolId: string, userId: string) {
+    const [classes, exams, homework] = await Promise.all([
+      this.getMyClasses(schoolId, userId),
+      this.getMyExams(schoolId, userId),
+      this.getHomework(schoolId, userId),
+    ]);
+
+    const attendancePending = classes.filter((c) => c.attendanceToday.status === 'pending');
+    const marksPending = exams.filter((e) => e.marksEntryStatus !== 'submitted');
+    const homeworkClassKeysToday = new Set(
+      homework.filter((h) => h.assignedDate === today()).map((h) => h.classKey as string),
+    );
+    const homeworkGaps = classes.filter((c) => !homeworkClassKeysToday.has(c.classKey));
+
+    const pendingTasks = [
+      ...attendancePending.map((c) => ({
+        key: `attendance:${c.classKey}`,
+        type: 'attendance' as const,
+        classKey: c.classKey,
+      })),
+      ...marksPending.map((e) => ({
+        key: `marks:${e.id}`,
+        type: 'marks' as const,
+        classKey: e.classKey,
+        subject: e.subject,
+        examName: e.name,
+      })),
+      ...homeworkGaps.map((c) => ({
+        key: `homework:${c.classKey}`,
+        type: 'homework' as const,
+        classKey: c.classKey,
+      })),
+    ];
+
+    return {
+      kpis: {
+        classes: classes.length,
+        attendancePending: attendancePending.length,
+        homeworkPending: homeworkGaps.length,
+        marksPending: marksPending.length,
+      },
+      classesToday: classes.map((c) => ({
+        classKey: c.classKey,
+        className: c.className,
+        section: c.section,
+        subjects: c.subjects,
+        totalStudents: c.totalStudents,
+        attendanceStatus: c.attendanceToday.status,
+      })),
+      pendingTasks,
+    };
+  },
+
   async getMyExams(schoolId: string, userId: string) {
     const assignments = await myAssignments(schoolId, userId);
     const myClassNames = new Set(assignments.map((a) => a.className));

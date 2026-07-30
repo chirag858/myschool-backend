@@ -27,6 +27,9 @@ export const teacherController = {
   async myExams(req: Request, res: Response) {
     send(res, await teacherService.getMyExams(schoolId(req), userId(req)));
   },
+  async dashboardSummary(req: Request, res: Response) {
+    send(res, await teacherService.getDashboardSummary(schoolId(req), userId(req)));
+  },
 
   // Homework
   async getHomework(req: Request, res: Response) {

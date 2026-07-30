@@ -104,3 +104,18 @@ const timetableClassSchema = new Schema(
 timetableClassSchema.index({ schoolId: 1, classId: 1, section: 1 }, { unique: true });
 export type TimetableClassDoc = InferSchemaType<typeof timetableClassSchema>;
 export const TimetableClassModel = model('TimetableClass', timetableClassSchema);
+
+// ── Subject-Teacher Assignment (per class + section) ────────────────
+const subjectAssignmentSchema = new Schema(
+  {
+    schoolId: { type: Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    classId: { type: String, required: true },
+    section: { type: String, required: true },
+    subjectId: { type: String, required: true },
+    teacherId: { type: String, default: null },
+  },
+  { timestamps: true },
+);
+subjectAssignmentSchema.index({ schoolId: 1, classId: 1, section: 1, subjectId: 1 }, { unique: true });
+export type SubjectAssignmentDoc = InferSchemaType<typeof subjectAssignmentSchema>;
+export const SubjectAssignmentModel = model('SubjectAssignment', subjectAssignmentSchema);

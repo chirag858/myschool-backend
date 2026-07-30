@@ -58,6 +58,19 @@ function toReceipt(d: Doc) {
   };
 }
 
+/** Recompute and persist Student.feeStatus from actual receipts — keeps the denormalized field in sync after any collect/cancel/duplicate. */
+export async function syncStudentFeeStatus(schoolId: string, studentId: string): Promise<void> {
+  const student = await StudentModel.findOne({ _id: studentId, schoolId }, { className: 1 }).lean();
+  if (!student) return;
+  const session = await getActiveSessionName(schoolId);
+  const annual = await annualByClass(schoolId, session);
+  const totalFee = annual[student.className ?? ''] ?? 0;
+  const receipts = await ReceiptModel.find({ schoolId, studentId, status: 'active' }, { amount: 1 }).lean();
+  const paid = receipts.reduce((s, r) => s + Number(r.amount ?? 0), 0);
+  const feeStatus = paid <= 0 ? 'pending' : paid > totalFee ? 'advance' : paid >= totalFee ? 'paid' : 'partial';
+  await StudentModel.updateOne({ _id: studentId, schoolId }, { $set: { feeStatus } });
+}
+
 async function annualByClass(schoolId: string, session: string): Promise<Record<string, number>> {
   const structure = await FeeStructureModel.find({ schoolId, session }).lean();
   const out: Record<string, number> = {};
@@ -228,6 +241,7 @@ export const feeService = {
       status: 'active',
       remarks: p.remarks,
     });
+    await syncStudentFeeStatus(schoolId, p.studentId);
     return toReceipt(doc.toObject());
   },
 
@@ -272,6 +286,7 @@ export const feeService = {
       receiptNumber: `${original.receiptNumber}-DUP`,
       status: 'active',
     });
+    if (dup.schoolId && dup.studentId) await syncStudentFeeStatus(String(dup.schoolId), String(dup.studentId));
     return toReceipt(dup.toObject());
   },
 
@@ -282,6 +297,7 @@ export const feeService = {
       { new: true },
     );
     if (!doc) throw ApiError.notFound('Receipt not found');
+    if (doc.schoolId && doc.studentId) await syncStudentFeeStatus(String(doc.schoolId), String(doc.studentId));
     return toReceipt(doc.toObject());
   },
 

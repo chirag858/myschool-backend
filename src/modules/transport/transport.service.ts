@@ -1,4 +1,5 @@
 import { ApiError } from '../../lib/api-error';
+import { StudentModel } from '../students/student.model';
 import {
   DriverModel,
   RouteModel,
@@ -27,6 +28,11 @@ function routeDto(d: Doc) {
 }
 
 const isId = (v: unknown): boolean => /^[0-9a-fA-F]{24}$/.test(String(v ?? ''));
+
+async function nextBusPassNumber(schoolId: string): Promise<string> {
+  const count = await StudentTransportModel.countDocuments({ schoolId });
+  return `BP-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
+}
 
 export const transportService = {
   async kpi(schoolId: string) {
@@ -90,13 +96,30 @@ export const transportService = {
 
   // Routes
   async getRoutes(schoolId: string) {
-    const docs = await RouteModel.find({ schoolId }).sort({ routeName: 1 }).lean();
-    return docs.map(routeDto);
+    const [docs, assignments] = await Promise.all([
+      RouteModel.find({ schoolId }).sort({ routeName: 1 }).lean(),
+      StudentTransportModel.find({ schoolId }, { routeId: 1 }).lean(),
+    ]);
+    const counts = new Map<string, number>();
+    for (const a of assignments) {
+      if (!a.routeId) continue;
+      counts.set(a.routeId, (counts.get(a.routeId) ?? 0) + 1);
+    }
+    return docs.map((d) => {
+      const out = routeDto(d);
+      out.studentsCount = counts.get(String(d._id)) ?? 0;
+      return out;
+    });
   },
   async getRoute(schoolId: string, id: string) {
-    const d = await RouteModel.findOne({ _id: id, schoolId }).lean();
+    const [d, count] = await Promise.all([
+      RouteModel.findOne({ _id: id, schoolId }).lean(),
+      StudentTransportModel.countDocuments({ schoolId, routeId: id }),
+    ]);
     if (!d) throw ApiError.notFound('Route not found');
-    return routeDto(d);
+    const out = routeDto(d);
+    out.studentsCount = count;
+    return out;
   },
   async upsertRoute(schoolId: string, route: Record<string, unknown>) {
     const { id, ...fields } = route;
@@ -130,16 +153,40 @@ export const transportService = {
     return rows;
   },
   async upsertAssignment(schoolId: string, row: Record<string, unknown>) {
-    const { id, ...fields } = row;
-    if (isId(id)) {
-      const existing = await StudentTransportModel.findOne({ _id: id, schoolId });
-      if (existing) {
-        existing.set(fields);
-        await existing.save();
-        return dto(existing.toObject());
-      }
+    const studentId = String(row.studentId ?? '');
+    const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
+    if (!student) throw ApiError.notFound('Student not found');
+
+    const routeId = row.routeId ? String(row.routeId) : undefined;
+    const route = routeId ? await RouteModel.findOne({ _id: routeId, schoolId }).lean() : null;
+    if (routeId && !route) throw ApiError.notFound('Route not found');
+
+    // Name/class/photo always come from the real student record, not the client —
+    // keeps this table from drifting the way the Admissions fee-status field did.
+    const fields = {
+      studentId,
+      studentName: student.name,
+      photoUrl: student.photoUrl,
+      className: student.className ?? '',
+      routeId,
+      routeName: route ? route.routeName : String(row.routeName ?? ''),
+      stopName: String(row.stopName ?? ''),
+      pickupPoint: String(row.pickupPoint ?? ''),
+      dropPoint: String(row.dropPoint ?? ''),
+      monthlyFee: route ? (route.monthlyFee ?? 0) : Number(row.monthlyFee ?? 0),
+      effectiveFrom: String(row.effectiveFrom ?? new Date().toISOString().slice(0, 10)),
+    };
+
+    // A student rides one route at a time — reassigning updates their existing
+    // row (keeps the same bus pass number) instead of creating a duplicate.
+    const existing = await StudentTransportModel.findOne({ schoolId, studentId });
+    if (existing) {
+      existing.set(fields);
+      await existing.save();
+      return dto(existing.toObject());
     }
-    const doc = await StudentTransportModel.create({ schoolId, ...fields });
+    const busPassNumber = await nextBusPassNumber(schoolId);
+    const doc = await StudentTransportModel.create({ schoolId, ...fields, paymentStatus: 'pending', busPassNumber });
     return dto(doc.toObject());
   },
   async removeAssignment(schoolId: string, id: string) {

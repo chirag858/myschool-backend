@@ -21,6 +21,24 @@ export const createExamSchema = z.object({
   dateSheet: z.array(z.unknown()).optional(),
 });
 
+const dateSheetEntry = z.object({
+  id: z.string().min(1),
+  subjectId: z.string().min(1),
+  subjectName: z.string().min(1),
+  classKey: z.string().min(1),
+  date: z.string().min(1),
+  startTime: z.string().min(1),
+  endTime: z.string().min(1),
+  roomName: z.string().default(''),
+  invigilatorName: z.string().default(''),
+});
+export const saveDateSheetSchema = z.object({ dateSheet: z.array(dateSheetEntry) });
+
+export const logIdCardsSchema = z.object({
+  kind: z.enum(['student', 'staff']),
+  ids: z.array(z.string().min(1)).min(1),
+});
+
 export const marksQuery = z.object({
   classKey: z.string().min(1),
   subjectId: z.string().min(1),
@@ -43,3 +61,8 @@ export const saveMarksSchema = z.object({
 
 export const resultsQuery = z.object({ classKey: z.string().min(1) });
 export const classKeyBody = z.object({ classKey: z.string().min(1) });
+
+export const updateRemarksSchema = z.object({
+  teacherRemarks: z.string().optional(),
+  principalRemarks: z.string().optional(),
+});

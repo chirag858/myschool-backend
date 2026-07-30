@@ -330,8 +330,13 @@ export const studentsService = {
     toSection: string,
     toSession: string,
   ) {
+    // fromClassKey may be a single section ("Nursery-A") or a bare class name
+    // ("Nursery", every section) — same dual convention the students list
+    // filter and exam class-scoping already use.
+    const matchFrom = { schoolId, $or: [{ classKey: fromClassKey }, { className: fromClassKey }] };
+
     // Capture pre-promotion state as a real history entry before overwriting.
-    const outgoing = await StudentModel.find({ schoolId, classKey: fromClassKey }).lean();
+    const outgoing = await StudentModel.find(matchFrom).lean();
     await Promise.all(
       outgoing.map((s) =>
         StudentModel.updateOne(
@@ -352,10 +357,12 @@ export const studentsService = {
     );
 
     // classKey must always be `${className}-${section}` — same format as `create`.
-    const res = await StudentModel.updateMany(
-      { schoolId, classKey: fromClassKey },
-      { className: toClassName, section: toSection, classKey: `${toClassName}-${toSection}`, sessionLabel: toSession },
-    );
+    const res = await StudentModel.updateMany(matchFrom, {
+      className: toClassName,
+      section: toSection,
+      classKey: `${toClassName}-${toSection}`,
+      sessionLabel: toSession,
+    });
     return { affected: res.matchedCount };
   },
 

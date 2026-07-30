@@ -49,6 +49,28 @@ describe('Teacher Portal API', () => {
     if (res.body.length) expect(res.body[0]).toMatchObject({ id: expect.any(String), name: expect.any(String), classKey: expect.any(String), subject: expect.any(String) });
   });
 
+  it('dashboard-summary aggregates real classes/exams/homework into KPIs and pending tasks', async () => {
+    const res = await request(app).get('/api/teacher/dashboard-summary').set(auth(teacher));
+    expect(res.status).toBe(200);
+    expect(res.body.kpis).toMatchObject({
+      classes: 2,
+      attendancePending: expect.any(Number),
+      homeworkPending: expect.any(Number),
+      marksPending: expect.any(Number),
+    });
+    expect(res.body.classesToday).toHaveLength(2);
+    expect(res.body.classesToday[0]).toMatchObject({
+      classKey: expect.any(String),
+      subjects: expect.any(Array),
+      attendanceStatus: expect.any(String),
+    });
+    expect(Array.isArray(res.body.pendingTasks)).toBe(true);
+    for (const task of res.body.pendingTasks) {
+      expect(['attendance', 'marks', 'homework']).toContain(task.type);
+      expect(task.classKey).toEqual(expect.any(String));
+    }
+  });
+
   it('homework: list seeded, create, submissions roster, delete', async () => {
     const list = await request(app).get('/api/teacher/homework').set(auth(teacher));
     expect(list.body.length).toBe(1);

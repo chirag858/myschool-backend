@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "seed": "tsx src/seed/seed.ts"
+    "seed": "tsx src/seed/seed.ts",
+    "backfill:fee-status": "tsx src/scripts/backfill-fee-status.ts"
   },
   "dependencies": {
     "@types/node-cron": "^3.0.11",

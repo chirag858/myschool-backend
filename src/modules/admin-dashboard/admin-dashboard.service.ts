@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { StudentModel } from '../students/student.model';
 import { ReceiptModel } from '../fee/fee.models';
 import { WaiveOffModel } from '../fee/fee-adjust.models';
@@ -46,7 +47,7 @@ export const adminDashboardService = {
       StaffModel.countDocuments({ schoolId, category: 'teaching' }),
       StaffAttendanceModel.find({ schoolId, date: dToday }).lean(),
       ReceiptModel.aggregate([
-        { $match: { schoolId: schoolId.toString(), paymentDate: dToday, status: 'successful' } },
+        { $match: { schoolId: new Types.ObjectId(schoolId), paymentDate: dToday, status: 'active'} },
         { $group: { _id: '$paymentMode', total: { $sum: '$amount' } } },
       ]),
     ]);
@@ -144,14 +145,14 @@ export const adminDashboardService = {
 
     const [todayReceipts, trendReceipts] = await Promise.all([
       ReceiptModel.aggregate([
-        { $match: { schoolId: schoolId.toString(), paymentDate: dToday, status: 'successful' } },
+        { $match: { schoolId: new Types.ObjectId(schoolId), paymentDate: dToday, status: 'active'} },
         { $group: { _id: '$paymentMode', total: { $sum: '$amount' } } },
       ]),
       ReceiptModel.aggregate([
-        { 
-          $match: { 
-            schoolId: schoolId.toString(), 
-            status: 'successful',
+        {
+          $match: {
+            schoolId: new Types.ObjectId(schoolId),
+            status: 'active',
             paymentDate: { $gte: sixMonthsAgo.toISOString().slice(0,10) }
           } 
         },
