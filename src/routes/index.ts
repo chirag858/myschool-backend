@@ -42,6 +42,13 @@ import { schoolReportsRoutes } from '../modules/reports/school-reports.routes';
 /** All domain routers mount here, under the server's `/api` base. */
 export const apiRouter = Router();
 
+// Public liveness probe — the mobile app's connectivity monitor GETs /api/health
+// and treats ANY response (even a 404) as "server-unreachable". Without this it
+// perpetually shows a "Server issue" banner though every real endpoint is 200.
+apiRouter.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/super-admin', schoolRoutes);
 apiRouter.use('/super-admin', superAdminExtrasRoutes);
