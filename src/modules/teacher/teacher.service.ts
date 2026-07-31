@@ -5,6 +5,7 @@ import { ExamModel } from '../exams/exams.models';
 import { StudentModel } from '../students/student.model';
 import { UserModel } from '../user/user.model';
 import {
+  HomeworkSubmissionModel,
   SubmissionModel,
   TeacherAssignmentModel,
   TeacherClassModel,
@@ -165,6 +166,9 @@ export const teacherService = {
         for (const subject of a.subjects) {
           rows.push({
             id: `${String(e._id)}:${keyOf(a.className, a.section)}:${subject}`,
+            // The real exam _id — `id` above is a composite row key and must
+            // never be sent back to /exams/:id.
+            examId: String(e._id),
             name: e.name,
             classKey: keyOf(a.className, a.section),
             subject,
@@ -186,7 +190,17 @@ export const teacherService = {
     if (filters.type && filters.type !== 'all') q.homeworkType = filters.type;
     if (filters.classKey && filters.classKey !== 'all') q.classKey = filters.classKey;
     if (filters.subject && filters.subject !== 'all') q.subject = filters.subject;
-    return (await TeacherHomeworkModel.find(q).sort({ assignedDate: -1 }).lean()).map(dto);
+    const rows = (await TeacherHomeworkModel.find(q).sort({ assignedDate: -1 }).lean()).map(dto);
+    // `section` lives either in its own field or as the tail of classKey, so it
+    // is filtered after the query rather than as a Mongo condition.
+    if (!filters.section || filters.section === 'all') return rows;
+    return rows.filter((r) => sectionOf(r) === filters.section);
+  },
+
+  async getHomeworkById(schoolId: string, id: string) {
+    const hw = await TeacherHomeworkModel.findOne({ _id: id, schoolId }).lean();
+    if (!hw) throw ApiError.notFound('Homework not found');
+    return dto(hw);
   },
 
   async createHomework(schoolId: string, userId: string, payload: Record<string, unknown>) {
@@ -214,6 +228,11 @@ export const teacherService = {
   async updateHomework(schoolId: string, userId: string, id: string, patch: Record<string, unknown>, role: string) {
     const hw = await TeacherHomeworkModel.findOne({ _id: id, schoolId });
     if (!hw) throw ApiError.notFound('Homework not found');
+    // A teacher may only edit their own homework; admin/principal/coordinator
+    // may edit any, and the edit trail records who did it.
+    if (role === 'teacher' && String(hw.teacherUserId) !== userId) {
+      throw ApiError.forbidden('You can only edit homework you created');
+    }
     const name = await teacherName(userId);
     Object.assign(hw, patch, {
       lastEditedBy: name,
@@ -227,8 +246,12 @@ export const teacherService = {
   async deleteHomework(schoolId: string, userId: string, id: string) {
     const r = await TeacherHomeworkModel.deleteOne({ _id: id, schoolId, teacherUserId: userId });
     if (!r.deletedCount) throw ApiError.notFound('Homework not found');
+    await HomeworkSubmissionModel.deleteMany({ schoolId, homeworkId: id });
   },
 
+  /** Materialises one persisted row per student in the class on first read,
+   * then returns the stored rows. New students joining later get a row added
+   * on the next read rather than silently missing from the list. */
   async getHomeworkSubmissions(schoolId: string, id: string) {
     const hw = await TeacherHomeworkModel.findOne({ _id: id, schoolId }).lean();
     if (!hw) throw ApiError.notFound('Homework not found');
@@ -236,14 +259,67 @@ export const teacherService = {
     const students = await StudentModel.find({ schoolId, className, section, profileStatus: 'active' })
       .sort({ rollNumber: 1 })
       .lean();
-    return students.map((s, i) => ({
-      id: `${id}:${String(s._id)}`,
-      homeworkId: id,
-      studentId: String(s._id),
-      studentName: s.name,
-      rollNo: Number(s.rollNumber) || i + 1,
-      status: 'pending',
-    }));
+
+    const existing = await HomeworkSubmissionModel.find({ schoolId, homeworkId: id }).lean();
+    const have = new Set(existing.map((r) => String(r.studentId)));
+    const missing = students.filter((s) => !have.has(String(s._id)));
+    if (missing.length > 0) {
+      await HomeworkSubmissionModel.insertMany(
+        missing.map((s, i) => ({
+          schoolId,
+          homeworkId: id,
+          studentId: String(s._id),
+          studentName: s.name,
+          rollNo: Number(s.rollNumber) || existing.length + i + 1,
+          status: 'pending',
+        })),
+        { ordered: false },
+      );
+    }
+
+    const rows = await HomeworkSubmissionModel.find({ schoolId, homeworkId: id }).sort({ rollNo: 1 }).lean();
+    return rows.map(homeworkSubmissionView);
+  },
+
+  /** Teacher records what a student actually handed in. Also keeps the
+   * homework's `submissions` counter in step with the stored rows. */
+  async setHomeworkSubmission(
+    schoolId: string,
+    id: string,
+    studentId: string,
+    patch: { status: string; marks?: number; remark?: string; attachment?: string },
+  ) {
+    const hw = await TeacherHomeworkModel.findOne({ _id: id, schoolId }).lean();
+    if (!hw) throw ApiError.notFound('Homework not found');
+
+    const set: Record<string, unknown> = { status: patch.status };
+    if (patch.marks !== undefined) set.marks = patch.marks;
+    if (patch.remark !== undefined) set.remark = patch.remark;
+    if (patch.attachment !== undefined) set.attachment = patch.attachment;
+    // Stamp the hand-in time when moving into a submitted-like state, clear it
+    // when moving back to pending. Mongoose drops `undefined` from `$set`, so
+    // clearing has to go through `$unset`.
+    const update: Record<string, unknown> = { $set: set };
+    if (patch.status === 'pending') update.$unset = { submittedAt: '' };
+    else set.submittedAt = nowIso();
+
+    const doc = await HomeworkSubmissionModel.findOneAndUpdate({ schoolId, homeworkId: id, studentId }, update, { new: true });
+    if (!doc) throw ApiError.notFound('Submission not found');
+
+    await syncHomeworkCount(schoolId, id);
+    return homeworkSubmissionView(doc.toObject());
+  },
+
+  /** Stamps every still-pending row so the UI can show who has already been
+   * chased, mirroring the attendance absentee-alert pattern. */
+  async remindPendingHomework(schoolId: string, id: string) {
+    const hw = await TeacherHomeworkModel.findOne({ _id: id, schoolId }).lean();
+    if (!hw) throw ApiError.notFound('Homework not found');
+    const r = await HomeworkSubmissionModel.updateMany(
+      { schoolId, homeworkId: id, status: 'pending' },
+      { $set: { reminderSentAt: nowIso() } },
+    );
+    return { sent: r.matchedCount };
   },
 
   // ─── Assignments ───
@@ -257,14 +333,20 @@ export const teacherService = {
 
   async assignmentView(schoolId: string, a: Doc) {
     const [className, section] = splitKey(a.classKey as string);
-    const [total, submitted] = await Promise.all([
+    const [total, submitted, graded] = await Promise.all([
       StudentModel.countDocuments({ schoolId, className, section, profileStatus: 'active' }),
       SubmissionModel.countDocuments({ schoolId, assignmentId: String(a._id), status: { $in: ['submitted', 'late', 'graded'] } }),
+      SubmissionModel.countDocuments({ schoolId, assignmentId: String(a._id), status: 'graded' }),
     ]);
+    const base = dto(a);
     return {
-      ...dto(a),
+      ...base,
+      // `overdue` is derived, never stored: an active assignment past its due
+      // date is overdue until the teacher closes it.
+      status: base.status === 'active' && String(base.dueDate ?? '') && String(base.dueDate) < today() ? 'overdue' : base.status,
       totalStudents: total,
       submitted,
+      graded,
       pending: Math.max(total - submitted, 0),
     };
   },
@@ -282,6 +364,23 @@ export const teacherService = {
       assignedDate: (fields.assignedDate as string) || today(),
       status: (fields.status as string) || 'active',
     });
+    return this.assignmentView(schoolId, doc.toObject() as Doc);
+  },
+
+  async updateAssignment(schoolId: string, userId: string, id: string, patch: Record<string, unknown>) {
+    const { id: _id, totalStudents, submitted, graded, pending, assignedDate, ...fields } = patch;
+    void _id;
+    void totalStudents;
+    void submitted;
+    void graded;
+    void pending;
+    void assignedDate;
+    const doc = await TeacherAssignmentModel.findOneAndUpdate(
+      { _id: id, schoolId, teacherUserId: userId },
+      { $set: fields },
+      { new: true },
+    );
+    if (!doc) throw ApiError.notFound('Assignment not found');
     return this.assignmentView(schoolId, doc.toObject() as Doc);
   },
 
@@ -304,26 +403,28 @@ export const teacherService = {
   async getSubmissions(schoolId: string, id: string) {
     const a = await TeacherAssignmentModel.findOne({ _id: id, schoolId }).lean();
     if (!a) throw ApiError.notFound('Assignment not found');
-    let rows = await SubmissionModel.find({ schoolId, assignmentId: id }).lean();
-    if (rows.length === 0) {
-      // Lazily materialise one submission row per student in the class.
-      const [className, section] = splitKey(a.classKey as string);
-      const students = await StudentModel.find({ schoolId, className, section, profileStatus: 'active' }).sort({ rollNumber: 1 }).lean();
+    // Materialise one row per student in the class, all genuinely pending until
+    // the teacher records a hand-in. Students added later get a row on the next
+    // read rather than being missing from the list.
+    const [className, section] = splitKey(a.classKey as string);
+    const students = await StudentModel.find({ schoolId, className, section, profileStatus: 'active' }).sort({ rollNumber: 1 }).lean();
+    const existing = await SubmissionModel.find({ schoolId, assignmentId: id }).lean();
+    const have = new Set(existing.map((r) => String(r.studentId)));
+    const missing = students.filter((s) => !have.has(String(s._id)));
+    if (missing.length > 0) {
       await SubmissionModel.insertMany(
-        students.map((s, i) => ({
+        missing.map((s) => ({
           schoolId,
           assignmentId: id,
           studentId: String(s._id),
           studentName: s.name,
           className: `${className}-${section}`,
-          // Alternate so the grading UI has both submitted and pending rows to work with.
-          status: i % 3 === 2 ? 'pending' : 'submitted',
-          submittedAt: i % 3 === 2 ? undefined : nowIso(),
-          fileName: i % 3 === 2 ? undefined : `submission-${s.rollNumber || i + 1}.pdf`,
+          status: 'pending',
         })),
+        { ordered: false },
       );
-      rows = await SubmissionModel.find({ schoolId, assignmentId: id }).lean();
     }
+    const rows = await SubmissionModel.find({ schoolId, assignmentId: id }).sort({ studentName: 1 }).lean();
     return rows.map((r) => ({
       id: String(r._id),
       assignmentId: id,
@@ -339,7 +440,56 @@ export const teacherService = {
     }));
   },
 
+  /** Teacher records that a student handed the assignment in (or takes it back
+   * to pending). Late is derived from the assignment's due date. */
+  async receiveSubmission(
+    schoolId: string,
+    id: string,
+    studentId: string,
+    payload: { status: string; textContent?: string; fileName?: string },
+  ) {
+    const a = await TeacherAssignmentModel.findOne({ _id: id, schoolId }).lean();
+    if (!a) throw ApiError.notFound('Assignment not found');
+
+    const set: Record<string, unknown> = {};
+    if (payload.textContent !== undefined) set.textContent = payload.textContent;
+    if (payload.fileName !== undefined) set.fileName = payload.fileName;
+    const update: Record<string, unknown> = { $set: set };
+    if (payload.status === 'pending') {
+      set.status = 'pending';
+      // `$set: { submittedAt: undefined }` is a no-op in Mongoose.
+      update.$unset = { submittedAt: '' };
+    } else {
+      const due = String(a.dueDate ?? '');
+      set.status = due && today() > due ? 'late' : 'submitted';
+      set.submittedAt = nowIso();
+    }
+
+    const doc = await SubmissionModel.findOneAndUpdate({ schoolId, assignmentId: id, studentId }, update, { new: true });
+    if (!doc) throw ApiError.notFound('Submission not found');
+    const r = doc.toObject();
+    return {
+      id: String(r._id),
+      assignmentId: id,
+      studentId: String(r.studentId),
+      studentName: r.studentName,
+      className: r.className,
+      submittedAt: r.submittedAt,
+      status: r.status,
+      textContent: r.textContent,
+      fileName: r.fileName,
+      marks: r.marks ?? undefined,
+      feedback: r.feedback ?? undefined,
+    };
+  },
+
   async gradeSubmission(schoolId: string, id: string, studentId: string, payload: { marks: number; feedback: string }) {
+    const a = await TeacherAssignmentModel.findOne({ _id: id, schoolId }).lean();
+    if (!a) throw ApiError.notFound('Assignment not found');
+    const max = Number(a.maxMarks ?? 0);
+    if (payload.marks < 0 || (max > 0 && payload.marks > max)) {
+      throw ApiError.badRequest(`Marks must be between 0 and ${max}`);
+    }
     const doc = await SubmissionModel.findOneAndUpdate(
       { schoolId, assignmentId: id, studentId },
       { $set: { status: 'graded', marks: payload.marks, feedback: payload.feedback } },
@@ -365,28 +515,65 @@ export const teacherService = {
     const rows = await CircularModel.find({ schoolId, status: 'published', audience: { $in: ['all', 'staff', 'teacher'] } })
       .sort({ dateOfIssue: -1 })
       .lean();
-    return rows.map((c) => circularView(c, name));
+    return rows.map((c) => circularView(c, name, userId));
   },
   async getMyCirculars(schoolId: string, userId: string) {
     const name = await teacherName(userId);
-    const rows = await CircularModel.find({ schoolId, createdBy: name }).sort({ dateOfIssue: -1 }).lean();
-    return rows.map((c) => circularView(c, name));
+    // Match on the author id; fall back to the display name so circulars
+    // written before `createdById` existed still show up as "mine".
+    const rows = await CircularModel.find({
+      schoolId,
+      $or: [{ createdById: userId }, { createdById: { $in: ['', null] }, createdBy: name }],
+    })
+      .sort({ dateOfIssue: -1 })
+      .lean();
+    return rows.map((c) => circularView(c, name, userId));
   },
   async createCircular(schoolId: string, userId: string, payload: Record<string, unknown>) {
     const name = await teacherName(userId);
+    const count = await CircularModel.countDocuments({ schoolId });
     const doc = await CircularModel.create({
       schoolId,
-      number: (payload.number as string) || `TCIR/${Date.now()}`,
+      number: (payload.number as string) || `CIR/${new Date().getFullYear()}/${String(count + 1).padStart(4, '0')}`,
       title: payload.title,
       body: payload.body,
       dateOfIssue: (payload.dateOfIssue as string) || today(),
       audience: (payload.audience as string[]) || ['staff'],
       specificClasses: (payload.audienceClasses as string[]) || [],
       priority: (payload.priority as string) || 'normal',
-      status: 'published',
+      status: (payload.status as string) === 'draft' ? 'draft' : 'published',
       createdBy: name,
+      createdById: userId,
     });
-    return circularView(doc.toObject(), name);
+    return circularView(doc.toObject(), name, userId);
+  },
+  async updateCircular(schoolId: string, userId: string, id: string, patch: Record<string, unknown>) {
+    const name = await teacherName(userId);
+    const c = await CircularModel.findOne({ _id: id, schoolId }).lean();
+    if (!c) throw ApiError.notFound('Circular not found');
+    if (!isMine(c, name, userId)) throw ApiError.forbidden('You can only edit circulars you created');
+
+    const set: Record<string, unknown> = {};
+    for (const key of ['title', 'body', 'priority', 'dateOfIssue', 'status'] as const) {
+      if (patch[key] !== undefined) set[key] = patch[key];
+    }
+    if (patch.audienceClasses !== undefined) set.specificClasses = patch.audienceClasses;
+    const doc = await CircularModel.findOneAndUpdate({ _id: id, schoolId }, { $set: set }, { new: true });
+    return circularView((doc as unknown as { toObject: () => Doc }).toObject(), name, userId);
+  },
+  async deleteCircular(schoolId: string, userId: string, id: string) {
+    const name = await teacherName(userId);
+    const c = await CircularModel.findOne({ _id: id, schoolId }).lean();
+    if (!c) throw ApiError.notFound('Circular not found');
+    if (!isMine(c, name, userId)) throw ApiError.forbidden('You can only delete circulars you created');
+    await CircularModel.deleteOne({ _id: id, schoolId });
+  },
+  /** Counts a read. Returns the fresh view so the card's counter updates. */
+  async markCircularRead(schoolId: string, userId: string, id: string) {
+    const name = await teacherName(userId);
+    const doc = await CircularModel.findOneAndUpdate({ _id: id, schoolId }, { $inc: { views: 1 } }, { new: true });
+    if (!doc) throw ApiError.notFound('Circular not found');
+    return circularView(doc.toObject(), name, userId);
   },
 
   // ─── Leave ───
@@ -437,7 +624,45 @@ function splitKey(classKey: string): [string, string] {
   return [classKey.slice(0, idx), classKey.slice(idx + 1)];
 }
 
-function circularView(c: Doc, teacher: string): Record<string, unknown> {
+/** Section as stored on the homework, falling back to the tail of `classKey`. */
+function sectionOf(hw: Record<string, unknown>): string {
+  const explicit = String(hw.section ?? '').trim();
+  if (explicit) return explicit;
+  return splitKey(String(hw.classKey ?? ''))[1];
+}
+
+function homeworkSubmissionView(r: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: String(r._id),
+    homeworkId: String(r.homeworkId),
+    studentId: String(r.studentId),
+    studentName: r.studentName,
+    rollNo: Number(r.rollNo ?? 0),
+    status: r.status,
+    submittedAt: r.submittedAt ?? undefined,
+    attachment: r.attachment ?? undefined,
+    marks: r.marks ?? undefined,
+    remark: r.remark ?? undefined,
+    reminderSentAt: r.reminderSentAt ?? undefined,
+  };
+}
+
+/** Keeps `homework.submissions` equal to the number of rows actually handed in. */
+async function syncHomeworkCount(schoolId: string, homeworkId: string): Promise<void> {
+  const submissions = await HomeworkSubmissionModel.countDocuments({
+    schoolId,
+    homeworkId,
+    status: { $in: ['submitted', 'late', 'graded'] },
+  });
+  await TeacherHomeworkModel.updateOne({ _id: homeworkId, schoolId }, { $set: { submissions } });
+}
+
+function isMine(c: Doc, teacher: string, userId: string): boolean {
+  const owner = String(c.createdById ?? '');
+  return owner ? owner === userId : c.createdBy === teacher;
+}
+
+function circularView(c: Doc, teacher: string, userId: string): Record<string, unknown> {
   return {
     id: String(c._id),
     number: (c.number as string) ?? '',
@@ -450,7 +675,7 @@ function circularView(c: Doc, teacher: string): Record<string, unknown> {
     attachmentsCount: ((c.attachments as unknown[]) ?? []).length,
     views: (c.views as number) ?? 0,
     status: (c.status as string) ?? 'published',
-    createdByMe: c.createdBy === teacher,
+    createdByMe: isMine(c, teacher, userId),
     createdBy: (c.createdBy as string) ?? '',
   };
 }

@@ -248,3 +248,124 @@ describe('Staff/HR API', () => {
     expect(ok.status).toBe(201);
   });
 });
+
+describe('Staff login credentials API', () => {
+  let admin: string;
+  let staffId: string;
+  beforeEach(async () => {
+    await seedDemo();
+    admin = await token('schooladmin');
+    const list = await request(app).get('/api/staff').set(auth(admin));
+    staffId = list.body.rows[0].id;
+  });
+
+  it('requires auth (401) and forbids other roles (403)', async () => {
+    expect((await request(app).get(`/api/staff/${staffId}/credentials`)).status).toBe(401);
+    const acc = await token('accountant');
+    expect((await request(app).get(`/api/staff/${staffId}/credentials`).set(auth(acc))).status).toBe(403);
+    expect(
+      (
+        await request(app)
+          .post(`/api/staff/${staffId}/credentials`)
+          .set(auth(acc))
+          .send({ role: 'teacher', email: 'x@example.com' })
+      ).status,
+    ).toBe(403);
+  });
+
+  it('has no login initially; create → get → duplicate-create rejected', async () => {
+    const before = await request(app).get(`/api/staff/${staffId}/credentials`).set(auth(admin));
+    expect(before.body).toMatchObject({ hasLogin: false });
+
+    const create = await request(app)
+      .post(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher', email: 'newteacher@example.com' });
+    expect(create.status).toBe(201);
+    expect(create.body).toMatchObject({
+      hasLogin: true,
+      username: 'newteacher@example.com',
+      email: 'newteacher@example.com',
+      role: 'teacher',
+      active: true,
+      tempPassword: expect.any(String),
+    });
+    expect(create.body.tempPassword.length).toBeGreaterThan(0);
+
+    const after = await request(app).get(`/api/staff/${staffId}/credentials`).set(auth(admin));
+    expect(after.body).toMatchObject({ hasLogin: true, email: 'newteacher@example.com', role: 'teacher' });
+    expect(after.body.tempPassword).toBeUndefined();
+
+    const dup = await request(app)
+      .post(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher', email: 'another@example.com' });
+    expect(dup.status).toBe(409);
+  });
+
+  it('explicit password on create is not echoed back; new login can authenticate', async () => {
+    const create = await request(app)
+      .post(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher', email: 'setpw@example.com', username: 'setpw', password: 'mypassword1' });
+    expect(create.status).toBe(201);
+    expect(create.body.tempPassword).toBeUndefined();
+
+    const login = await request(app).post('/api/auth/login').send({ username: 'setpw', password: 'mypassword1', captcha: 'x' });
+    expect(login.status).toBe(200);
+  });
+
+  it('rejects a role outside STAFF_ROLES and a duplicate email/username', async () => {
+    expect(
+      (
+        await request(app)
+          .post(`/api/staff/${staffId}/credentials`)
+          .set(auth(admin))
+          .send({ role: 'super_admin', email: 'x@example.com' })
+      ).status,
+    ).toBe(400);
+
+    const dupEmail = await request(app)
+      .post(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher', email: 'teacher@msc.test' }); // already used by seeded demo teacher
+    expect(dupEmail.status).toBe(409);
+  });
+
+  it('update role/active and reset password', async () => {
+    await request(app)
+      .post(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher', email: 'updateme@example.com', password: 'initialpw1' });
+
+    const update = await request(app)
+      .patch(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'coordinator', active: false });
+    expect(update.status).toBe(200);
+    expect(update.body).toMatchObject({ role: 'coordinator', active: false, assignedClasses: [] });
+
+    const reset = await request(app)
+      .post(`/api/staff/${staffId}/credentials/reset-password`)
+      .set(auth(admin))
+      .send({});
+    expect(reset.status).toBe(200);
+    expect(reset.body.tempPassword).toEqual(expect.any(String));
+
+    const resetExplicit = await request(app)
+      .post(`/api/staff/${staffId}/credentials/reset-password`)
+      .set(auth(admin))
+      .send({ password: 'brandnewpw1' });
+    expect(resetExplicit.status).toBe(200);
+    expect(resetExplicit.body.tempPassword).toBeUndefined();
+  });
+
+  it('404s update/reset for a staff member with no login yet', async () => {
+    expect((await request(app).patch(`/api/staff/${staffId}/credentials`).set(auth(admin)).send({ active: false })).status).toBe(404);
+    expect((await request(app).post(`/api/staff/${staffId}/credentials/reset-password`).set(auth(admin)).send({})).status).toBe(404);
+  });
+
+  it('tenant scoping: staff from another school 404s', async () => {
+    expect((await request(app).get('/api/staff/000000000000000000000000/credentials').set(auth(admin))).status).toBe(404);
+  });
+});

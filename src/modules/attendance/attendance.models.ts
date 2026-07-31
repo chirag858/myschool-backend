@@ -16,6 +16,7 @@ const attendanceSchema = new Schema(
     className: { type: String, default: '' },
     section: { type: String, default: '' },
     markedBy: { type: String, default: 'System' },
+    alertSent: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

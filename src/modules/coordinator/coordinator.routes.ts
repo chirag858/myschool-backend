@@ -12,6 +12,7 @@ import {
   reasonSchema,
   remarksSchema,
   staffIdParam,
+  teacherAssignmentSchema,
   userIdParam,
 } from './coordinator.validation';
 
@@ -27,6 +28,21 @@ coordinatorRoutes.patch(
   requireRole('school_admin', 'principal'),
   validate({ params: userIdParam, body: assignedClassesSchema }),
   asyncHandler(coordinatorController.setAssignedClasses),
+);
+
+coordinatorRoutes.get('/teachers', asyncHandler(coordinatorController.getTeachers));
+coordinatorRoutes.get('/teacher-assignments', asyncHandler(coordinatorController.getTeacherAssignments));
+coordinatorRoutes.post(
+  '/teacher-assignments',
+  requireRole('school_admin', 'principal'),
+  validate({ body: teacherAssignmentSchema }),
+  asyncHandler(coordinatorController.saveTeacherAssignment),
+);
+coordinatorRoutes.delete(
+  '/teacher-assignments/:id',
+  requireRole('school_admin', 'principal'),
+  validate({ params: idParam }),
+  asyncHandler(coordinatorController.deleteTeacherAssignment),
 );
 
 coordinatorRoutes.get('/student-leaves', asyncHandler(coordinatorController.getStudentLeaves));

@@ -238,6 +238,60 @@ export const coordinatorService = {
     return { id: String(user._id), assignedClasses: user.assignedClasses ?? [] };
   },
 
+  // ─── Teacher → class assignments (drives the teacher portal's "My Classes"/"My Students") ───
+  async getTeachers(schoolId: string) {
+    const teachers = await UserModel.find({ schoolId, role: 'teacher' }).select('name mobile email').lean();
+    return teachers.map((t) => ({ id: String(t._id), name: t.name, mobile: t.mobile, email: t.email }));
+  },
+
+  async getTeacherAssignments(schoolId: string, teacherUserId?: string) {
+    const filter: Record<string, unknown> = { schoolId };
+    if (teacherUserId) filter.teacherUserId = teacherUserId;
+    const [assignments, teachers] = await Promise.all([
+      TeacherClassModel.find(filter).sort({ className: 1, section: 1 }).lean(),
+      UserModel.find({ schoolId, role: 'teacher' }).select('name').lean(),
+    ]);
+    const nameById = new Map(teachers.map((t) => [String(t._id), t.name as string]));
+    return assignments.map((a) => ({
+      id: String(a._id),
+      teacherUserId: String(a.teacherUserId),
+      teacherName: nameById.get(String(a.teacherUserId)) ?? 'Unknown',
+      className: a.className ?? '',
+      section: a.section ?? '',
+      classKey: keyOf((a.className as string) ?? '', (a.section as string) ?? ''),
+      subjects: a.subjects ?? [],
+      periodsPerWeek: a.periodsPerWeek ?? 0,
+    }));
+  },
+
+  async saveTeacherAssignment(
+    schoolId: string,
+    payload: { teacherUserId: string; className: string; section: string; subjects: string[]; periodsPerWeek: number },
+  ) {
+    const teacher = await UserModel.findOne({ _id: payload.teacherUserId, schoolId, role: 'teacher' }).lean();
+    if (!teacher) throw ApiError.notFound('Teacher not found');
+    const doc = await TeacherClassModel.findOneAndUpdate(
+      { schoolId, teacherUserId: payload.teacherUserId, className: payload.className, section: payload.section },
+      { $set: { subjects: payload.subjects, periodsPerWeek: payload.periodsPerWeek } },
+      { new: true, upsert: true },
+    ).lean();
+    return {
+      id: String(doc!._id),
+      teacherUserId: String(doc!.teacherUserId),
+      teacherName: teacher.name as string,
+      className: doc!.className ?? '',
+      section: doc!.section ?? '',
+      classKey: keyOf((doc!.className as string) ?? '', (doc!.section as string) ?? ''),
+      subjects: doc!.subjects ?? [],
+      periodsPerWeek: doc!.periodsPerWeek ?? 0,
+    };
+  },
+
+  async deleteTeacherAssignment(schoolId: string, id: string) {
+    const doc = await TeacherClassModel.findOneAndDelete({ _id: id, schoolId });
+    if (!doc) throw ApiError.notFound('Assignment not found');
+  },
+
   async getStudentLeaves(schoolId: string, q: Record<string, string>) {
     const filter: Record<string, unknown> = { schoolId };
     if (q.status && q.status !== 'all') filter.status = q.status;

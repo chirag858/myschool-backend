@@ -74,6 +74,8 @@ export const togglePublishSchema = z.object({
 });
 
 export const copyDaySchema = z.object({
+  classId: z.string().min(1),
+  section: z.string().min(1),
   fromDay: z.enum([...DAY_OF_WEEK] as [string, ...string[]]),
   toDays: z.array(z.enum([...DAY_OF_WEEK] as [string, ...string[]])).min(1),
 });

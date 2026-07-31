@@ -16,6 +16,9 @@ const circularSchema = new Schema(
     status: { type: String, enum: ['draft', 'published', 'archived'], default: 'draft' },
     views: { type: Number, default: 0 },
     createdBy: { type: String, default: 'System' },
+    /** Author's user id. Authoritative for "mine" ownership checks —
+     * `createdBy` is a display name and two staff can share one. */
+    createdById: { type: String, default: '', index: true },
   },
   { timestamps: true },
 );

@@ -114,8 +114,33 @@ describe('Attendance API', () => {
     expect(absentees.status).toBe(200);
     expect(Array.isArray(absentees.body)).toBe(true);
     if (absentees.body.length > 0) {
-      expect(absentees.body[0]).toMatchObject({ studentId: expect.any(String), studentName: expect.any(String), rollNumber: expect.any(String) });
+      expect(absentees.body[0]).toMatchObject({ studentId: expect.any(String), studentName: expect.any(String), rollNumber: expect.any(String), alertSent: false });
     }
+  });
+
+  it('POST /attendance/reports/absentees/alert marks absentees alerted, persisted and idempotent', async () => {
+    const before = await request(app).get('/api/attendance/reports/absentees?date=2025-04-07').set(auth(admin));
+    expect(before.body.every((a: { alertSent: boolean }) => a.alertSent === false)).toBe(true);
+    if (before.body.length === 0) return;
+
+    const res = await request(app)
+      .post('/api/attendance/reports/absentees/alert')
+      .set(auth(admin))
+      .send({ date: '2025-04-07' });
+    expect(res.status).toBe(200);
+    expect(res.body.sent).toBe(before.body.length);
+
+    const after = await request(app).get('/api/attendance/reports/absentees?date=2025-04-07').set(auth(admin));
+    expect(after.body.every((a: { alertSent: boolean }) => a.alertSent === true)).toBe(true);
+
+    // Idempotent: re-running for the same date is safe and every row stays alerted.
+    const again = await request(app)
+      .post('/api/attendance/reports/absentees/alert')
+      .set(auth(admin))
+      .send({ date: '2025-04-07' });
+    expect(again.status).toBe(200);
+    const stillAfter = await request(app).get('/api/attendance/reports/absentees?date=2025-04-07').set(auth(admin));
+    expect(stillAfter.body.every((a: { alertSent: boolean }) => a.alertSent === true)).toBe(true);
   });
 
   it('GET /students/:id/attendance builds the monthly calendar', async () => {

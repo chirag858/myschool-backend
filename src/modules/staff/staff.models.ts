@@ -3,6 +3,7 @@ import { Schema, model, type InferSchemaType } from 'mongoose';
 const staffSchema = new Schema(
   {
     schoolId: { type: Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     employeeId: { type: String, required: true },
     name: { type: String, required: true },
     designation: { type: String, default: '' },

@@ -1,5 +1,30 @@
+import { randomUUID } from 'node:crypto';
+
+import bcrypt from 'bcryptjs';
+
 import { ApiError } from '../../lib/api-error';
+import { UserModel } from '../user/user.model';
 import { StaffAttendanceLockModel, StaffAttendanceModel, StaffModel } from './staff.models';
+
+interface CredentialsDoc {
+  _id: unknown;
+  username?: string;
+  email?: string;
+  role: string;
+  active?: boolean;
+  assignedClasses?: string[];
+}
+function credentialsDto(user: CredentialsDoc): Record<string, unknown> {
+  return {
+    hasLogin: true,
+    userId: String(user._id),
+    username: user.username ?? '',
+    email: user.email ?? '',
+    role: user.role,
+    active: user.active ?? true,
+    ...(user.role === 'coordinator' ? { assignedClasses: user.assignedClasses ?? [] } : {}),
+  };
+}
 
 type Doc = Record<string, unknown> & { _id: unknown };
 const round = (n: number): number => Math.round(n);
@@ -154,6 +179,75 @@ export const staffService = {
     const doc = await StaffModel.findOneAndUpdate({ _id: id, schoolId }, { status }, { new: true });
     if (!doc) throw ApiError.notFound('Staff not found');
     return toRow(doc.toObject());
+  },
+
+  // ── Login credentials (links this Staff record to a User login) ──
+  async getCredentials(schoolId: string, staffId: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff) throw ApiError.notFound('Staff not found');
+    if (!staff.userId) return { hasLogin: false };
+    const user = await UserModel.findOne({ _id: staff.userId, schoolId }).lean();
+    if (!user) return { hasLogin: false };
+    return credentialsDto(user as unknown as CredentialsDoc);
+  },
+
+  async createCredentials(
+    schoolId: string,
+    staffId: string,
+    payload: { role: string; email: string; username?: string; password?: string },
+  ) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId });
+    if (!staff) throw ApiError.notFound('Staff not found');
+    if (staff.userId) throw ApiError.conflict('This staff member already has a login');
+
+    const email = payload.email.toLowerCase();
+    const username = (payload.username ?? email).toLowerCase();
+    const existing = await UserModel.findOne({ schoolId, $or: [{ email }, { username }] }).lean();
+    if (existing) throw ApiError.conflict('A login with this email or username already exists');
+
+    const generated = !payload.password;
+    const tempPassword = payload.password ?? randomUUID().slice(0, 10);
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const user = await UserModel.create({
+      name: staff.name,
+      username,
+      email,
+      mobile: staff.mobile,
+      role: payload.role,
+      passwordHash,
+      schoolId,
+      active: true,
+    });
+    staff.userId = user._id;
+    await staff.save();
+
+    return {
+      ...credentialsDto(user.toObject() as unknown as CredentialsDoc),
+      ...(generated ? { tempPassword } : {}),
+    };
+  },
+
+  async updateCredentials(schoolId: string, staffId: string, patch: { role?: string; active?: boolean }) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
+    const user = await UserModel.findOneAndUpdate(
+      { _id: staff.userId, schoolId },
+      { $set: patch },
+      { new: true },
+    ).lean();
+    if (!user) throw ApiError.notFound('No login found for this staff member');
+    return credentialsDto(user as unknown as CredentialsDoc);
+  },
+
+  async resetPassword(schoolId: string, staffId: string, password?: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
+    const generated = !password;
+    const tempPassword = password ?? randomUUID().slice(0, 10);
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const user = await UserModel.findOneAndUpdate({ _id: staff.userId, schoolId }, { $set: { passwordHash } }, { new: true }).lean();
+    if (!user) throw ApiError.notFound('No login found for this staff member');
+    return generated ? { tempPassword } : { ok: true };
   },
 
   // ── Attendance ──

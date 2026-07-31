@@ -40,6 +40,10 @@ export const attendanceController = {
     const date = typeof req.query.date === 'string' ? req.query.date : new Date().toISOString().slice(0, 10);
     send(res, await attendanceService.absentees(schoolId(req), date));
   },
+  async sendAbsenteeAlerts(req: Request, res: Response) {
+    const { date, studentIds } = req.body as { date: string; studentIds?: string[] };
+    send(res, await attendanceService.sendAbsenteeAlerts(schoolId(req), date, studentIds));
+  },
   async monthlyReport(req: Request, res: Response) {
     const { classKey, month } = req.query as Record<string, string>;
     send(res, await attendanceService.monthlyReport(schoolId(req), { classKey, month }));

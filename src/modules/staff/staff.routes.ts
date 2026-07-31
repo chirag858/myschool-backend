@@ -6,12 +6,15 @@ import { validate } from '../../middleware/validate';
 import { staffController } from './staff.controller';
 import {
   attendanceMonthQuery,
+  createCredentialsSchema,
   createStaffSchema,
   idParam,
   lockSchema,
+  resetPasswordSchema,
   saveAttendanceSchema,
   staffQuery,
   statusSchema,
+  updateCredentialsSchema,
 } from './staff.validation';
 
 /** Mounted at /api/staff. School admin + principal. (payroll/leave/salary/exit deferred.) */
@@ -32,3 +35,8 @@ staffRoutes.get('/attendance/report', asyncHandler(staffController.report));
 staffRoutes.get('/:id/attendance-month', validate({ params: idParam, query: attendanceMonthQuery }), asyncHandler(staffController.attendanceMonth));
 staffRoutes.get('/:id', validate({ params: idParam }), asyncHandler(staffController.profile));
 staffRoutes.patch('/:id/status', validate({ params: idParam, body: statusSchema }), asyncHandler(staffController.updateStatus));
+
+staffRoutes.get('/:id/credentials', validate({ params: idParam }), asyncHandler(staffController.getCredentials));
+staffRoutes.post('/:id/credentials', validate({ params: idParam, body: createCredentialsSchema }), asyncHandler(staffController.createCredentials));
+staffRoutes.patch('/:id/credentials', validate({ params: idParam, body: updateCredentialsSchema }), asyncHandler(staffController.updateCredentials));
+staffRoutes.post('/:id/credentials/reset-password', validate({ params: idParam, body: resetPasswordSchema }), asyncHandler(staffController.resetPassword));

@@ -48,8 +48,25 @@ export const teacherController = {
     await teacherService.deleteHomework(schoolId(req), userId(req), p(req, 'id'));
     res.status(204).end();
   },
+  async homeworkById(req: Request, res: Response) {
+    send(res, await teacherService.getHomeworkById(schoolId(req), p(req, 'id')));
+  },
   async homeworkSubmissions(req: Request, res: Response) {
     send(res, await teacherService.getHomeworkSubmissions(schoolId(req), p(req, 'id')));
+  },
+  async setHomeworkSubmission(req: Request, res: Response) {
+    send(
+      res,
+      await teacherService.setHomeworkSubmission(
+        schoolId(req),
+        p(req, 'id'),
+        p(req, 'studentId'),
+        req.body as { status: string; marks?: number; remark?: string; attachment?: string },
+      ),
+    );
+  },
+  async remindHomework(req: Request, res: Response) {
+    send(res, await teacherService.remindPendingHomework(schoolId(req), p(req, 'id')));
   },
 
   // Assignments
@@ -58,6 +75,9 @@ export const teacherController = {
   },
   async createAssignment(req: Request, res: Response) {
     created(res, await teacherService.createAssignment(schoolId(req), userId(req), req.body));
+  },
+  async updateAssignment(req: Request, res: Response) {
+    send(res, await teacherService.updateAssignment(schoolId(req), userId(req), p(req, 'id'), req.body));
   },
   async closeAssignment(req: Request, res: Response) {
     send(res, await teacherService.closeAssignment(schoolId(req), userId(req), p(req, 'id')));
@@ -68,6 +88,17 @@ export const teacherController = {
   },
   async getSubmissions(req: Request, res: Response) {
     send(res, await teacherService.getSubmissions(schoolId(req), p(req, 'id')));
+  },
+  async receiveSubmission(req: Request, res: Response) {
+    send(
+      res,
+      await teacherService.receiveSubmission(
+        schoolId(req),
+        p(req, 'id'),
+        p(req, 'studentId'),
+        req.body as { status: string; textContent?: string; fileName?: string },
+      ),
+    );
   },
   async gradeSubmission(req: Request, res: Response) {
     const { marks, feedback } = req.body as { marks: number; feedback: string };
@@ -83,6 +114,16 @@ export const teacherController = {
   },
   async createCircular(req: Request, res: Response) {
     created(res, await teacherService.createCircular(schoolId(req), userId(req), req.body));
+  },
+  async updateCircular(req: Request, res: Response) {
+    send(res, await teacherService.updateCircular(schoolId(req), userId(req), p(req, 'id'), req.body));
+  },
+  async deleteCircular(req: Request, res: Response) {
+    await teacherService.deleteCircular(schoolId(req), userId(req), p(req, 'id'));
+    res.status(204).end();
+  },
+  async readCircular(req: Request, res: Response) {
+    send(res, await teacherService.markCircularRead(schoolId(req), userId(req), p(req, 'id')));
   },
 
   // Leave

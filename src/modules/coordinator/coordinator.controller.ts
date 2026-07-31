@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
-import { created, send } from '../../lib/api-response';
+import { created, noContent, send } from '../../lib/api-response';
 import { sendExcel } from '../reports/reports.export';
 import { coordinatorService } from './coordinator.service';
 
@@ -30,6 +30,20 @@ export const coordinatorController = {
   async setAssignedClasses(req: Request, res: Response) {
     const { classKeys } = req.body as { classKeys: string[] };
     send(res, await coordinatorService.setAssignedClasses(schoolId(req), p(req, 'userId'), classKeys));
+  },
+  async getTeachers(req: Request, res: Response) {
+    send(res, await coordinatorService.getTeachers(schoolId(req)));
+  },
+  async getTeacherAssignments(req: Request, res: Response) {
+    const teacherUserId = typeof req.query.teacherUserId === 'string' ? req.query.teacherUserId : undefined;
+    send(res, await coordinatorService.getTeacherAssignments(schoolId(req), teacherUserId));
+  },
+  async saveTeacherAssignment(req: Request, res: Response) {
+    created(res, await coordinatorService.saveTeacherAssignment(schoolId(req), req.body));
+  },
+  async deleteTeacherAssignment(req: Request, res: Response) {
+    await coordinatorService.deleteTeacherAssignment(schoolId(req), p(req, 'id'));
+    noContent(res);
   },
   async getStudentLeaves(req: Request, res: Response) {
     send(res, await coordinatorService.getStudentLeaves(schoolId(req), req.query as Record<string, string>));

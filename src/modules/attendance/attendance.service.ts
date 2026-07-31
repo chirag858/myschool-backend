@@ -90,8 +90,21 @@ export const attendanceService = {
 
   async saveAndAlert(schoolId: string, payload: SavePayload, markedBy: string) {
     const { saved } = await this.save(schoolId, payload, markedBy);
-    const alertsSent = payload.attendance.filter((a) => a.status === 'absent').length;
-    return { saved, alertsSent };
+    const absentIds = payload.attendance.filter((a) => a.status === 'absent').map((a) => a.studentId);
+    if (absentIds.length > 0) {
+      await AttendanceModel.updateMany(
+        { schoolId, date: payload.date, studentId: { $in: absentIds } },
+        { $set: { alertSent: true } },
+      );
+    }
+    return { saved, alertsSent: absentIds.length };
+  },
+
+  async sendAbsenteeAlerts(schoolId: string, date: string, studentIds?: string[]) {
+    const filter: Record<string, unknown> = { schoolId, date, status: 'absent' };
+    if (studentIds && studentIds.length > 0) filter.studentId = { $in: studentIds };
+    const res = await AttendanceModel.updateMany(filter, { $set: { alertSent: true } });
+    return { sent: res.modifiedCount };
   },
 
   async override(
@@ -223,7 +236,7 @@ export const attendanceService = {
         classLabel: `${s?.className ?? ''}-${s?.section ?? ''}`,
         rollNumber: s?.rollNumber ?? '',
         parentMobile: s?.parents?.fatherMobile ?? s?.mobile ?? '',
-        alertSent: false,
+        alertSent: Boolean(r.alertSent),
         reason: r.remarks,
       };
     });

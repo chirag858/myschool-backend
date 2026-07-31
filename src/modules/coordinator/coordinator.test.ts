@@ -202,4 +202,73 @@ describe('Coordinator API (staff leaves + marks + staff overview)', () => {
     expect(ok.status).toBe(200);
     expect(ok.body).toMatchObject({ id: coordId, assignedClasses: ['Class 2-A'] });
   });
+
+  it('teacher-assignments: school_admin can create/update/delete; coordinator can only read', async () => {
+    const admin = await token('schooladmin');
+    const teachers = await request(app).get('/api/coordinator/teachers').set(auth(coord));
+    expect(teachers.status).toBe(200);
+    expect(teachers.body.length).toBeGreaterThan(0);
+    const teacherId = teachers.body[0].id;
+
+    const forbidden = await request(app)
+      .post('/api/coordinator/teacher-assignments')
+      .set(auth(coord))
+      .send({ teacherUserId: teacherId, className: 'Class 3', section: 'A', subjects: ['Maths'], periodsPerWeek: 5 });
+    expect(forbidden.status).toBe(403);
+
+    const create = await request(app)
+      .post('/api/coordinator/teacher-assignments')
+      .set(auth(admin))
+      .send({ teacherUserId: teacherId, className: 'Class 3', section: 'A', subjects: ['Maths'], periodsPerWeek: 5 });
+    expect(create.status).toBe(201);
+    expect(create.body).toMatchObject({
+      teacherUserId: teacherId,
+      className: 'Class 3',
+      section: 'A',
+      classKey: 'Class 3-A',
+      subjects: ['Maths'],
+      periodsPerWeek: 5,
+    });
+
+    const list = await request(app).get('/api/coordinator/teacher-assignments').set(auth(coord));
+    expect(list.status).toBe(200);
+    expect(list.body.some((a: { id: string }) => a.id === create.body.id)).toBe(true);
+
+    // Re-saving the same (teacher, class, section) upserts rather than duplicating.
+    const update = await request(app)
+      .post('/api/coordinator/teacher-assignments')
+      .set(auth(admin))
+      .send({ teacherUserId: teacherId, className: 'Class 3', section: 'A', subjects: ['Maths', 'Science'], periodsPerWeek: 8 });
+    expect(update.body.id).toBe(create.body.id);
+    expect(update.body.subjects).toEqual(['Maths', 'Science']);
+
+    const delForbidden = await request(app).delete(`/api/coordinator/teacher-assignments/${create.body.id}`).set(auth(coord));
+    expect(delForbidden.status).toBe(403);
+
+    const del = await request(app).delete(`/api/coordinator/teacher-assignments/${create.body.id}`).set(auth(admin));
+    expect(del.status).toBe(204);
+    expect((await request(app).delete(`/api/coordinator/teacher-assignments/${create.body.id}`).set(auth(admin))).status).toBe(404);
+  });
+
+  it('teacher-assignments: ?teacherUserId= filters to just that teacher', async () => {
+    const admin = await token('schooladmin');
+    const teachers = await request(app).get('/api/coordinator/teachers').set(auth(coord));
+    expect(teachers.body.length).toBeGreaterThanOrEqual(1);
+    const [teacherA] = teachers.body;
+
+    await request(app)
+      .post('/api/coordinator/teacher-assignments')
+      .set(auth(admin))
+      .send({ teacherUserId: teacherA.id, className: 'Class 4', section: 'A', subjects: ['English'], periodsPerWeek: 4 });
+
+    const filtered = await request(app)
+      .get(`/api/coordinator/teacher-assignments?teacherUserId=${teacherA.id}`)
+      .set(auth(coord));
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.length).toBeGreaterThan(0);
+    expect(filtered.body.every((a: { teacherUserId: string }) => a.teacherUserId === teacherA.id)).toBe(true);
+
+    const unfiltered = await request(app).get('/api/coordinator/teacher-assignments').set(auth(coord));
+    expect(unfiltered.body.length).toBeGreaterThanOrEqual(filtered.body.length);
+  });
 });

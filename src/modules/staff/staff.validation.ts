@@ -1,6 +1,21 @@
 import { z } from 'zod';
 
+import { STAFF_ROLES } from '../user/roles';
+
 export const idParam = z.object({ id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id') });
+
+const staffRole = z.enum(STAFF_ROLES as [string, ...string[]]);
+export const createCredentialsSchema = z.object({
+  role: staffRole,
+  email: z.string().email('Enter a valid email'),
+  username: z.string().trim().min(3).max(40).regex(/^[a-z0-9._-]+$/i, 'Only letters, numbers, dots, underscores, hyphens').optional(),
+  password: z.string().min(6).optional(),
+});
+export const updateCredentialsSchema = z.object({
+  role: staffRole.optional(),
+  active: z.boolean().optional(),
+});
+export const resetPasswordSchema = z.object({ password: z.string().min(6).optional() });
 
 const mobile = z.string().regex(/^[6-9]\d{9}$/, 'Invalid mobile number');
 const aadhaar = z

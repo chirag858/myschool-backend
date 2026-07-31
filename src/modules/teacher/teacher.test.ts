@@ -91,6 +91,35 @@ describe('Teacher Portal API', () => {
     expect((await request(app).get('/api/teacher/homework').set(auth(teacher))).body.length).toBe(1);
   });
 
+  it('homework submissions persist, drive the counter, and can be reminded', async () => {
+    const list = await request(app).get('/api/teacher/homework').set(auth(teacher));
+    const id = list.body[0].id;
+
+    const subs = await request(app).get(`/api/teacher/homework/${id}/submissions`).set(auth(teacher));
+    expect(subs.body.length).toBeGreaterThan(0);
+    expect(subs.body.every((s: { status: string }) => s.status === 'pending')).toBe(true);
+    const studentId = subs.body[0].studentId;
+
+    const marked = await request(app)
+      .patch(`/api/teacher/homework/${id}/submissions/${studentId}`)
+      .set(auth(teacher))
+      .send({ status: 'graded', marks: 8, remark: 'Neat' });
+    expect(marked.body).toMatchObject({ status: 'graded', marks: 8, remark: 'Neat' });
+    expect(marked.body.submittedAt).toBeTruthy();
+
+    // The stored rows are the source of truth for the homework's counter.
+    expect((await request(app).get(`/api/teacher/homework/${id}`).set(auth(teacher))).body.submissions).toBe(1);
+
+    // Re-reading returns the persisted row, not a fresh pending one.
+    const again = await request(app).get(`/api/teacher/homework/${id}/submissions`).set(auth(teacher));
+    expect(again.body.find((s: { studentId: string }) => s.studentId === studentId).status).toBe('graded');
+
+    const remind = await request(app).post(`/api/teacher/homework/${id}/remind`).set(auth(teacher));
+    expect(remind.body.sent).toBe(again.body.length - 1);
+    const after = await request(app).get(`/api/teacher/homework/${id}/submissions`).set(auth(teacher));
+    expect(after.body.filter((s: { reminderSentAt?: string }) => s.reminderSentAt).length).toBe(again.body.length - 1);
+  });
+
   it('cross-role /homework overview + role-gated edit appends an edit trail', async () => {
     const admin = await token('schooladmin');
     const overview = await request(app).get('/api/homework').set(auth(admin));
@@ -108,21 +137,50 @@ describe('Teacher Portal API', () => {
     expect(list.body[0]).toMatchObject({ title: 'Science project', maxMarks: 20, totalStudents: expect.any(Number), pending: expect.any(Number) });
     const aid = list.body[0].id;
 
+    // Rows start genuinely pending — nothing is handed in until the teacher says so.
     const subs = await request(app).get(`/api/teacher/assignments/${aid}/submissions`).set(auth(teacher));
     expect(subs.body.length).toBeGreaterThan(0);
-    const submitted = subs.body.find((s: { status: string }) => s.status === 'submitted');
+    expect(subs.body.every((s: { status: string }) => s.status === 'pending')).toBe(true);
+    const studentId = subs.body[0].studentId;
+
+    const receive = await request(app)
+      .patch(`/api/teacher/assignments/${aid}/submissions/${studentId}`)
+      .set(auth(teacher))
+      .send({ status: 'submitted', fileName: 'project.pdf' });
+    // Seeded assignment is already past due, so a hand-in lands as `late`.
+    expect(['submitted', 'late']).toContain(receive.body.status);
+    expect(receive.body.submittedAt).toBeTruthy();
+
     const grade = await request(app)
-      .patch(`/api/teacher/assignments/${aid}/submissions/${submitted.studentId}/grade`)
+      .patch(`/api/teacher/assignments/${aid}/submissions/${studentId}/grade`)
       .set(auth(teacher))
       .send({ marks: 18, feedback: 'Great work' });
     expect(grade.body).toMatchObject({ status: 'graded', marks: 18, feedback: 'Great work' });
 
+    // Marks above the assignment's maxMarks are rejected.
+    const tooHigh = await request(app)
+      .patch(`/api/teacher/assignments/${aid}/submissions/${studentId}/grade`)
+      .set(auth(teacher))
+      .send({ marks: 999, feedback: '' });
+    expect(tooHigh.status).toBe(400);
+
+    // Editing an assignment persists.
+    const edit = await request(app).patch(`/api/teacher/assignments/${aid}`).set(auth(teacher)).send({ title: 'Science project (v2)' });
+    expect(edit.body).toMatchObject({ title: 'Science project (v2)', graded: 1 });
+
     const create = await request(app)
       .post('/api/teacher/assignments')
       .set(auth(teacher))
-      .send({ title: 'Essay', classKey: 'Class 1-A', subject: 'Science', maxMarks: 10, dueDate: '2025-06-10' });
+      .send({ title: 'Essay', classKey: 'Class 1-A', subject: 'Science', maxMarks: 10, dueDate: '2999-06-10' });
     expect(create.status).toBe(201);
     expect(create.body).toMatchObject({ title: 'Essay', status: 'active', pending: expect.any(Number) });
+
+    // `overdue` is derived from the due date, never stored.
+    const past = await request(app)
+      .post('/api/teacher/assignments')
+      .set(auth(teacher))
+      .send({ title: 'Old essay', classKey: 'Class 1-A', subject: 'Science', maxMarks: 10, dueDate: '2020-01-01' });
+    expect(past.body.status).toBe('overdue');
 
     const close = await request(app).patch(`/api/teacher/assignments/${create.body.id}/close`).set(auth(teacher));
     expect(close.body.status).toBe('closed');
@@ -141,6 +199,40 @@ describe('Teacher Portal API', () => {
     expect(create.status).toBe(201);
     expect(create.body).toMatchObject({ title: 'Class 1 PTM', createdByMe: true, status: 'published' });
     expect((await request(app).get('/api/teacher/circulars/mine').set(auth(teacher))).body.length).toBe(1);
+
+    const id = create.body.id;
+    const edit = await request(app).patch(`/api/teacher/circulars/${id}`).set(auth(teacher)).send({ title: 'Class 1 PTM (moved)', priority: 'urgent' });
+    expect(edit.body).toMatchObject({ title: 'Class 1 PTM (moved)', priority: 'urgent' });
+
+    // Reading counts a view.
+    expect((await request(app).post(`/api/teacher/circulars/${id}/read`).set(auth(teacher))).body.views).toBe(1);
+
+    // Someone else's circular is not editable or deletable.
+    const admin = await token('schooladmin');
+    const foreign = (await request(app).get('/api/teacher/circulars/received').set(auth(admin))).body.find(
+      (c: { createdByMe: boolean }) => !c.createdByMe,
+    );
+    expect((await request(app).patch(`/api/teacher/circulars/${foreign.id}`).set(auth(admin)).send({ title: 'nope' })).status).toBe(403);
+
+    expect((await request(app).delete(`/api/teacher/circulars/${id}`).set(auth(teacher))).status).toBe(204);
+    expect((await request(app).get('/api/teacher/circulars/mine').set(auth(teacher))).body.length).toBe(0);
+  });
+
+  it('a teacher cannot edit another teacher’s homework', async () => {
+    const admin = await token('schooladmin');
+    // Admin creates homework, so it is not owned by the demo teacher.
+    const mine = (await request(app).get('/api/teacher/homework').set(auth(admin))).body;
+    expect(mine.length).toBe(0);
+
+    const id = (await request(app).get('/api/homework').set(auth(admin))).body[0].id;
+    // The seeded homework belongs to the teacher — the admin may still edit it.
+    expect((await request(app).patch(`/api/homework/${id}`).set(auth(admin)).send({ title: 'Admin edit' })).status).toBe(200);
+
+    const other = await request(app)
+      .post('/api/teacher/homework')
+      .set(auth(admin))
+      .send({ classKey: 'Class 1-A', subject: 'Science', title: 'Admin homework', dueDate: '2025-06-20' });
+    expect((await request(app).patch(`/api/homework/${other.body.id}`).set(auth(teacher)).send({ title: 'stolen' })).status).toBe(403);
   });
 
   it('leave: balance reflects approved usage, history, apply + cancel', async () => {

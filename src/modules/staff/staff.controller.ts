@@ -32,6 +32,20 @@ export const staffController = {
   async create(req: Request, res: Response) {
     created(res, await staffService.createStaff(schoolId(req), req.body));
   },
+  async getCredentials(req: Request, res: Response) {
+    send(res, await staffService.getCredentials(schoolId(req), p(req, 'id')));
+  },
+  async createCredentials(req: Request, res: Response) {
+    created(res, await staffService.createCredentials(schoolId(req), p(req, 'id'), req.body));
+  },
+  async updateCredentials(req: Request, res: Response) {
+    send(res, await staffService.updateCredentials(schoolId(req), p(req, 'id'), req.body));
+  },
+  async resetPassword(req: Request, res: Response) {
+    const { password } = req.body as { password?: string };
+    send(res, await staffService.resetPassword(schoolId(req), p(req, 'id'), password));
+  },
+
   async updateStatus(req: Request, res: Response) {
     const { status } = req.body as { status: string };
     send(res, await staffService.updateStatus(schoolId(req), p(req, 'id'), status));

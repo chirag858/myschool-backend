@@ -25,6 +25,16 @@ describe('Students API', () => {
     expect((await request(app).get('/api/students').set(auth(acc))).status).toBe(403);
   });
 
+  it('teacher can read a real student\'s attendance calendar/summary, but not the full student list', async () => {
+    const list = await request(app).get('/api/students').set(auth(admin));
+    const id = list.body.rows[0].id;
+    const teacher = await token('teacher');
+
+    expect((await request(app).get('/api/students').set(auth(teacher))).status).toBe(403);
+    expect((await request(app).get(`/api/students/${id}/attendance?year=2025&month=4`).set(auth(teacher))).status).toBe(200);
+    expect((await request(app).get(`/api/students/${id}/attendance/annual-summary`).set(auth(teacher))).status).toBe(200);
+  });
+
   it('GET /students returns a paginated StudentsListResponse with StudentRow shape', async () => {
     const res = await request(app).get('/api/students').set(auth(admin));
     expect(res.status).toBe(200);
