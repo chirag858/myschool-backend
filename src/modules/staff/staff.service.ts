@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import bcrypt from 'bcryptjs';
 
+import { clearInchargeSection, getInchargeSection, setInchargeSection } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { UserModel } from '../user/user.model';
 import { StaffAttendanceLockModel, StaffAttendanceModel, StaffModel } from './staff.models';
@@ -14,7 +15,8 @@ interface CredentialsDoc {
   active?: boolean;
   assignedClasses?: string[];
 }
-function credentialsDto(user: CredentialsDoc): Record<string, unknown> {
+async function credentialsDto(schoolId: string, user: CredentialsDoc): Promise<Record<string, unknown>> {
+  const inchargeSection = user.role === 'teacher' ? await getInchargeSection(schoolId, String(user._id)) : null;
   return {
     hasLogin: true,
     userId: String(user._id),
@@ -23,6 +25,7 @@ function credentialsDto(user: CredentialsDoc): Record<string, unknown> {
     role: user.role,
     active: user.active ?? true,
     ...(user.role === 'coordinator' ? { assignedClasses: user.assignedClasses ?? [] } : {}),
+    ...(user.role === 'teacher' ? { inchargeClassKey: inchargeSection?.classKey ?? null } : {}),
   };
 }
 
@@ -188,7 +191,7 @@ export const staffService = {
     if (!staff.userId) return { hasLogin: false };
     const user = await UserModel.findOne({ _id: staff.userId, schoolId }).lean();
     if (!user) return { hasLogin: false };
-    return credentialsDto(user as unknown as CredentialsDoc);
+    return credentialsDto(schoolId, user as unknown as CredentialsDoc);
   },
 
   async createCredentials(
@@ -222,7 +225,7 @@ export const staffService = {
     await staff.save();
 
     return {
-      ...credentialsDto(user.toObject() as unknown as CredentialsDoc),
+      ...(await credentialsDto(schoolId, user.toObject() as unknown as CredentialsDoc)),
       ...(generated ? { tempPassword } : {}),
     };
   },
@@ -236,7 +239,31 @@ export const staffService = {
       { new: true },
     ).lean();
     if (!user) throw ApiError.notFound('No login found for this staff member');
-    return credentialsDto(user as unknown as CredentialsDoc);
+    return credentialsDto(schoolId, user as unknown as CredentialsDoc);
+  },
+
+  // ── Class incharge (single class per teacher, mirrors Section.classTeacherId) ──
+  async getIncharge(schoolId: string, staffId: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff) throw ApiError.notFound('Staff not found');
+    if (!staff.userId) return null;
+    return getInchargeSection(schoolId, String(staff.userId));
+  },
+
+  async setIncharge(schoolId: string, staffId: string, sectionId: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
+    const user = await UserModel.findOne({ _id: staff.userId, schoolId }).lean();
+    if (!user) throw ApiError.notFound('No login found for this staff member');
+    if (user.role !== 'teacher') throw ApiError.badRequest('Only a teacher can be a class incharge');
+    return setInchargeSection(schoolId, sectionId, String(staff.userId), user.name ?? staff.name);
+  },
+
+  async clearIncharge(schoolId: string, staffId: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
+    await clearInchargeSection(schoolId, String(staff.userId));
+    return { success: true };
   },
 
   async resetPassword(schoolId: string, staffId: string, password?: string) {

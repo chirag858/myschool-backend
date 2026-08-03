@@ -369,3 +369,87 @@ describe('Staff login credentials API', () => {
     expect((await request(app).get('/api/staff/000000000000000000000000/credentials').set(auth(admin))).status).toBe(404);
   });
 });
+
+describe('Class incharge API', () => {
+  let admin: string;
+  let staffId: string;
+
+  async function classAndSection(className: string, sectionName: string, byToken: string) {
+    const classes = await request(app).get('/api/classes').set(auth(byToken));
+    const cls = classes.body.find((c: { name: string }) => c.name === className);
+    const secs = await request(app).get(`/api/classes/${cls.id}/sections`).set(auth(byToken));
+    const sec = secs.body.find((s: { name: string }) => s.name === sectionName);
+    return { classId: cls.id, sectionId: sec.id };
+  }
+
+  beforeEach(async () => {
+    await seedDemo();
+    admin = await token('schooladmin');
+    const list = await request(app).get('/api/staff').set(auth(admin));
+    staffId = list.body.rows[0].id;
+    await request(app)
+      .post(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher', email: 'incharge-target@example.com' });
+  });
+
+  it('requires auth (401) and forbids other roles (403)', async () => {
+    const { sectionId } = await classAndSection('Class 1', 'A', admin);
+    expect((await request(app).get(`/api/staff/${staffId}/incharge`)).status).toBe(401);
+    const acc = await token('accountant');
+    expect((await request(app).get(`/api/staff/${staffId}/incharge`).set(auth(acc))).status).toBe(403);
+    expect((await request(app).put(`/api/staff/${staffId}/incharge`).set(auth(acc)).send({ sectionId })).status).toBe(403);
+  });
+
+  it('null before assignment; set → get; reassigning clears the old section', async () => {
+    const before = await request(app).get(`/api/staff/${staffId}/incharge`).set(auth(admin));
+    expect(before.body).toBeNull();
+
+    const { sectionId: sectionA } = await classAndSection('Class 1', 'A', admin);
+    const set = await request(app).put(`/api/staff/${staffId}/incharge`).set(auth(admin)).send({ sectionId: sectionA });
+    expect(set.status).toBe(200);
+    expect(set.body).toMatchObject({ classKey: 'Class 1-A', className: 'Class 1', section: 'A' });
+
+    const get = await request(app).get(`/api/staff/${staffId}/incharge`).set(auth(admin));
+    expect(get.body).toMatchObject({ classKey: 'Class 1-A' });
+
+    // Reassign this teacher to a different section — the old one is cleared.
+    const { sectionId: sectionB } = await classAndSection('Class 1', 'B', admin);
+    const reassign = await request(app).put(`/api/staff/${staffId}/incharge`).set(auth(admin)).send({ sectionId: sectionB });
+    expect(reassign.body).toMatchObject({ classKey: 'Class 1-B' });
+
+    const sections = await request(app).get(`/api/classes/${(await classAndSection('Class 1', 'A', admin)).classId}/sections`).set(auth(admin));
+    const secA = sections.body.find((s: { name: string }) => s.name === 'A');
+    expect(secA.classTeacherId).toBeNull();
+  });
+
+  it('assigning a section that already has a different incharge overwrites it', async () => {
+    const list = await request(app).get('/api/staff').set(auth(admin));
+    const staffId2 = list.body.rows[1].id;
+    await request(app)
+      .post(`/api/staff/${staffId2}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher', email: 'second-teacher@example.com' });
+
+    const { sectionId } = await classAndSection('Class 2', 'A', admin);
+    await request(app).put(`/api/staff/${staffId}/incharge`).set(auth(admin)).send({ sectionId });
+    const takeover = await request(app).put(`/api/staff/${staffId2}/incharge`).set(auth(admin)).send({ sectionId });
+    expect(takeover.status).toBe(200);
+
+    expect((await request(app).get(`/api/staff/${staffId}/incharge`).set(auth(admin))).body).toBeNull();
+    expect((await request(app).get(`/api/staff/${staffId2}/incharge`).set(auth(admin))).body).toMatchObject({ classKey: 'Class 2-A' });
+  });
+
+  it('clears incharge via DELETE', async () => {
+    const { sectionId } = await classAndSection('Class 1', 'A', admin);
+    await request(app).put(`/api/staff/${staffId}/incharge`).set(auth(admin)).send({ sectionId });
+    expect((await request(app).delete(`/api/staff/${staffId}/incharge`).set(auth(admin))).status).toBe(200);
+    expect((await request(app).get(`/api/staff/${staffId}/incharge`).set(auth(admin))).body).toBeNull();
+  });
+
+  it('rejects a non-teacher role and tenant-isolates the section', async () => {
+    const { sectionId } = await classAndSection('Class 1', 'A', admin);
+    await request(app).patch(`/api/staff/${staffId}/credentials`).set(auth(admin)).send({ role: 'coordinator' });
+    expect((await request(app).put(`/api/staff/${staffId}/incharge`).set(auth(admin)).send({ sectionId })).status).toBe(400);
+  });
+});

@@ -25,7 +25,7 @@ Longer-form rules live in [RULES.md](RULES.md) — still the reference for defin
 | `src/lib/` | Shared helpers: `api-error.ts`, `api-response.ts`, `async-handler.ts`, `jwt.ts`, `logger.ts`, `paginate.ts`, `messaging-provider.ts`. |
 | `src/config/` | `env.ts` (Zod-parsed `process.env`), `db.ts` (Mongoose connect). |
 | `src/seed/seed.ts` | Demo school + demo accounts the frontend logs in with. |
-| `src/scripts/` | One-off data backfills (`backfill-fee-status.ts`, `backfill-missing-classes.ts`). |
+| `src/scripts/` | One-off data backfills (`backfill-fee-status.ts`, `backfill-missing-classes.ts`, `backfill-class-incharge.ts`). |
 | `tests/setup.ts` | Global Vitest setup (spins the in-memory Mongo). **The actual tests live next to the code**, as `src/modules/<domain>/<name>.test.ts` (28 files). |
 
 Inside a module, files are `<name>.routes.ts`, `<name>.controller.ts`, `<name>.service.ts`, `<name>.model.ts` / `<name>.models.ts`, `<name>.validation.ts`, `<name>.test.ts`. `teacher/` is the one module exporting two routers from a single `teacher.routes.ts` — `teacherRoutes` (`/api/teacher`, the teacher's own portal) and `homeworkRoutes` (`/api/homework`, the cross-role overview). A domain that outgrew one file splits by prefix rather than nesting — e.g. `fee/` holds `fee.*`, `fee-extras.*`, `fee-adjust.*`, `fee-refunds.*`, `fee-recovery.*`, `fee-scroll.*`, each a full set.
@@ -43,6 +43,7 @@ npx vitest run src/modules/fee/fee.test.ts   # single file
 npm run seed                      # tsx src/seed/seed.ts
 npm run backfill:fee-status       # one-off data repair
 npm run backfill:missing-classes  # one-off data repair
+npm run backfill:class-incharge   # one-off data repair
 ```
 
 There is **no lint script and no ESLint config in this repo** — `npm run typecheck` + `npm test` are the full gate. (Some source files carry `eslint-disable` comments, left over from an editor-level setup.)
@@ -60,6 +61,7 @@ There is **no lint script and no ESLint config in this repo** — `npm run typec
 - Naming: kebab-case files, `camelCase` values, `PascalCase` types/models. No `any`; explicit return types on exports.
 - Config only through `config/env.ts` (`env.PORT`, `env.MONGO_URI`, `env.JWT_ACCESS_SECRET`, `env.JWT_REFRESH_SECRET`, `env.JWT_ACCESS_TTL`, `env.JWT_REFRESH_TTL`, `env.CORS_ORIGIN`, `env.NODE_ENV`) — never read `process.env` elsewhere.
 - Tests run **sequentially** (`fileParallelism: false`, `retry: 2`, 30s test / 120s hook timeouts) — one in-memory Mongo per test file. Assume that; don't add parallel-unsafe global state, and don't "fix" a slow suite by enabling parallelism.
+- **Class incharge is one class per teacher, one teacher per class.** `academics.service.ts`'s `getInchargeSection`/`setInchargeSection`/`clearInchargeSection` (backed by `Section.classTeacherId`/`classTeacherName`) are the only source of truth for "which class does this teacher manage" — `teacher.service.ts` (my-classes/my-students, homework/assignment/circular creation) and `attendance.controller.ts` (mark/save/override) all import from there rather than re-deriving it. This is separate from `TeacherClassAssignment` (multi-row subject-teaching, still drives marks entry) — don't conflate the two.
 
 ## Must never do
 

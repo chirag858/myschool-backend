@@ -27,6 +27,9 @@ export const teacherController = {
   async myExams(req: Request, res: Response) {
     send(res, await teacherService.getMyExams(schoolId(req), userId(req)));
   },
+  async myTeaching(req: Request, res: Response) {
+    send(res, await teacherService.getMyTeaching(schoolId(req), userId(req)));
+  },
   async dashboardSummary(req: Request, res: Response) {
     send(res, await teacherService.getDashboardSummary(schoolId(req), userId(req)));
   },
@@ -39,7 +42,7 @@ export const teacherController = {
     send(res, await teacherService.getAllHomework(schoolId(req), req.query as Record<string, string>));
   },
   async createHomework(req: Request, res: Response) {
-    created(res, await teacherService.createHomework(schoolId(req), userId(req), req.body));
+    created(res, await teacherService.createHomework(schoolId(req), userId(req), req.body, String(req.user?.role ?? 'unknown')));
   },
   async updateHomework(req: Request, res: Response) {
     send(res, await teacherService.updateHomework(schoolId(req), userId(req), p(req, 'id'), req.body, String(req.user?.role ?? 'unknown')));
@@ -74,10 +77,10 @@ export const teacherController = {
     send(res, await teacherService.getAssignments(schoolId(req), userId(req), { classKey: q(req, 'classKey'), status: q(req, 'status') }));
   },
   async createAssignment(req: Request, res: Response) {
-    created(res, await teacherService.createAssignment(schoolId(req), userId(req), req.body));
+    created(res, await teacherService.createAssignment(schoolId(req), userId(req), req.body, String(req.user?.role ?? 'unknown')));
   },
   async updateAssignment(req: Request, res: Response) {
-    send(res, await teacherService.updateAssignment(schoolId(req), userId(req), p(req, 'id'), req.body));
+    send(res, await teacherService.updateAssignment(schoolId(req), userId(req), p(req, 'id'), req.body, String(req.user?.role ?? 'unknown')));
   },
   async closeAssignment(req: Request, res: Response) {
     send(res, await teacherService.closeAssignment(schoolId(req), userId(req), p(req, 'id')));
@@ -113,10 +116,10 @@ export const teacherController = {
     send(res, await teacherService.getMyCirculars(schoolId(req), userId(req)));
   },
   async createCircular(req: Request, res: Response) {
-    created(res, await teacherService.createCircular(schoolId(req), userId(req), req.body));
+    created(res, await teacherService.createCircular(schoolId(req), userId(req), req.body, String(req.user?.role ?? 'unknown')));
   },
   async updateCircular(req: Request, res: Response) {
-    send(res, await teacherService.updateCircular(schoolId(req), userId(req), p(req, 'id'), req.body));
+    send(res, await teacherService.updateCircular(schoolId(req), userId(req), p(req, 'id'), req.body, String(req.user?.role ?? 'unknown')));
   },
   async deleteCircular(req: Request, res: Response) {
     await teacherService.deleteCircular(schoolId(req), userId(req), p(req, 'id'));

@@ -8,6 +8,7 @@ import { AppliedFineModel, ConcessionModel, FineRuleModel } from '../modules/fee
 import { BankAccountModel, BankDepositModel, IncomeModel, VendorPaymentModel } from '../modules/finance/finance.models';
 import { BookCopyModel, BookModel, LibraryMemberModel } from '../modules/library/library.models';
 import { BuildingModel, HostelStudentModel, RoomModel } from '../modules/hostel/hostel.models';
+import { TimetableClassModel } from '../modules/timetable/timetable.models';
 import { DriverModel, RouteModel, StudentTransportModel, VehicleModel } from '../modules/transport/transport.models';
 import { AssetModel, InventoryItemModel, VendorModel } from '../modules/inventory/inventory.models';
 import { StaffModel } from '../modules/staff/staff.models';
@@ -853,6 +854,65 @@ export async function seedDemo() {
         { schoolId: school._id, teacherUserId: tid, ...tc },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
+    }
+    // Class incharge: single class the demo teacher manages (roster,
+    // homework/assignment/circular creation, attendance) — matches the
+    // 'Class 1-A' the seeded homework/assignment below target.
+    const inchargeClass = await ClassModel.findOne({ schoolId: school._id, name: 'Class 1' }).lean();
+    if (inchargeClass) {
+      await SectionModel.findOneAndUpdate(
+        { schoolId: school._id, classId: inchargeClass._id, name: 'A' },
+        { $set: { classTeacherId: tid, classTeacherName: teacher.name } },
+      );
+    }
+
+    // Link a Staff record to the demo teacher's login — timetable slots
+    // store `teacherId` as the Staff `_id` (not the login User `_id`, see
+    // `timetableService.getMySchedule`), so without this link the demo
+    // teacher's timetable-derived data (my-classes, my-exams, marks-overview)
+    // would always resolve to empty even with slots seeded below. In real
+    // usage this link is created automatically by the Staff → Login
+    // Credentials flow; the seed does it by hand for the one demo account.
+    const teacherStaff = await StaffModel.findOneAndUpdate(
+      { schoolId: school._id, designation: 'teacher' },
+      { $set: { userId: teacher._id } },
+      { new: true },
+    ).lean();
+
+    // Real timetable slots for those same two classes/subjects, so the
+    // timetable-derived data (`getMyTeachingAssignments`, `getMyClasses`)
+    // matches what `teacherClasses` above describes — the timetable is the
+    // single source of truth these are derived from, not a parallel list.
+    if (teacherStaff) {
+      const staffId = String(teacherStaff._id);
+      const slotsByClass: Record<string, { className: string; section: string; subjects: string[] }> = {
+        'Class 1-A': { className: 'Class 1', section: 'A', subjects: ['Mathematics', 'Science'] },
+        'Class 2-A': { className: 'Class 2', section: 'A', subjects: ['English'] },
+      };
+      const days = ['mon', 'tue', 'wed', 'thu', 'fri'];
+      let dayIdx = 0;
+      for (const { className, section, subjects } of Object.values(slotsByClass)) {
+        const cls = await ClassModel.findOne({ schoolId: school._id, name: className }).lean();
+        if (!cls) continue;
+        const slots = subjects.map((subjectName, i) => ({
+          classId: String(cls._id),
+          section,
+          day: days[dayIdx++ % days.length],
+          periodId: `p${i + 1}`,
+          subjectId: `demo-subject-${subjectName.toLowerCase()}`,
+          subjectName,
+          subjectColor: '#5b8cff',
+          teacherId: staffId,
+          teacherName: teacher.name,
+          roomId: 'demo-room-101',
+          roomName: 'Room 101',
+        }));
+        await TimetableClassModel.findOneAndUpdate(
+          { schoolId: school._id, classId: String(cls._id), section },
+          { $set: { schoolId: school._id, classId: String(cls._id), section, slots, published: true } },
+          { upsert: true },
+        );
+      }
     }
     await TeacherHomeworkModel.findOneAndUpdate(
       { schoolId: school._id, teacherUserId: tid, title: 'Algebra worksheet' },

@@ -257,6 +257,28 @@ describe('Timetable API', () => {
 
     expect(conflict.status).toBe(400);
     expect(conflict.body.message).toContain('Conflicts detected');
+
+    // The same conflicting save is accepted when `overridden: true` is sent
+    // (the assign-slot modal's "I confirm I want to override" checkbox).
+    const override = await request(app)
+      .post('/api/timetable/Class-11/save')
+      .set(auth(admin))
+      .send({
+        classId: 'Class-11',
+        section: 'A',
+        day: 'tue',
+        periodId: 'p2',
+        subjectId: subject.body.id,
+        subjectName: 'Chemistry',
+        subjectColor: '#10B981',
+        teacherId: 'teacher123',
+        teacherName: 'Dr. Kumar',
+        roomId: room2.body.id,
+        roomName: 'Room 202',
+        overridden: true,
+      });
+    expect(override.status).toBe(200);
+    expect(override.body).toMatchObject({ day: 'tue', periodId: 'p2', teacherId: 'teacher123' });
   });
 
   it('detects room collision conflict', async () => {
@@ -532,6 +554,53 @@ describe('Timetable API', () => {
     expect(schedule.status).toBe(200);
     expect(schedule.body.length).toBe(1);
     expect(schedule.body[0]).toMatchObject({ teacherId: 'teacher_xyz', subjectName: 'History' });
+  });
+
+  it('GET /timetable/my-schedule resolves the logged-in teacher’s own periods via their linked Staff record', async () => {
+    // A staff member with no linked login yet has no schedule (empty, not an error).
+    const staffList = await request(app).get('/api/staff').set(auth(admin));
+    const staffId = staffList.body.rows[0].id;
+    const noLogin = await request(app).get('/api/timetable/my-schedule').set(auth(teacher));
+    expect(noLogin.status).toBe(200);
+
+    // Link a fresh login to that staff member and give them a period.
+    const creds = await request(app)
+      .post(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher', email: 'schedule-owner@example.com', username: 'schedule-owner', password: 'demo1234' });
+    expect(creds.status).toBe(201);
+
+    const subject = await request(app)
+      .post('/api/timetable/config/subjects')
+      .set(auth(admin))
+      .send({ name: 'Geography', code: 'GEO', type: 'core', applicableClasses: 'all', maxWeeklyPeriods: 4, color: '#0EA5E9' });
+    const room = await request(app)
+      .post('/api/timetable/config/rooms')
+      .set(auth(admin))
+      .send({ name: 'Room 701', type: 'classroom', capacity: 35, floor: '7', facilities: [], status: 'available' });
+
+    await request(app)
+      .post('/api/timetable/Class-3/save')
+      .set(auth(admin))
+      .send({
+        classId: 'Class-3',
+        section: 'B',
+        day: 'wed',
+        periodId: 'p3',
+        subjectId: subject.body.id,
+        subjectName: 'Geography',
+        subjectColor: '#0EA5E9',
+        teacherId: staffId,
+        teacherName: 'Schedule Owner',
+        roomId: room.body.id,
+        roomName: 'Room 701',
+      });
+
+    const ownerToken = await token('schedule-owner');
+    const mine = await request(app).get('/api/timetable/my-schedule').set(auth(ownerToken));
+    expect(mine.status).toBe(200);
+    expect(mine.body.length).toBe(1);
+    expect(mine.body[0]).toMatchObject({ subjectName: 'Geography', classId: 'Class-3', section: 'B' });
   });
 
   // ─── Scan All Conflicts ─────────────────────────────────────────────

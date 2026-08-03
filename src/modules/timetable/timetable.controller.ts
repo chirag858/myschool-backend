@@ -97,6 +97,11 @@ export const timetableController = {
     res.json(schedule);
   },
 
+  getMySchedule: async (req: Request, res: Response) => {
+    const schedule = await timetableService.getMySchedule(req.user!.schoolId!, req.user!._id);
+    res.json(schedule);
+  },
+
   scanAllConflicts: async (req: Request, res: Response) => {
     const conflicts = await timetableService.scanAllConflicts(req.user!.schoolId!);
     res.json(conflicts);

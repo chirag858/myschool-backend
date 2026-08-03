@@ -8,6 +8,7 @@ import type { ReportData } from '../reports/reports.service';
 import { StaffAttendanceModel, StaffModel } from '../staff/staff.models';
 import { StudentModel } from '../students/student.model';
 import { TeacherClassModel } from '../teacher/teacher.models';
+import { timetableService } from '../timetable/timetable.service';
 import { UserModel } from '../user/user.model';
 import { StaffLeaveModel, StudentLeaveModel } from './coordinator.models';
 
@@ -20,32 +21,37 @@ async function assignedClassesOf(userId: string): Promise<string[]> {
   return (user?.assignedClasses as string[] | undefined) ?? [];
 }
 
-/** Marks-entry rows for the given exam, scoped to `classKeys` (all classes if omitted). */
+/** Marks-entry rows for the given exam, scoped to `classKeys` (all classes if omitted).
+ * Who-teaches-what comes from the real timetable (`timetableService.getAllTeachingAssignments`)
+ * rather than a separately hand-maintained assignment list, so it can never drift out of sync
+ * with what's actually scheduled. */
 async function marksOverviewRows(schoolId: string, examId: string, classKeys?: Set<string>) {
   const exam = await ExamModel.findOne({ _id: examId, schoolId }).lean();
   if (!exam) throw ApiError.notFound('Exam not found');
-  const examClasses = new Set((exam.classes ?? []) as string[]);
-  const assignments = await TeacherClassModel.find({ schoolId }).lean();
-  const teacherIds = [...new Set(assignments.map((a) => String(a.teacherUserId)))];
+  const examClasses = (exam.classes ?? []) as string[];
+  const assignments = await timetableService.getAllTeachingAssignments(schoolId);
+  const teacherIds = [...new Set(assignments.map((a) => a.teacherUserId))];
   const teachers = await UserModel.find({ _id: { $in: teacherIds } }).lean();
   const nameById = new Map(teachers.map((t) => [String(t._id), t.name as string]));
   const marks = await ExamMarkModel.find({ examId }).lean();
 
   const rows: Array<Record<string, unknown>> = [];
   for (const a of assignments) {
-    if (!examClasses.has(a.className as string)) continue;
-    const classKey = keyOf(a.className as string, a.section as string);
+    // Exams store `classes` as either a bare class name ("Class 1") or a
+    // full classKey with section ("Class 1-A") — match either form.
+    const classKey = keyOf(a.className, a.section);
+    if (!examClasses.includes(a.className) && !examClasses.includes(classKey)) continue;
     if (classKeys && !classKeys.has(classKey)) continue;
-    for (const subject of (a.subjects ?? []) as string[]) {
-      const forCell = marks.filter((m) => m.classKey === (a.className as string));
+    for (const subject of a.subjects) {
+      const forCell = marks.filter((m) => m.classKey === a.className || m.classKey === classKey);
       const status = forCell.length === 0 ? 'not_started' : forCell.every((m) => m.submitted) ? 'submitted' : 'in_progress';
       rows.push({
-        id: `${examId}:${a.className}-${a.section}:${subject}`,
-        classKey: `${a.className}-${a.section}`,
+        id: `${examId}:${classKey}:${subject}`,
+        classKey,
         className: a.className,
         section: a.section,
         subject,
-        teacherName: nameById.get(String(a.teacherUserId)) ?? 'Unassigned',
+        teacherName: nameById.get(a.teacherUserId) ?? 'Unassigned',
         status,
       });
     }

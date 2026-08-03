@@ -1,14 +1,15 @@
+import { getInchargeSection } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { AttendanceModel } from '../attendance/attendance.models';
 import { CircularModel } from '../communication/communication.models';
 import { ExamModel } from '../exams/exams.models';
 import { StudentModel } from '../students/student.model';
+import { timetableService } from '../timetable/timetable.service';
 import { UserModel } from '../user/user.model';
 import {
   HomeworkSubmissionModel,
   SubmissionModel,
   TeacherAssignmentModel,
-  TeacherClassModel,
   TeacherHomeworkModel,
   TeacherLeaveModel,
 } from './teacher.models';
@@ -32,39 +33,115 @@ async function teacherName(userId: string): Promise<string> {
   const u = await UserModel.findById(userId).lean();
   return (u?.name as string) ?? 'Teacher';
 }
-async function myAssignments(schoolId: string, userId: string) {
-  return TeacherClassModel.find({ schoolId, teacherUserId: userId }).lean();
-}
 const keyOf = (className: string, section: string): string => `${className}-${section}`;
 
+/** The one class this teacher is incharge of (single source of truth for
+ * "my classes"/"my students" and every whole-class management action) —
+ * distinct from `timetableService.getMyTeachingAssignments`, the real
+ * timetable-derived multi-row subject-teaching set used only by marks entry
+ * (`getMyExams`), unaffected by this. */
+async function myInchargeClass(schoolId: string, userId: string) {
+  return getInchargeSection(schoolId, userId);
+}
+
+function assertInchargeOf(
+  incharge: Awaited<ReturnType<typeof getInchargeSection>>,
+  classKey: string,
+): void {
+  if (!incharge) throw ApiError.forbidden('You are not assigned as a class incharge');
+  if (incharge.classKey !== classKey) {
+    throw ApiError.forbidden('You can only manage the class you are incharge of');
+  }
+}
+
+interface TeachingScopeRow {
+  classKey: string;
+  className: string;
+  section: string;
+  subjects: string[];
+}
+
+/** Every class/subject a teacher may create homework or assignments for:
+ * the union of what they actually teach per the timetable, plus (if
+ * applicable) every subject taught in the one class they're incharge of —
+ * incharge status lets them manage the whole class even for subjects they
+ * don't personally teach. */
+async function myTeachingScope(schoolId: string, userId: string): Promise<TeachingScopeRow[]> {
+  const [assignments, incharge] = await Promise.all([
+    timetableService.getMyTeachingAssignments(schoolId, userId),
+    myInchargeClass(schoolId, userId),
+  ]);
+  const byKey = new Map<string, TeachingScopeRow>();
+  for (const a of assignments) {
+    const classKey = keyOf(a.className, a.section);
+    const entry = byKey.get(classKey) ?? { classKey, className: a.className, section: a.section, subjects: [] };
+    entry.subjects = Array.from(new Set([...entry.subjects, ...a.subjects]));
+    byKey.set(classKey, entry);
+  }
+  if (incharge) {
+    const tt = await timetableService.getTimetable(schoolId, incharge.classId, incharge.section);
+    const subjects = Array.from(new Set(tt.slots.map((s) => s.subjectName)));
+    const entry = byKey.get(incharge.classKey) ?? {
+      classKey: incharge.classKey,
+      className: incharge.className,
+      section: incharge.section,
+      subjects: [],
+    };
+    entry.subjects = Array.from(new Set([...entry.subjects, ...subjects]));
+    byKey.set(incharge.classKey, entry);
+  }
+  return Array.from(byKey.values());
+}
+
+function assertCanTeach(scope: TeachingScopeRow[], classKey: string, subject?: string): void {
+  const row = scope.find((r) => r.classKey === classKey);
+  if (!row) throw ApiError.forbidden('You do not teach this class');
+  if (subject !== undefined && !row.subjects.includes(subject)) {
+    throw ApiError.forbidden('You do not teach this subject in this class');
+  }
+}
+
 export const teacherService = {
+  /** Every class/subject this teacher may create homework/assignments for —
+   * exposed so the frontend picker matches the server-side check exactly. */
+  async getMyTeaching(schoolId: string, userId: string): Promise<TeachingScopeRow[]> {
+    return myTeachingScope(schoolId, userId);
+  },
+
   async getMyClasses(schoolId: string, userId: string) {
-    const assignments = await myAssignments(schoolId, userId);
-    return Promise.all(
-      assignments.map(async (a) => {
-        const [total, todays] = await Promise.all([
-          StudentModel.countDocuments({ schoolId, className: a.className, section: a.section, profileStatus: 'active' }),
-          AttendanceModel.find({ schoolId, className: a.className, section: a.section, date: today() }).lean(),
-        ]);
-        const present = todays.filter((r) => r.status === 'present').length;
-        const absent = todays.filter((r) => r.status === 'absent').length;
-        return {
-          id: String(a._id),
-          classKey: keyOf(a.className, a.section),
-          className: a.className,
-          section: a.section,
-          subjects: a.subjects,
-          totalStudents: total,
-          periodsPerWeek: a.periodsPerWeek,
-          attendanceToday: { status: todays.length ? 'marked' : 'pending', present, absent },
-        };
-      }),
-    );
+    const incharge = await myInchargeClass(schoolId, userId);
+    if (!incharge) return [];
+    const { className, section, classKey, classId } = incharge;
+    const [total, todays, classTimetable, mySlots] = await Promise.all([
+      StudentModel.countDocuments({ schoolId, className, section, profileStatus: 'active' }),
+      AttendanceModel.find({ schoolId, className, section, date: today() }).lean(),
+      timetableService.getTimetable(schoolId, classId, section),
+      timetableService.getMySchedule(schoolId, userId),
+    ]);
+    const present = todays.filter((r) => r.status === 'present').length;
+    const absent = todays.filter((r) => r.status === 'absent').length;
+    // Subjects offered for this class = every subject actually timetabled
+    // there, so the incharge can target homework/circulars at any subject
+    // taught here even if they don't personally teach it themselves.
+    const subjects = Array.from(new Set(classTimetable.slots.map((s) => s.subjectName)));
+    const periodsPerWeek = mySlots.filter((s) => s.classId === classId && s.section === section).length;
+    return [
+      {
+        id: incharge.sectionId,
+        classKey,
+        className,
+        section,
+        subjects,
+        totalStudents: total,
+        periodsPerWeek,
+        attendanceToday: { status: todays.length ? 'marked' : 'pending', present, absent },
+      },
+    ];
   },
 
   async getMyStudents(schoolId: string, userId: string, filter: { classKey?: string; search?: string }) {
-    const assignments = await myAssignments(schoolId, userId);
-    const myKeys = new Set(assignments.map((a) => keyOf(a.className, a.section)));
+    const incharge = await myInchargeClass(schoolId, userId);
+    const myKeys = incharge ? new Set([incharge.classKey]) : new Set<string>();
     const students = (await StudentModel.find({ schoolId, profileStatus: 'active' }).lean()).filter((s) =>
       myKeys.has(keyOf(s.className ?? '', s.section ?? '')),
     );
@@ -154,15 +231,22 @@ export const teacherService = {
   },
 
   async getMyExams(schoolId: string, userId: string) {
-    const assignments = await myAssignments(schoolId, userId);
-    const myClassNames = new Set(assignments.map((a) => a.className));
+    const assignments = await timetableService.getMyTeachingAssignments(schoolId, userId);
+    // Exams created via the admin UI store `classes` as full `classKey`s
+    // ("Class 1-A"); older/seeded exams store bare class names ("Class 1")
+    // with no section. Both are live in the same school, so a teacher's
+    // assignment must match either form or exams in the newer format are
+    // silently invisible to them.
+    const matchTokens = (a: (typeof assignments)[number]): string[] => [a.className, keyOf(a.className, a.section)];
+    const myTokens = new Set(assignments.flatMap(matchTokens));
     const exams = (await ExamModel.find({ schoolId }).lean()).filter((e) =>
-      (e.classes ?? []).some((c) => myClassNames.has(c)),
+      (e.classes ?? []).some((c) => myTokens.has(c)),
     );
     const rows: Array<Record<string, unknown>> = [];
     for (const e of exams) {
       for (const a of assignments) {
-        if (!(e.classes ?? []).includes(a.className)) continue;
+        const tokens = matchTokens(a);
+        if (!(e.classes ?? []).some((c) => tokens.includes(c))) continue;
         for (const subject of a.subjects) {
           rows.push({
             id: `${String(e._id)}:${keyOf(a.className, a.section)}:${subject}`,
@@ -203,13 +287,17 @@ export const teacherService = {
     return dto(hw);
   },
 
-  async createHomework(schoolId: string, userId: string, payload: Record<string, unknown>) {
+  async createHomework(schoolId: string, userId: string, payload: Record<string, unknown>, role: string) {
     const { id, submissions, editHistory, createdBy, createdById, ...fields } = payload;
     void id;
     void submissions;
     void editHistory;
     void createdBy;
     void createdById;
+    if (role === 'teacher') {
+      const scope = await myTeachingScope(schoolId, userId);
+      assertCanTeach(scope, String(fields.classKey ?? ''), String(fields.subject ?? ''));
+    }
     const name = await teacherName(userId);
     const doc = await TeacherHomeworkModel.create({
       schoolId,
@@ -232,6 +320,12 @@ export const teacherService = {
     // may edit any, and the edit trail records who did it.
     if (role === 'teacher' && String(hw.teacherUserId) !== userId) {
       throw ApiError.forbidden('You can only edit homework you created');
+    }
+    if (role === 'teacher' && (patch.classKey !== undefined || patch.subject !== undefined)) {
+      const scope = await myTeachingScope(schoolId, userId);
+      const classKey = String(patch.classKey ?? hw.classKey);
+      const subject = String(patch.subject ?? hw.subject);
+      assertCanTeach(scope, classKey, subject);
     }
     const name = await teacherName(userId);
     Object.assign(hw, patch, {
@@ -351,12 +445,16 @@ export const teacherService = {
     };
   },
 
-  async createAssignment(schoolId: string, userId: string, payload: Record<string, unknown>) {
+  async createAssignment(schoolId: string, userId: string, payload: Record<string, unknown>, role: string) {
     const { id, totalStudents, submitted, pending, ...fields } = payload;
     void id;
     void totalStudents;
     void submitted;
     void pending;
+    if (role === 'teacher') {
+      const scope = await myTeachingScope(schoolId, userId);
+      assertCanTeach(scope, String(fields.classKey ?? ''), String(fields.subject ?? ''));
+    }
     const doc = await TeacherAssignmentModel.create({
       schoolId,
       teacherUserId: userId,
@@ -367,7 +465,7 @@ export const teacherService = {
     return this.assignmentView(schoolId, doc.toObject() as Doc);
   },
 
-  async updateAssignment(schoolId: string, userId: string, id: string, patch: Record<string, unknown>) {
+  async updateAssignment(schoolId: string, userId: string, id: string, patch: Record<string, unknown>, role: string) {
     const { id: _id, totalStudents, submitted, graded, pending, assignedDate, ...fields } = patch;
     void _id;
     void totalStudents;
@@ -375,6 +473,15 @@ export const teacherService = {
     void graded;
     void pending;
     void assignedDate;
+    if (role === 'teacher' && (fields.classKey !== undefined || fields.subject !== undefined)) {
+      const [scope, existing] = await Promise.all([
+        myTeachingScope(schoolId, userId),
+        TeacherAssignmentModel.findOne({ _id: id, schoolId }).lean(),
+      ]);
+      const classKey = String(fields.classKey ?? existing?.classKey ?? '');
+      const subject = String(fields.subject ?? existing?.subject ?? '');
+      assertCanTeach(scope, classKey, subject);
+    }
     const doc = await TeacherAssignmentModel.findOneAndUpdate(
       { _id: id, schoolId, teacherUserId: userId },
       { $set: fields },
@@ -529,7 +636,12 @@ export const teacherService = {
       .lean();
     return rows.map((c) => circularView(c, name, userId));
   },
-  async createCircular(schoolId: string, userId: string, payload: Record<string, unknown>) {
+  async createCircular(schoolId: string, userId: string, payload: Record<string, unknown>, role: string) {
+    if (role === 'teacher') {
+      const incharge = await myInchargeClass(schoolId, userId);
+      const targets = (payload.audienceClasses as string[] | undefined) ?? [];
+      for (const classKey of targets) assertInchargeOf(incharge, classKey);
+    }
     const name = await teacherName(userId);
     const count = await CircularModel.countDocuments({ schoolId });
     const doc = await CircularModel.create({
@@ -547,11 +659,15 @@ export const teacherService = {
     });
     return circularView(doc.toObject(), name, userId);
   },
-  async updateCircular(schoolId: string, userId: string, id: string, patch: Record<string, unknown>) {
+  async updateCircular(schoolId: string, userId: string, id: string, patch: Record<string, unknown>, role: string) {
     const name = await teacherName(userId);
     const c = await CircularModel.findOne({ _id: id, schoolId }).lean();
     if (!c) throw ApiError.notFound('Circular not found');
     if (!isMine(c, name, userId)) throw ApiError.forbidden('You can only edit circulars you created');
+    if (role === 'teacher' && patch.audienceClasses !== undefined) {
+      const incharge = await myInchargeClass(schoolId, userId);
+      for (const classKey of patch.audienceClasses as string[]) assertInchargeOf(incharge, classKey);
+    }
 
     const set: Record<string, unknown> = {};
     for (const key of ['title', 'body', 'priority', 'dateOfIssue', 'status'] as const) {

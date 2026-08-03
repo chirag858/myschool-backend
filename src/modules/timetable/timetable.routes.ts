@@ -72,8 +72,12 @@ timetableRoutes.post(
 );
 
 // Specific class endpoints (Note: these should not conflict with above static routes, so they use /class or /slot namespaces or specific HTTP methods where possible)
+timetableRoutes.get('/my-schedule', ...readGate, asyncHandler(timetableController.getMySchedule));
 timetableRoutes.get('/teacher/:staffId', ...readGate, asyncHandler(timetableController.getTeacherSchedule));
 
+// `/:classId` is a catch-all single-segment param — every literal route above
+// (my-schedule, teacher/:staffId, config/*, subject-assignments/*, master,
+// scan-conflicts, teacher-loads) must stay mounted before this line.
 timetableRoutes.get('/:classId', ...readGate, asyncHandler(timetableController.getTimetable));
 timetableRoutes.post('/:classId/save', ...editGate, validate({ body: saveSlotSchema }), asyncHandler(timetableController.saveSlot));
 timetableRoutes.delete('/:classId/slots/:slotId', ...editGate, validate({ body: clearSlotSchema }), asyncHandler(timetableController.clearSlot));

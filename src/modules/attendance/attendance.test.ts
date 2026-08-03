@@ -181,6 +181,87 @@ describe('Attendance API', () => {
     expect(none.body.length).toBe(0);
   });
 
+  it('a teacher may only mark/override attendance for their incharge class', async () => {
+    const teacher = await token('teacher');
+
+    // Demo teacher is incharge of Class 1-A (seed) — allowed.
+    const mine = await request(app)
+      .get('/api/attendance/mark?date=2025-04-20&class=Class 1&section=A')
+      .set(auth(teacher));
+    expect(mine.status).toBe(200);
+    const savePayload = {
+      date: '2025-04-20',
+      classKey: 'Class 1-A',
+      attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+    };
+    expect((await request(app).post('/api/attendance/save').set(auth(teacher)).send(savePayload)).status).toBe(200);
+
+    // Any other class — forbidden, even though the teacher also teaches it (Class 2-A).
+    expect(
+      (await request(app).get('/api/attendance/mark?date=2025-04-20&class=Class 2&section=A').set(auth(teacher))).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(app)
+          .post('/api/attendance/save')
+          .set(auth(teacher))
+          .send({ date: '2025-04-20', classKey: 'Class 2-A', attendance: [{ studentId: 'x', status: 'present' }] })
+      ).status,
+    ).toBe(403);
+
+    // Admin remains unrestricted.
+    expect(
+      (await request(app).get('/api/attendance/mark?date=2025-04-20&class=Class 2&section=A').set(auth(admin))).status,
+    ).toBe(200);
+  });
+
+  it('a teacher only ever sees their incharge class in reports, regardless of query params', async () => {
+    const teacher = await token('teacher');
+
+    // Mark the demo teacher's own class (Class 1-A) present for a date so
+    // there's data to scope down to.
+    const mine = await request(app)
+      .get('/api/attendance/mark?date=2025-04-21&class=Class 1&section=A')
+      .set(auth(teacher));
+    await request(app)
+      .post('/api/attendance/save')
+      .set(auth(teacher))
+      .send({
+        date: '2025-04-21',
+        classKey: 'Class 1-A',
+        attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+      });
+
+    const dashboard = await request(app).get('/api/attendance/dashboard?date=2025-04-21').set(auth(teacher));
+    expect(dashboard.body.classSummaries).toHaveLength(1);
+    expect(dashboard.body.classSummaries[0].classKey).toBe('Class 1-A');
+
+    const daily = await request(app).get('/api/attendance/reports/daily?date=2025-04-21').set(auth(teacher));
+    expect(daily.body).toHaveLength(1);
+    expect(daily.body[0]).toMatchObject({ classLabel: 'Class 1', section: 'A' });
+
+    // Explicitly asking for a different class via query param is ignored —
+    // the teacher's own incharge class always wins.
+    const monthly = await request(app)
+      .get('/api/attendance/reports/monthly?classKey=Nursery-A')
+      .set(auth(teacher));
+    expect(monthly.body.every((r: { name: string }) => Boolean(r.name))).toBe(true);
+    const monthlyAdmin = await request(app).get('/api/attendance/reports/monthly?classKey=Nursery-A').set(auth(admin));
+    // The admin's Nursery-A result must differ from what the teacher got for their own class
+    // (unless coincidentally both classes have zero students, which isn't the case in seed data).
+    expect(monthly.body.map((r: { studentId: string }) => r.studentId).sort()).not.toEqual(
+      monthlyAdmin.body.map((r: { studentId: string }) => r.studentId).sort(),
+    );
+
+    const register = await request(app)
+      .get('/api/attendance/reports/register?classKey=Nursery-A')
+      .set(auth(teacher));
+    const registerAdmin = await request(app).get('/api/attendance/reports/register?classKey=Nursery-A').set(auth(admin));
+    expect(register.body.students.map((s: { id: string }) => s.id).sort()).not.toEqual(
+      registerAdmin.body.students.map((s: { id: string }) => s.id).sort(),
+    );
+  });
+
   it('GET /attendance/reports/register returns a student×date matrix', async () => {
     const res = await request(app).get('/api/attendance/reports/register?classKey=Nursery-A').set(auth(admin));
     expect(res.status).toBe(200);

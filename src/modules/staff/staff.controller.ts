@@ -45,6 +45,16 @@ export const staffController = {
     const { password } = req.body as { password?: string };
     send(res, await staffService.resetPassword(schoolId(req), p(req, 'id'), password));
   },
+  async getIncharge(req: Request, res: Response) {
+    send(res, await staffService.getIncharge(schoolId(req), p(req, 'id')));
+  },
+  async setIncharge(req: Request, res: Response) {
+    const { sectionId } = req.body as { sectionId: string };
+    send(res, await staffService.setIncharge(schoolId(req), p(req, 'id'), sectionId));
+  },
+  async clearIncharge(req: Request, res: Response) {
+    send(res, await staffService.clearIncharge(schoolId(req), p(req, 'id')));
+  },
 
   async updateStatus(req: Request, res: Response) {
     const { status } = req.body as { status: string };

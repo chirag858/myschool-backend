@@ -25,6 +25,73 @@ export async function getActiveSessionName(schoolId: string): Promise<string> {
   return s?.name ?? '2025-26';
 }
 
+export type InchargeSection = {
+  sectionId: string;
+  classId: string;
+  classKey: string;
+  className: string;
+  section: string;
+};
+
+/**
+ * Single source of truth for "which section is this user the class incharge
+ * of" — reverse lookup on Section.classTeacherId. Every module that needs to
+ * scope a teacher to their one managed class (teacher, attendance, staff)
+ * goes through this instead of re-querying Section directly.
+ */
+export async function getInchargeSection(
+  schoolId: string,
+  userId: string,
+): Promise<InchargeSection | null> {
+  const sec = await SectionModel.findOne({ schoolId, classTeacherId: userId }).lean();
+  if (!sec) return null;
+  const cls = await ClassModel.findOne({ _id: sec.classId, schoolId }).lean();
+  const className = cls?.name ?? '';
+  return {
+    sectionId: String(sec._id),
+    classId: String(sec.classId),
+    classKey: `${className}-${sec.name}`,
+    className,
+    section: sec.name,
+  };
+}
+
+/**
+ * Sets `userId` as incharge of `sectionId`, clearing any conflicting prior
+ * state so the one-section-per-teacher / one-teacher-per-section invariant
+ * always holds: if this teacher was incharge elsewhere, that section is
+ * cleared first; if the target section already had a different incharge,
+ * that assignment is overwritten.
+ */
+export async function setInchargeSection(
+  schoolId: string,
+  sectionId: string,
+  userId: string,
+  userName: string,
+): Promise<InchargeSection> {
+  const target = await SectionModel.findOne({ _id: sectionId, schoolId });
+  if (!target) throw ApiError.notFound('Section not found');
+
+  await SectionModel.updateMany(
+    { schoolId, classTeacherId: userId, _id: { $ne: sectionId } },
+    { $set: { classTeacherId: null, classTeacherName: null } },
+  );
+
+  target.set({ classTeacherId: userId, classTeacherName: userName });
+  await target.save();
+
+  const result = await getInchargeSection(schoolId, userId);
+  if (!result) throw ApiError.notFound('Section not found');
+  return result;
+}
+
+export async function clearInchargeSection(schoolId: string, userId: string): Promise<void> {
+  await SectionModel.updateMany(
+    { schoolId, classTeacherId: userId },
+    { $set: { classTeacherId: null, classTeacherName: null } },
+  );
+}
+
 function toSession(d: Doc) {
   return {
     id: String(d._id),

@@ -16,6 +16,7 @@ export const updateCredentialsSchema = z.object({
   active: z.boolean().optional(),
 });
 export const resetPasswordSchema = z.object({ password: z.string().min(6).optional() });
+export const setInchargeSchema = z.object({ sectionId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid section id') });
 
 const mobile = z.string().regex(/^[6-9]\d{9}$/, 'Invalid mobile number');
 const aadhaar = z

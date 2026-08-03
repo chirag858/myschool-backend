@@ -12,6 +12,7 @@ import {
   lockSchema,
   resetPasswordSchema,
   saveAttendanceSchema,
+  setInchargeSchema,
   staffQuery,
   statusSchema,
   updateCredentialsSchema,
@@ -40,3 +41,7 @@ staffRoutes.get('/:id/credentials', validate({ params: idParam }), asyncHandler(
 staffRoutes.post('/:id/credentials', validate({ params: idParam, body: createCredentialsSchema }), asyncHandler(staffController.createCredentials));
 staffRoutes.patch('/:id/credentials', validate({ params: idParam, body: updateCredentialsSchema }), asyncHandler(staffController.updateCredentials));
 staffRoutes.post('/:id/credentials/reset-password', validate({ params: idParam, body: resetPasswordSchema }), asyncHandler(staffController.resetPassword));
+
+staffRoutes.get('/:id/incharge', validate({ params: idParam }), asyncHandler(staffController.getIncharge));
+staffRoutes.put('/:id/incharge', validate({ params: idParam, body: setInchargeSchema }), asyncHandler(staffController.setIncharge));
+staffRoutes.delete('/:id/incharge', validate({ params: idParam }), asyncHandler(staffController.clearIncharge));

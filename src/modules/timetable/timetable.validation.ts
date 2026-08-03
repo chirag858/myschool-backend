@@ -60,6 +60,7 @@ export const saveSlotSchema = slotCheckSchema.extend({
   subjectColor: z.string().min(1),
   teacherName: z.string().min(1),
   roomName: z.string().min(1),
+  overridden: z.boolean().optional(),
 });
 
 export const clearSlotSchema = z.object({

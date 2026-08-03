@@ -152,9 +152,11 @@ export const attendanceService = {
     }));
   },
 
-  /** Group students by className+section with their record for `date`. */
-  async _groups(schoolId: string, date: string) {
-    const students = await StudentModel.find({ schoolId }).lean();
+  /** Group students by className+section with their record for `date`.
+   * `classKey` restricts to one class — used to scope a teacher to the class
+   * they're incharge of; admins/principals/coordinators pass `undefined`. */
+  async _groups(schoolId: string, date: string, classKey?: string) {
+    const students = await filteredStudents(schoolId, classKey);
     const records = await AttendanceModel.find({ schoolId, date }).lean();
     const recByStudent = new Map(records.map((r) => [String(r.studentId), r]));
     const groups = new Map<string, { className: string; section: string; students: Doc[] }>();
@@ -166,8 +168,10 @@ export const attendanceService = {
     return { groups, recByStudent, records, totalStudents: students.length };
   },
 
-  async dashboard(schoolId: string, date: string) {
-    const { groups, recByStudent, records, totalStudents } = await this._groups(schoolId, date);
+  async dashboard(schoolId: string, date: string, classKey?: string) {
+    const { groups, recByStudent, totalStudents } = await this._groups(schoolId, date, classKey);
+    const scopedIds = new Set([...groups.values()].flatMap((g) => g.students.map((s) => String(s._id))));
+    const records = [...recByStudent.values()].filter((r) => scopedIds.has(String(r.studentId)));
     const present = records.filter((r) => r.status === 'present').length;
     const absent = records.filter((r) => r.status === 'absent').length;
     const late = records.filter((r) => r.status === 'late').length;
@@ -199,8 +203,8 @@ export const attendanceService = {
     };
   },
 
-  async dailySummary(schoolId: string, date: string) {
-    const { groups, recByStudent } = await this._groups(schoolId, date);
+  async dailySummary(schoolId: string, date: string, classKey?: string) {
+    const { groups, recByStudent } = await this._groups(schoolId, date, classKey);
     return [...groups.values()].map((g) => {
       const marks = g.students.map((s) => recByStudent.get(String(s._id))?.status).filter(Boolean);
       const count = (st: string) => marks.filter((m) => m === st).length;
@@ -221,25 +225,32 @@ export const attendanceService = {
     });
   },
 
-  async absentees(schoolId: string, date: string) {
+  async absentees(schoolId: string, date: string, classKey?: string) {
     const records = await AttendanceModel.find({ schoolId, date, status: 'absent' }).lean();
     const students = await StudentModel.find({
       schoolId,
       _id: { $in: records.map((r) => r.studentId) },
     }).lean();
     const map = new Map(students.map((s) => [String(s._id), s]));
-    return records.map((r) => {
-      const s = map.get(String(r.studentId));
-      return {
-        studentId: String(r.studentId),
-        studentName: s?.name ?? '',
-        classLabel: `${s?.className ?? ''}-${s?.section ?? ''}`,
-        rollNumber: s?.rollNumber ?? '',
-        parentMobile: s?.parents?.fatherMobile ?? s?.mobile ?? '',
-        alertSent: Boolean(r.alertSent),
-        reason: r.remarks,
-      };
-    });
+    const scoped = classKey ? splitClassKey(classKey) : null;
+    return records
+      .filter((r) => {
+        if (!scoped) return true;
+        const s = map.get(String(r.studentId));
+        return s?.className === scoped.className && (!scoped.section || s?.section === scoped.section);
+      })
+      .map((r) => {
+        const s = map.get(String(r.studentId));
+        return {
+          studentId: String(r.studentId),
+          studentName: s?.name ?? '',
+          classLabel: `${s?.className ?? ''}-${s?.section ?? ''}`,
+          rollNumber: s?.rollNumber ?? '',
+          parentMobile: s?.parents?.fatherMobile ?? s?.mobile ?? '',
+          alertSent: Boolean(r.alertSent),
+          reason: r.remarks,
+        };
+      });
   },
 
   // ─── Report aggregations (matrices) ───

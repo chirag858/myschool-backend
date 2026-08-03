@@ -26,6 +26,7 @@ teacherRoutes.use(authenticate, requireRole('teacher', 'school_admin', 'principa
 teacherRoutes.get('/my-classes', asyncHandler(teacherController.myClasses));
 teacherRoutes.get('/my-students', asyncHandler(teacherController.myStudents));
 teacherRoutes.get('/my-exams', asyncHandler(teacherController.myExams));
+teacherRoutes.get('/my-teaching', asyncHandler(teacherController.myTeaching));
 teacherRoutes.get('/dashboard-summary', asyncHandler(teacherController.dashboardSummary));
 
 teacherRoutes.get('/homework', asyncHandler(teacherController.getHomework));
