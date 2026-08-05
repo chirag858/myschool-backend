@@ -21,6 +21,10 @@ const userSchema = new Schema(
     lastLoginIp: { type: String, default: '' },
     /** Class-section keys (e.g. "V-A") a coordinator/teacher supervises. */
     assignedClasses: { type: [String], default: [] },
+    /** Free-text display title for a coordinator (e.g. "Wing Coordinator", "Sports
+     * Coordinator") — schools define their own, so this is not a fixed enum. Purely
+     * cosmetic: permissions/routes stay gated on the single 'coordinator' role. */
+    coordinatorTitle: { type: String, default: '' },
   },
   { timestamps: true },
 );

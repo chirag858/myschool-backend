@@ -14,6 +14,7 @@ export const createCredentialsSchema = z.object({
 export const updateCredentialsSchema = z.object({
   role: staffRole.optional(),
   active: z.boolean().optional(),
+  coordinatorTitle: z.string().trim().max(60).optional(),
 });
 export const resetPasswordSchema = z.object({ password: z.string().min(6).optional() });
 export const setInchargeSchema = z.object({ sectionId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid section id') });

@@ -46,22 +46,22 @@ export const coordinatorController = {
     noContent(res);
   },
   async getStudentLeaves(req: Request, res: Response) {
-    send(res, await coordinatorService.getStudentLeaves(schoolId(req), req.query as Record<string, string>));
+    send(res, await coordinatorService.getStudentLeaves(schoolId(req), userId(req), req.query as Record<string, string>));
   },
   async applyOnBehalf(req: Request, res: Response) {
     created(res, await coordinatorService.applyOnBehalf(schoolId(req), req.body));
   },
   async approve(req: Request, res: Response) {
     const { remarks } = req.body as { remarks?: string };
-    send(res, await coordinatorService.approve(schoolId(req), p(req, 'id'), remarks));
+    send(res, await coordinatorService.approve(schoolId(req), userId(req), p(req, 'id'), remarks));
   },
   async reject(req: Request, res: Response) {
     const { reason } = req.body as { reason: string };
-    send(res, await coordinatorService.reject(schoolId(req), p(req, 'id'), reason));
+    send(res, await coordinatorService.reject(schoolId(req), userId(req), p(req, 'id'), reason));
   },
   async forward(req: Request, res: Response) {
     const { remarks } = req.body as { remarks?: string };
-    send(res, await coordinatorService.forward(schoolId(req), p(req, 'id'), remarks));
+    send(res, await coordinatorService.forward(schoolId(req), userId(req), p(req, 'id'), remarks));
   },
 
   async getStaffLeaves(req: Request, res: Response) {
@@ -76,13 +76,20 @@ export const coordinatorController = {
     send(res, await coordinatorService.rejectStaffLeave(schoolId(req), p(req, 'id'), reason));
   },
   async getMarksOverview(req: Request, res: Response) {
-    send(res, await coordinatorService.getMarksOverview(schoolId(req), String(req.query.examId ?? '')));
+    send(res, await coordinatorService.getMarksOverview(schoolId(req), userId(req), String(req.query.examId ?? '')));
   },
   async getStaffOverview(req: Request, res: Response) {
     send(res, await coordinatorService.getStaffOverview(schoolId(req), req.query.department ? String(req.query.department) : undefined));
   },
   async getStaffAttendance(req: Request, res: Response) {
-    send(res, await coordinatorService.getStaffAttendance(schoolId(req), req.query.department ? String(req.query.department) : undefined));
+    send(
+      res,
+      await coordinatorService.getStaffAttendance(
+        schoolId(req),
+        req.query.department ? String(req.query.department) : undefined,
+        req.query.date ? String(req.query.date) : undefined,
+      ),
+    );
   },
 
   async exportStudents(req: Request, res: Response) {
@@ -93,6 +100,7 @@ export const coordinatorController = {
     const report = await coordinatorService.exportStaffAttendanceReport(
       schoolId(req),
       req.query.department ? String(req.query.department) : undefined,
+      req.query.date ? String(req.query.date) : undefined,
     );
     await sendExcel(res, report, 'coordinator-staff-attendance');
   },

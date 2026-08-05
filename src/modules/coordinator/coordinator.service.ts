@@ -1,3 +1,5 @@
+import { Types } from 'mongoose';
+
 import { ClassModel, SectionModel } from '../academics/academics.models';
 import { ApiError } from '../../lib/api-error';
 import { AttendanceModel } from '../attendance/attendance.models';
@@ -19,6 +21,39 @@ const keyOf = (className: string, section: string): string => `${className}-${se
 async function assignedClassesOf(userId: string): Promise<string[]> {
   const user = await UserModel.findById(userId).lean();
   return (user?.assignedClasses as string[] | undefined) ?? [];
+}
+
+/** Student-leave rows store `className` as whatever was on the student at apply
+ * time — sometimes just the bare class name, no section — so it can't be trusted
+ * to match a classKey filter directly. Resolve each row's real classKey from the
+ * student record itself (the source of truth) and scope by that instead. */
+async function scopeLeavesToSupervised<T extends { studentId?: unknown; className?: unknown }>(
+  leaves: T[],
+  supervisedKeys: Set<string>,
+): Promise<T[]> {
+  if (!supervisedKeys.size) return leaves;
+  const studentIds = leaves.map((l) => l.studentId).filter(Boolean);
+  const students = await StudentModel.find({ _id: { $in: studentIds } }).lean();
+  const classKeyById = new Map(
+    students.map((s) => [String(s._id), keyOf((s.className as string) ?? '', (s.section as string) ?? '')]),
+  );
+  return leaves.filter((l) => supervisedKeys.has(classKeyById.get(String(l.studentId)) ?? (l.className as string) ?? ''));
+}
+
+/** Every real "ClassName-Section" combo for the school, per the classKey convention
+ * used across students/exams/timetable — assigned-classes must stay a subset of this. */
+async function validClassKeys(schoolId: string): Promise<Set<string>> {
+  const classes = await ClassModel.find({ schoolId }).lean();
+  const sections = await SectionModel.find({ schoolId }).lean();
+  const classNameById = new Map(classes.map((c) => [String(c._id), c.name as string]));
+  return new Set(
+    sections
+      .map((s) => {
+        const className = classNameById.get(String(s.classId));
+        return className ? keyOf(className, s.name as string) : null;
+      })
+      .filter((key): key is string => Boolean(key)),
+  );
 }
 
 /** Marks-entry rows for the given exam, scoped to `classKeys` (all classes if omitted).
@@ -68,13 +103,29 @@ function dto(d: Doc): Record<string, unknown> {
   return { id: String(_id), ...rest };
 }
 
-async function decide(schoolId: string, id: string, patch: Record<string, unknown>) {
+async function decide(schoolId: string, userId: string, id: string, patch: Record<string, unknown>) {
+  // Mirror the read-path scoping (scopeLeavesToSupervised): a coordinator with a
+  // real assignedClasses list may only decide leaves for students in that scope,
+  // even if they know/guess the leave's id.
+  const supervisedKeys = new Set(await assignedClassesOf(userId));
+  if (supervisedKeys.size) {
+    const leave = await StudentLeaveModel.findOne({ _id: id, schoolId }).lean();
+    if (!leave) throw ApiError.notFound('Leave request not found');
+    const [inScope] = await scopeLeavesToSupervised([leave], supervisedKeys);
+    if (!inScope) throw ApiError.notFound('Leave request not found');
+  }
+  // `status: 'pending'` in the filter makes this an atomic check-and-update —
+  // a leave that's already been decided can't be re-approved/re-rejected/re-forwarded
+  // by a retry, double-click, or a second reviewer racing the first.
   const doc = await StudentLeaveModel.findOneAndUpdate(
-    { _id: id, schoolId },
+    { _id: id, schoolId, status: 'pending' },
     { $set: { ...patch, decidedAt: nowIso() } },
     { new: true },
   );
-  if (!doc) throw ApiError.notFound('Leave request not found');
+  if (!doc) {
+    const exists = await StudentLeaveModel.exists({ _id: id, schoolId });
+    throw exists ? ApiError.conflict('This leave request has already been decided') : ApiError.notFound('Leave request not found');
+  }
   return dto(doc.toObject());
 }
 
@@ -90,7 +141,15 @@ export const coordinatorService = {
       ExamModel.find({ schoolId }).lean(),
       StudentLeaveModel.find({ schoolId }).sort({ appliedOn: -1 }).lean(),
       AttendanceModel.aggregate<{ _id: string; total: number; present: number }>([
-        { $match: { schoolId, date: todayStr, ...(assignedClasses.length ? { className: { $in: [...supervisedClassSet].map((k) => k.split('-')[0]) } } : {}) } },
+        {
+          $match: {
+            // .aggregate() doesn't auto-cast filter values like .find() does —
+            // schoolId must be cast to ObjectId or this stage matches nothing.
+            schoolId: new Types.ObjectId(schoolId),
+            date: todayStr,
+            ...(assignedClasses.length ? { className: { $in: [...supervisedClassSet].map((k) => k.split('-')[0]) } } : {}),
+          },
+        },
         {
           $group: {
             _id: { $concat: ['$className', '-', '$section'] },
@@ -101,11 +160,22 @@ export const coordinatorService = {
       ]),
       StaffLeaveModel.countDocuments({ schoolId, currentLevel: 1, status: 'pending' }),
     ]);
+    // Same scoping as everywhere else: a real assignedClasses list narrows to that
+    // subset; an unscoped coordinator (empty array) still sees every leave request.
+    const scopedLeaves = await scopeLeavesToSupervised(leaves, supervisedClassSet);
 
     const scheduled = exams
       .filter((e) => e.status === 'scheduled')
       .sort((a, b) => ((a.startDate ?? '') < (b.startDate ?? '') ? -1 : 1));
     const nextExam = scheduled[0];
+
+    // A coordinator with a real assignedClasses scope supervises exactly that
+    // subset, not the whole school — an unscoped coordinator (empty array) still
+    // sees everything, matching the convention used everywhere else in this file.
+    const supervisedClassesCount = assignedClasses.length
+      ? new Set(assignedClasses.map((k) => k.split('-')[0])).size
+      : classes;
+    const supervisedSectionsCount = assignedClasses.length ? assignedClasses.length : sections;
 
     // The $match above only pre-filters by className (cheap index hit); narrow to
     // the exact supervised classKeys here since a className can span sections
@@ -114,7 +184,11 @@ export const coordinatorService = {
       ? todaysAttendance.filter((r) => supervisedClassSet.has(r._id))
       : todaysAttendance;
     const markedClassKeys = new Set(scopedAttendance.map((r) => r._id));
-    const relevantClassKeys = assignedClasses.length ? assignedClasses : [...markedClassKeys];
+    // BUG FIXED: this used to fall back to `[...markedClassKeys]` for an unscoped
+    // coordinator — filtering the marked set against itself, so classesNotMarkedYet
+    // was always 0 no matter how many classes were actually unmarked. Use every
+    // real classKey in the school instead.
+    const relevantClassKeys = assignedClasses.length ? assignedClasses : [...(await validClassKeys(schoolId))];
     const classesNotMarkedYet = relevantClassKeys.filter((k) => !markedClassKeys.has(k)).length;
     const totalStudentsToday = scopedAttendance.reduce((sum, r) => sum + r.total, 0);
     const presentToday = scopedAttendance.reduce((sum, r) => sum + r.present, 0);
@@ -155,7 +229,7 @@ export const coordinatorService = {
         href: '/coordinator/examinations/marks-overview',
       });
     }
-    const pendingStudentLeaves = leaves.filter((l) => l.status === 'pending').length;
+    const pendingStudentLeaves = scopedLeaves.filter((l) => l.status === 'pending').length;
     if (pendingStudentLeaves > 0) {
       pendingTasks.push({
         id: 'student-leaves-pending',
@@ -168,8 +242,8 @@ export const coordinatorService = {
     pendingTasks.sort((a, b) => b.priority - a.priority);
 
     return {
-      supervisedClassesCount: classes,
-      supervisedSectionsCount: sections,
+      supervisedClassesCount,
+      supervisedSectionsCount,
       attendanceTodayPercent,
       classesNotMarkedYet,
       pendingStaffLeaves,
@@ -179,7 +253,7 @@ export const coordinatorService = {
       pendingMarksCount,
       acrossExamsCount: exams.length,
       pendingTasks,
-      recentStudentLeaves: leaves.slice(0, 5).map((l) => ({
+      recentStudentLeaves: scopedLeaves.slice(0, 5).map((l) => ({
         id: String(l._id),
         studentName: l.studentName,
         className: l.className,
@@ -187,6 +261,9 @@ export const coordinatorService = {
         days: l.days,
         status: l.status,
         appliedOn: l.appliedOn,
+        fromDate: l.fromDate,
+        toDate: l.toDate,
+        reason: l.reason,
       })),
     };
   },
@@ -234,13 +311,23 @@ export const coordinatorService = {
     return rows;
   },
 
-  async setAssignedClasses(schoolId: string, coordinatorUserId: string, classKeys: string[]) {
+  async setAssignedClasses(schoolId: string, targetUserId: string, classKeys: string[]) {
+    const target = await UserModel.findOne({ _id: targetUserId, schoolId }).lean();
+    if (!target) throw ApiError.notFound('Staff member not found');
+    if (target.role === 'teacher') throw ApiError.badRequest('Teachers use class-incharge assignment, not assigned classes');
+
+    if (classKeys.length) {
+      const validKeys = await validClassKeys(schoolId);
+      const unknown = classKeys.filter((k) => !validKeys.has(k));
+      if (unknown.length) throw ApiError.badRequest(`Unknown class/section: ${unknown.join(', ')}`);
+    }
+
     const user = await UserModel.findOneAndUpdate(
-      { _id: coordinatorUserId, schoolId, role: 'coordinator' },
+      { _id: targetUserId, schoolId },
       { $set: { assignedClasses: classKeys } },
       { new: true },
     ).lean();
-    if (!user) throw ApiError.notFound('Coordinator not found');
+    if (!user) throw ApiError.notFound('Staff member not found');
     return { id: String(user._id), assignedClasses: user.assignedClasses ?? [] };
   },
 
@@ -298,18 +385,28 @@ export const coordinatorService = {
     if (!doc) throw ApiError.notFound('Assignment not found');
   },
 
-  async getStudentLeaves(schoolId: string, q: Record<string, string>) {
+  async getStudentLeaves(schoolId: string, userId: string, q: Record<string, string>) {
+    const supervisedKeys = new Set(await assignedClassesOf(userId));
     const filter: Record<string, unknown> = { schoolId };
     if (q.status && q.status !== 'all') filter.status = q.status;
-    return (await StudentLeaveModel.find(filter).sort({ appliedOn: -1 }).lean()).map(dto);
+    const leaves = await StudentLeaveModel.find(filter).sort({ appliedOn: -1 }).lean();
+    const scoped = await scopeLeavesToSupervised(leaves, supervisedKeys);
+    return scoped.map(dto);
   },
 
   async applyOnBehalf(schoolId: string, payload: Record<string, unknown>) {
-    const { id, ...fields } = payload;
+    // Never trust client-supplied schoolId/status/decidedBy/decidedAt — spread
+    // `fields` first so these explicit, server-owned values always win.
+    const { id, schoolId: _schoolId, status, decidedBy, decidedAt, appliedOn, ...fields } = payload;
     void id;
+    void _schoolId;
+    void status;
+    void decidedBy;
+    void decidedAt;
+    void appliedOn;
     const doc = await StudentLeaveModel.create({
-      schoolId,
       ...fields,
+      schoolId,
       appliedOn: nowIso(),
       status: 'approved',
       decidedBy: 'Coordinator (on behalf)',
@@ -318,14 +415,14 @@ export const coordinatorService = {
     return dto(doc.toObject());
   },
 
-  approve(schoolId: string, id: string, remarks?: string) {
-    return decide(schoolId, id, { status: 'approved', remarks, decidedBy: 'Coordinator' });
+  approve(schoolId: string, userId: string, id: string, remarks?: string) {
+    return decide(schoolId, userId, id, { status: 'approved', remarks, decidedBy: 'Coordinator' });
   },
-  reject(schoolId: string, id: string, reason: string) {
-    return decide(schoolId, id, { status: 'rejected', rejectionReason: reason, decidedBy: 'Coordinator' });
+  reject(schoolId: string, userId: string, id: string, reason: string) {
+    return decide(schoolId, userId, id, { status: 'rejected', rejectionReason: reason, decidedBy: 'Coordinator' });
   },
-  forward(schoolId: string, id: string, remarks?: string) {
-    return decide(schoolId, id, { status: 'forwarded', remarks, decidedBy: 'Coordinator → Principal' });
+  forward(schoolId: string, userId: string, id: string, remarks?: string) {
+    return decide(schoolId, userId, id, { status: 'forwarded', remarks, decidedBy: 'Coordinator → Principal' });
   },
 
   // ─── Staff leaves (Level-1 coordinator queue) ───
@@ -339,28 +436,37 @@ export const coordinatorService = {
 
   async approveStaffLeaveLevel1(schoolId: string, id: string, remarks?: string) {
     // L1 approval moves the request up to the Principal (Level 2); it stays pending.
+    // Filtering on currentLevel: 1 + status: 'pending' makes this an atomic
+    // check-and-update — a leave already escalated/decided can't be re-approved.
     const doc = await StaffLeaveModel.findOneAndUpdate(
-      { _id: id, schoolId },
+      { _id: id, schoolId, currentLevel: 1, status: 'pending' },
       { $set: { currentLevel: 2, remarks, decidedAt: nowIso() } },
       { new: true },
     );
-    if (!doc) throw ApiError.notFound('Staff leave not found');
+    if (!doc) {
+      const exists = await StaffLeaveModel.exists({ _id: id, schoolId });
+      throw exists ? ApiError.conflict('This staff leave has already been decided') : ApiError.notFound('Staff leave not found');
+    }
     return dto(doc.toObject());
   },
 
   async rejectStaffLeave(schoolId: string, id: string, reason: string) {
     const doc = await StaffLeaveModel.findOneAndUpdate(
-      { _id: id, schoolId },
+      { _id: id, schoolId, status: 'pending' },
       { $set: { status: 'rejected', rejectionReason: reason, decidedAt: nowIso() } },
       { new: true },
     );
-    if (!doc) throw ApiError.notFound('Staff leave not found');
+    if (!doc) {
+      const exists = await StaffLeaveModel.exists({ _id: id, schoolId });
+      throw exists ? ApiError.conflict('This staff leave has already been decided') : ApiError.notFound('Staff leave not found');
+    }
     return dto(doc.toObject());
   },
 
   // ─── Marks-entry overview for an exam ───
-  getMarksOverview(schoolId: string, examId: string) {
-    return marksOverviewRows(schoolId, examId);
+  async getMarksOverview(schoolId: string, userId: string, examId: string) {
+    const supervisedKeys = new Set(await assignedClassesOf(userId));
+    return marksOverviewRows(schoolId, examId, supervisedKeys.size ? supervisedKeys : undefined);
   },
 
   // ─── Staff overview + attendance (today) ───
@@ -385,12 +491,12 @@ export const coordinatorService = {
     });
   },
 
-  async getStaffAttendance(schoolId: string, department?: string) {
+  async getStaffAttendance(schoolId: string, department?: string, date?: string) {
     const filter: Record<string, unknown> = { schoolId };
     if (department && department !== 'all') filter.department = department;
     const [staff, todays] = await Promise.all([
       StaffModel.find(filter).lean(),
-      StaffAttendanceModel.find({ schoolId, date: today() }).lean(),
+      StaffAttendanceModel.find({ schoolId, date: date ?? today() }).lean(),
     ]);
     const byStaff = new Map(todays.map((a) => [String(a.staffId), a]));
     return staff.map((s) => {
@@ -408,7 +514,7 @@ export const coordinatorService = {
     });
   },
 
-  async exportStudentsReport(schoolId: string, userId: string, filter: { classKey?: string; search?: string }): Promise<ReportData> {
+  async exportStudentsReport(schoolId: string, userId: string, filter: { classKey?: string; search?: string; profileStatus?: string }): Promise<ReportData> {
     const rows = await coordinatorService.getStudents(schoolId, userId, filter);
     return {
       title: 'Students',
@@ -418,11 +524,11 @@ export const coordinatorService = {
     };
   },
 
-  async exportStaffAttendanceReport(schoolId: string, department?: string): Promise<ReportData> {
-    const rows = await coordinatorService.getStaffAttendance(schoolId, department);
+  async exportStaffAttendanceReport(schoolId: string, department?: string, date?: string): Promise<ReportData> {
+    const rows = await coordinatorService.getStaffAttendance(schoolId, department, date);
     return {
       title: 'Staff Attendance',
-      subtitle: `Today's staff attendance (${today()}).`,
+      subtitle: `Staff attendance for ${date ?? today()}.`,
       columns: ['Name', 'Designation', 'Department', 'Status', 'Time In', 'Time Out', 'Remarks'],
       rows: rows.map((r) => [r.name, r.designation, r.department, r.status, r.timeIn ?? '', r.timeOut ?? '', r.remarks ?? '']),
     };

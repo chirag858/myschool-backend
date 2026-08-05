@@ -2,7 +2,9 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { app } from '../../app';
+import { AttendanceModel } from '../attendance/attendance.models';
 import { seedDemo } from '../../seed/seed';
+import { StudentModel } from '../students/student.model';
 
 async function token(username: string): Promise<string> {
   const res = await request(app)
@@ -18,7 +20,16 @@ describe('Coordinator API (student leaves)', () => {
     await seedDemo();
     coord = await token('coordinator');
   });
+  /** Clears the seeded coordinator's assignedClasses so leave-decision tests (which
+   * don't care about class scoping) see every seeded leave, same as before scoping existed. */
+  const unscopeCoord = async () => {
+    const admin = await token('schooladmin');
+    const me = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = me.body._id ?? me.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+  };
   const leaveIds = async () => {
+    await unscopeCoord();
     const res = await request(app).get('/api/coordinator/student-leaves').set(auth(coord));
     return res.body.map((l: { id: string }) => l.id);
   };
@@ -32,12 +43,69 @@ describe('Coordinator API (student leaves)', () => {
   it('dashboard reflects supervised classes + recent leaves', async () => {
     const res = await request(app).get('/api/coordinator/dashboard').set(auth(coord));
     expect(res.status).toBe(200);
+    // Seeded coordinator's assignedClasses is ['Class 1-A', 'Class 2-A'] — 2 distinct
+    // classes, 2 sections. Counts must reflect that scope, not the whole school.
     expect(res.body).toMatchObject({
-      supervisedClassesCount: 5,
-      supervisedSectionsCount: 10,
+      supervisedClassesCount: 2,
+      supervisedSectionsCount: 2,
       acrossExamsCount: expect.any(Number),
     });
-    expect(res.body.recentStudentLeaves.length).toBe(3);
+    // Seeded pending leaves belong to Nursery students — outside this coordinator's
+    // Class-1/Class-2 scope, so they must not show up here.
+    expect(res.body.recentStudentLeaves.length).toBe(0);
+  });
+
+  it('student-leaves scoping: a coordinator only sees leaves for students in their assignedClasses', async () => {
+    const admin = await token('schooladmin');
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+
+    // Default scope (Class 1-A, Class 2-A) excludes the seeded Nursery leaves.
+    const scoped = await request(app).get('/api/coordinator/student-leaves').set(auth(coord));
+    expect(scoped.body.length).toBe(0);
+
+    // Widen scope to include Nursery and the seeded leaves become visible.
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: ['Nursery-A', 'Nursery-B'] });
+    const widened = await request(app).get('/api/coordinator/student-leaves').set(auth(coord));
+    expect(widened.body.length).toBe(3);
+
+    // Unscoped (empty array) sees everything, same as school_admin/principal always do.
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+    const unscoped = await request(app).get('/api/coordinator/student-leaves').set(auth(coord));
+    expect(unscoped.body.length).toBe(3);
+  });
+
+  it('dashboard falls back to whole-school counts for an unscoped coordinator (no assignedClasses)', async () => {
+    const admin = await token('schooladmin');
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+
+    const res = await request(app).get('/api/coordinator/dashboard').set(auth(coord));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ supervisedClassesCount: 5, supervisedSectionsCount: 10 });
+  });
+
+  it('dashboard classesNotMarkedYet counts every unmarked class for an unscoped coordinator, not just the marked ones', async () => {
+    const admin = await token('schooladmin');
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+
+    // Mark today's attendance for exactly one class-section out of the
+    // school's 10 (5 classes x 2 sections, per supervisedSectionsCount above).
+    // The old bug computed the "unmarked" denominator from the marked set
+    // itself, so classesNotMarkedYet was always 0 regardless of this.
+    const students = await StudentModel.find({ className: 'Class 1', section: 'A' }).limit(1).lean();
+    expect(students.length).toBe(1);
+    const today = new Date().toISOString().slice(0, 10);
+    await AttendanceModel.create([
+      { schoolId: students[0].schoolId, studentId: students[0]._id, date: today, status: 'present', className: 'Class 1', section: 'A', markedBy: 'Test' },
+    ]);
+
+    const res = await request(app).get('/api/coordinator/dashboard').set(auth(coord));
+    expect(res.status).toBe(200);
+    expect(res.body.classesNotMarkedYet).toBe(9);
   });
 
   it('dashboard computes pendingStaffLeaves and pendingTasks from real data', async () => {
@@ -51,7 +119,28 @@ describe('Coordinator API (student leaves)', () => {
     expect(typeof res.body.classesNotMarkedYet).toBe('number');
   });
 
+  it('dashboard computes a real attendanceTodayPercent from today\'s marked attendance', async () => {
+    // Seeded coordinator supervises Class 1-A and Class 2-A (2 classes). Mark
+    // today's attendance for Class 1-A only, 1 present + 1 absent, and leave
+    // Class 2-A unmarked — this exercises the ObjectId-cast $match in the
+    // dashboard's attendance aggregation, not just its return type.
+    const students = await StudentModel.find({ className: 'Class 1', section: 'A' }).limit(2).lean();
+    expect(students.length).toBe(2);
+    const today = new Date().toISOString().slice(0, 10);
+    await AttendanceModel.create([
+      { schoolId: students[0].schoolId, studentId: students[0]._id, date: today, status: 'present', className: 'Class 1', section: 'A', markedBy: 'Test' },
+      { schoolId: students[1].schoolId, studentId: students[1]._id, date: today, status: 'absent', className: 'Class 1', section: 'A', markedBy: 'Test' },
+    ]);
+
+    const res = await request(app).get('/api/coordinator/dashboard').set(auth(coord));
+    expect(res.status).toBe(200);
+    expect(res.body.attendanceTodayPercent).toBe(50);
+    // Class 1-A marked, Class 2-A still not marked -> exactly 1 of the 2 supervised classes pending.
+    expect(res.body.classesNotMarkedYet).toBe(1);
+  });
+
   it('student leaves: list seeded (pending), filter by status', async () => {
+    await unscopeCoord();
     const list = await request(app).get('/api/coordinator/student-leaves').set(auth(coord));
     expect(list.body.length).toBe(3);
     expect(list.body[0]).toMatchObject({ id: expect.any(String), studentName: expect.any(String), status: 'pending' });
@@ -89,6 +178,22 @@ describe('Coordinator API (student leaves)', () => {
     const [id1] = await leaveIds();
     expect((await request(app).patch(`/api/coordinator/student-leaves/${id1}/reject`).set(auth(coord)).send({})).status).toBe(400);
   });
+
+  it('409 when re-deciding a leave that was already approved/rejected/forwarded', async () => {
+    const [id1, id2, id3] = await leaveIds();
+    expect((await request(app).patch(`/api/coordinator/student-leaves/${id1}/approve`).set(auth(coord)).send({})).status).toBe(200);
+    // Same leave, decided again -> conflict, not a silent overwrite.
+    const reApprove = await request(app).patch(`/api/coordinator/student-leaves/${id1}/approve`).set(auth(coord)).send({});
+    expect(reApprove.status).toBe(409);
+    const flipToRejected = await request(app).patch(`/api/coordinator/student-leaves/${id1}/reject`).set(auth(coord)).send({ reason: 'x' });
+    expect(flipToRejected.status).toBe(409);
+
+    expect((await request(app).patch(`/api/coordinator/student-leaves/${id2}/reject`).set(auth(coord)).send({ reason: 'no' })).status).toBe(200);
+    expect((await request(app).patch(`/api/coordinator/student-leaves/${id2}/forward`).set(auth(coord)).send({})).status).toBe(409);
+
+    expect((await request(app).patch(`/api/coordinator/student-leaves/${id3}/forward`).set(auth(coord)).send({})).status).toBe(200);
+    expect((await request(app).patch(`/api/coordinator/student-leaves/${id3}/approve`).set(auth(coord)).send({})).status).toBe(409);
+  });
 });
 
 describe('Coordinator API (staff leaves + marks + staff overview)', () => {
@@ -118,6 +223,22 @@ describe('Coordinator API (staff leaves + marks + staff overview)', () => {
     expect((await request(app).patch(`/api/coordinator/staff-leaves/${id}/reject`).set(auth(coord)).send({})).status).toBe(400);
   });
 
+  it('409 when re-deciding a staff leave already escalated/rejected', async () => {
+    const pending = await request(app).get('/api/coordinator/staff-leaves').set(auth(coord));
+    const id = pending.body[0].id;
+
+    expect((await request(app).patch(`/api/coordinator/staff-leaves/${id}/approve-level1`).set(auth(coord)).send({})).status).toBe(200);
+    // Already escalated past L1 — re-approving must not silently re-run the escalation.
+    const reApprove = await request(app).patch(`/api/coordinator/staff-leaves/${id}/approve-level1`).set(auth(coord)).send({});
+    expect(reApprove.status).toBe(409);
+
+    // Still 'pending' at level 2, so a reject on it is legitimate...
+    expect((await request(app).patch(`/api/coordinator/staff-leaves/${id}/reject`).set(auth(coord)).send({ reason: 'no' })).status).toBe(200);
+    // ...but rejecting it again must not succeed a second time.
+    const reReject = await request(app).patch(`/api/coordinator/staff-leaves/${id}/reject`).set(auth(coord)).send({ reason: 'no again' });
+    expect(reReject.status).toBe(409);
+  });
+
   it('marks overview lists class-subject cells for an exam', async () => {
     const admin = await token('schooladmin');
     const exams = await request(app).get('/api/exams').set(auth(admin));
@@ -127,6 +248,23 @@ describe('Coordinator API (staff leaves + marks + staff overview)', () => {
     expect(res.body.length).toBeGreaterThan(0);
     expect(res.body[0]).toMatchObject({ classKey: expect.any(String), subject: expect.any(String), teacherName: expect.any(String), status: expect.any(String) });
     expect((await request(app).get('/api/coordinator/marks-overview?examId=000000000000000000000000').set(auth(coord))).status).toBe(404);
+  });
+
+  it('marks overview is scoped to assignedClasses, unlike an unscoped admin view', async () => {
+    const admin = await token('schooladmin');
+    const exams = await request(app).get('/api/exams').set(auth(admin));
+    const examId = (Array.isArray(exams.body) ? exams.body : exams.body.rows ?? []).find((e: { name: string }) => e.name === 'Mid Term 2025').id;
+
+    const scoped = await request(app).get(`/api/coordinator/marks-overview?examId=${examId}`).set(auth(coord));
+    const scopedKeys = new Set(scoped.body.map((r: { classKey: string }) => r.classKey));
+    // Default scope is Class 1-A + Class 2-A only — nothing outside that should appear.
+    for (const k of scopedKeys) expect(['Class 1-A', 'Class 2-A']).toContain(k);
+
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+    const unscoped = await request(app).get(`/api/coordinator/marks-overview?examId=${examId}`).set(auth(coord));
+    expect(unscoped.body.length).toBeGreaterThanOrEqual(scoped.body.length);
   });
 
   it('staff overview + attendance list all staff (today status)', async () => {
@@ -140,6 +278,31 @@ describe('Coordinator API (staff leaves + marks + staff overview)', () => {
     const attendance = await request(app).get('/api/coordinator/staff-attendance').set(auth(coord));
     expect(attendance.body.length).toBe(4);
     expect(attendance.body[0]).toMatchObject({ name: expect.any(String), status: 'not_marked' });
+  });
+
+  it('staff-attendance: ?date= actually scopes the query, not silently defaulting to today', async () => {
+    const admin = await token('schooladmin');
+    const past = '2025-09-15';
+
+    const todayView = await request(app).get('/api/coordinator/staff-attendance').set(auth(coord));
+    expect(todayView.body.every((r: { status: string }) => r.status === 'not_marked')).toBe(true);
+
+    const roster = await request(app).get(`/api/staff/attendance?date=${past}`).set(auth(admin));
+    await request(app)
+      .post('/api/staff/attendance/save')
+      .set(auth(admin))
+      .send({ date: past, attendance: roster.body.rows.map((r: { id: string }) => ({ staffId: r.id, status: 'present' })) });
+
+    const pastView = await request(app).get(`/api/coordinator/staff-attendance?date=${past}`).set(auth(coord));
+    expect(pastView.body.every((r: { status: string }) => r.status === 'present')).toBe(true);
+
+    // Today's view is unaffected by the past-date write.
+    const todayAgain = await request(app).get('/api/coordinator/staff-attendance').set(auth(coord));
+    expect(todayAgain.body.every((r: { status: string }) => r.status === 'not_marked')).toBe(true);
+
+    const exported = await request(app).get(`/api/coordinator/staff-attendance/export?date=${past}`).set(auth(coord));
+    expect(exported.status).toBe(200);
+    expect(exported.headers['content-type']).toContain('spreadsheetml');
   });
 
   it('exports students and staff-attendance as real .xlsx files', async () => {
@@ -201,6 +364,39 @@ describe('Coordinator API (staff leaves + marks + staff overview)', () => {
       .send({ classKeys: ['Class 2-A'] });
     expect(ok.status).toBe(200);
     expect(ok.body).toMatchObject({ id: coordId, assignedClasses: ['Class 2-A'] });
+  });
+
+  it('assigned-classes is a capability any non-teacher staff login can hold, not just role coordinator', async () => {
+    const admin = await token('schooladmin');
+    const acc = await request(app).get('/api/auth/profile').set(auth(await token('accountant')));
+    const accId = acc.body._id ?? acc.body.id;
+
+    const ok = await request(app)
+      .patch(`/api/coordinator/assigned-classes/${accId}`)
+      .set(auth(admin))
+      .send({ classKeys: ['Class 1-A'] });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ id: accId, assignedClasses: ['Class 1-A'] });
+  });
+
+  it('assigned-classes rejects an unknown class/section and rejects teachers (they use class-incharge)', async () => {
+    const admin = await token('schooladmin');
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+
+    const badKey = await request(app)
+      .patch(`/api/coordinator/assigned-classes/${coordId}`)
+      .set(auth(admin))
+      .send({ classKeys: ['Class 99-Z'] });
+    expect(badKey.status).toBe(400);
+
+    const teacherRes = await request(app).get('/api/auth/profile').set(auth(await token('teacher')));
+    const teacherId = teacherRes.body._id ?? teacherRes.body.id;
+    const onTeacher = await request(app)
+      .patch(`/api/coordinator/assigned-classes/${teacherId}`)
+      .set(auth(admin))
+      .send({ classKeys: ['Class 1-A'] });
+    expect(onTeacher.status).toBe(400);
   });
 
   it('teacher-assignments: school_admin can create/update/delete; coordinator can only read', async () => {

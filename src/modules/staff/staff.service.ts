@@ -14,6 +14,7 @@ interface CredentialsDoc {
   role: string;
   active?: boolean;
   assignedClasses?: string[];
+  coordinatorTitle?: string;
 }
 async function credentialsDto(schoolId: string, user: CredentialsDoc): Promise<Record<string, unknown>> {
   const inchargeSection = user.role === 'teacher' ? await getInchargeSection(schoolId, String(user._id)) : null;
@@ -24,7 +25,12 @@ async function credentialsDto(schoolId: string, user: CredentialsDoc): Promise<R
     email: user.email ?? '',
     role: user.role,
     active: user.active ?? true,
-    ...(user.role === 'coordinator' ? { assignedClasses: user.assignedClasses ?? [] } : {}),
+    // Class/section supervision scope is a capability any staff login can hold,
+    // not something tied to the literal 'coordinator' role string.
+    ...(user.role !== 'teacher' ? { assignedClasses: user.assignedClasses ?? [] } : {}),
+    // Schools invent their own coordinator titles (Wing/Sports/Academic/...); this is
+    // a free-text label, not a fixed enum — permissions still gate on role==='coordinator'.
+    ...(user.role === 'coordinator' ? { coordinatorTitle: user.coordinatorTitle ?? '' } : {}),
     ...(user.role === 'teacher' ? { inchargeClassKey: inchargeSection?.classKey ?? null } : {}),
   };
 }
@@ -230,7 +236,7 @@ export const staffService = {
     };
   },
 
-  async updateCredentials(schoolId: string, staffId: string, patch: { role?: string; active?: boolean }) {
+  async updateCredentials(schoolId: string, staffId: string, patch: { role?: string; active?: boolean; coordinatorTitle?: string }) {
     const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
     if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
     const user = await UserModel.findOneAndUpdate(

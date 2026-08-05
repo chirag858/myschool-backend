@@ -360,6 +360,27 @@ describe('Staff login credentials API', () => {
     expect(resetExplicit.body.tempPassword).toBeUndefined();
   });
 
+  it('coordinatorTitle: free-text label settable while coordinator, hidden once role changes off it', async () => {
+    await request(app)
+      .post(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'coordinator', email: 'title-test@example.com' });
+
+    const withTitle = await request(app)
+      .patch(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ coordinatorTitle: 'Wing Coordinator' });
+    expect(withTitle.status).toBe(200);
+    expect(withTitle.body).toMatchObject({ role: 'coordinator', coordinatorTitle: 'Wing Coordinator' });
+
+    const asTeacher = await request(app)
+      .patch(`/api/staff/${staffId}/credentials`)
+      .set(auth(admin))
+      .send({ role: 'teacher' });
+    expect(asTeacher.status).toBe(200);
+    expect(asTeacher.body.coordinatorTitle).toBeUndefined();
+  });
+
   it('404s update/reset for a staff member with no login yet', async () => {
     expect((await request(app).patch(`/api/staff/${staffId}/credentials`).set(auth(admin)).send({ active: false })).status).toBe(404);
     expect((await request(app).post(`/api/staff/${staffId}/credentials/reset-password`).set(auth(admin)).send({})).status).toBe(404);
