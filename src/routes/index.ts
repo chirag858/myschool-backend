@@ -54,11 +54,16 @@ export const apiRouter = Router();
 apiRouter.use('/admin-dashboard', adminDashboardRoutes);
 
 apiRouter.use('/auth', authRoutes);
+// school-reports must mount before the blanket /super-admin routers below —
+// those gate super_admin-only at their router root via `.use(requireRole(...))`,
+// which fires for every sub-path under the prefix regardless of whether any
+// of their own routes match, and would 403 support_engineer before the
+// request ever reaches schoolReportsRoutes' own (broader) role gate.
+apiRouter.use('/super-admin/school-reports', schoolReportsRoutes);
 apiRouter.use('/super-admin', schoolRoutes);
 apiRouter.use('/super-admin', superAdminExtrasRoutes);
 apiRouter.use('/super-admin', platformRoutes);
 apiRouter.use('/super-admin/reports', reportsRoutes);
-apiRouter.use('/super-admin/school-reports', schoolReportsRoutes);
 apiRouter.use('/reports', adminReportsRoutes);
 apiRouter.use('/sessions', sessionRoutes);
 apiRouter.use('/enquiries', enquiryRoutes);

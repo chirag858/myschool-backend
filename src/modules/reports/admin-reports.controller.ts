@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { send } from '../../lib/api-response';
+import { customReportService, type CustomReportConfig } from './custom-report.service';
 import { sendExcel, sendPdf } from './reports.export';
 import { schoolReportsService } from './school-reports.service';
 
@@ -22,6 +23,21 @@ export const adminReportsController = {
     const format = String(req.query.format);
     const report = await schoolReportsService.getReport(schoolId(req), key);
     const fileName = `${key}-report`;
+    if (format === 'excel') {
+      await sendExcel(res, report, fileName);
+    } else {
+      sendPdf(res, report, fileName);
+    }
+  },
+
+  async runCustom(req: Request, res: Response) {
+    send(res, await customReportService.run(schoolId(req), req.body as CustomReportConfig));
+  },
+
+  async exportCustom(req: Request, res: Response) {
+    const format = String(req.query.format);
+    const report = await customReportService.run(schoolId(req), req.body as CustomReportConfig);
+    const fileName = `custom-report-${Date.now()}`;
     if (format === 'excel') {
       await sendExcel(res, report, fileName);
     } else {

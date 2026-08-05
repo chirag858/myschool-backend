@@ -4,10 +4,18 @@ import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
 import { transportTrackingService } from './transport-tracking.service';
 
+/**
+ * Tenant roles (school_admin/principal/coordinator/teacher) are scoped to
+ * their own school via the JWT. super_admin/support_engineer have no
+ * schoolId (cross-school roles, same as school-reports) and must pass
+ * ?schoolId= to say which school they're looking at.
+ */
 function schoolId(req: Request): string {
-  const id = req.user?.schoolId;
-  if (!id) throw ApiError.forbidden('No school scope');
-  return id;
+  const own = req.user?.schoolId;
+  if (own) return own;
+  const query = typeof req.query.schoolId === 'string' ? req.query.schoolId : undefined;
+  if (query) return query;
+  throw ApiError.badRequest('schoolId is required for this role');
 }
 const p = (req: Request, key: string): string => String(req.params[key]);
 

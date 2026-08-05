@@ -16,11 +16,23 @@ export const supportController = {
     send(res, await supportService.getTicket(id(req)));
   },
   async createTicket(req: Request, res: Response) {
-    created(res, await supportService.createTicket(req.body));
+    const user = req.user!;
+    created(
+      res,
+      await supportService.createTicket(req.body, {
+        userId: user._id,
+        role: user.role,
+        schoolId: user.schoolId,
+      }),
+    );
   },
   async changeStatus(req: Request, res: Response) {
     const { status } = req.body as { status: string };
     send(res, await supportService.changeStatus(id(req), status));
+  },
+  async changePriority(req: Request, res: Response) {
+    const { priority } = req.body as { priority: string };
+    send(res, await supportService.changePriority(id(req), priority));
   },
   async assignTicket(req: Request, res: Response) {
     const { assignedTo } = req.body as { assignedTo: string };
@@ -30,7 +42,14 @@ export const supportController = {
     send(res, await supportService.getComments(id(req)));
   },
   async addComment(req: Request, res: Response) {
-    created(res, await supportService.addComment(id(req), req.body));
+    const user = req.user!;
+    created(
+      res,
+      await supportService.addComment(id(req), req.body, {
+        userId: user._id,
+        role: user.role,
+      }),
+    );
   },
   async getActivity(req: Request, res: Response) {
     send(res, await supportService.getActivity(id(req)));

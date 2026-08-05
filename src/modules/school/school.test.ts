@@ -57,6 +57,16 @@ describe('Super-Admin Schools API', () => {
     expect(res.status).toBe(403);
   });
 
+  it('allows support_engineer to read the school pickers (GPS Devices / School Reports dependency) but not to create/delete/toggle modules', async () => {
+    const eng = await token('support');
+    expect((await request(app).get('/api/super-admin/schools').set(auth(eng))).status).toBe(200);
+    expect((await request(app).get('/api/super-admin/schools/list').set(auth(eng))).status).toBe(200);
+    expect(
+      (await request(app).post('/api/super-admin/schools').set(auth(eng)).send(validPayload)).status,
+    ).toBe(403);
+    expect((await request(app).get('/api/super-admin/dashboard/stats').set(auth(eng))).status).toBe(403);
+  });
+
   it('GET /schools returns SchoolsListResponse with SchoolRow shape', async () => {
     const res = await request(app).get('/api/super-admin/schools').set(auth(sa));
     expect(res.status).toBe(200);

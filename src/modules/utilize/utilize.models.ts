@@ -10,6 +10,8 @@ const correctionSchema = new Schema(
     category: { type: String, enum: ['receipt', 'readjustment'], required: true },
     action: { type: String, required: true },
     recordRef: { type: String, default: '' },
+    /** Real Mongo _id of the record being corrected — recordRef is a human-readable label, this is what a later approve() actually mutates. */
+    targetId: { type: String, default: '' },
     studentId: { type: String, default: '' },
     studentName: { type: String, default: '' },
     oldValue: { type: Schema.Types.Mixed, default: null },

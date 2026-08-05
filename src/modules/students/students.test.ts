@@ -235,5 +235,30 @@ describe('Students API', () => {
 
     const profile = await request(app).get(`/api/students/${ok.body.id}`).set(auth(admin));
     expect(profile.body.photoUrl).toBe('data:image/png;base64,xyz');
+
+    // Top-level `mobile` (shown in the students list / custom report) must
+    // be derived from parents.fatherMobile on create — it has no dedicated
+    // form field of its own, so if this isn't derived it stays '' forever.
+    const list = await request(app).get('/api/students').set(auth(admin)).query({ search: 'Valid Student' });
+    const row = list.body.rows.find((r: { id: string }) => r.id === ok.body.id);
+    expect(row.mobile).toBe('9990001111');
+  });
+
+  it('POST /students falls back to motherMobile, then guardianMobile, when fatherMobile is absent', async () => {
+    const base = {
+      admissionType: 'new',
+      admittedAt: '2025-08-01',
+      className: '5',
+      section: 'B',
+      name: 'Fallback Student',
+      gender: 'female',
+      admissionNumber: 'ADM-2026-998',
+      parents: { motherMobile: '9990002222' },
+    };
+    const created = await request(app).post('/api/students').set(auth(admin)).send(base);
+    expect(created.status).toBe(201);
+    const list = await request(app).get('/api/students').set(auth(admin)).query({ search: 'Fallback Student' });
+    const row = list.body.rows.find((r: { id: string }) => r.id === created.body.id);
+    expect(row.mobile).toBe('9990002222');
   });
 });

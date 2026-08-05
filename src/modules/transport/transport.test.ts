@@ -25,6 +25,35 @@ describe('Transport API', () => {
     expect((await request(app).get('/api/transport/vehicles').set(auth(acc))).status).toBe(403);
   });
 
+  it('allows super_admin and support_engineer to read vehicles/routes given ?schoolId= (GPS Devices page dependency)', async () => {
+    const profile = await request(app).get('/api/auth/profile').set(auth(admin));
+    const schoolId = profile.body.schoolId as string;
+    const sa = await token('superadmin');
+    const eng = await token('support');
+    expect((await request(app).get('/api/transport/vehicles').query({ schoolId }).set(auth(sa))).status).toBe(200);
+    expect((await request(app).get('/api/transport/vehicles').query({ schoolId }).set(auth(eng))).status).toBe(200);
+    expect((await request(app).get('/api/transport/routes').query({ schoolId }).set(auth(sa))).status).toBe(200);
+    expect((await request(app).get('/api/transport/routes').query({ schoolId }).set(auth(eng))).status).toBe(200);
+  });
+
+  it('super_admin/support_engineer without ?schoolId= get 400, not a silent empty list', async () => {
+    const eng = await token('support');
+    expect((await request(app).get('/api/transport/vehicles').set(auth(eng))).status).toBe(400);
+  });
+
+  it('still forbids super_admin/support_engineer from vehicle/driver mutation and the KPI dashboard (adminOnly stays school_admin/principal)', async () => {
+    const eng = await token('support');
+    expect((await request(app).get('/api/transport/dashboard').set(auth(eng))).status).toBe(403);
+    expect(
+      (
+        await request(app)
+          .post('/api/transport/vehicles')
+          .set(auth(eng))
+          .send({ registrationNumber: 'X', type: 'bus', capacity: 10 })
+      ).status,
+    ).toBe(403);
+  });
+
   it('dashboard KPI reflects seeded data', async () => {
     const kpi = await request(app).get('/api/transport/dashboard').set(auth(admin));
     expect(kpi.status).toBe(200);

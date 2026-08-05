@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 
 import { send, created } from '../../lib/api-response';
+import { sendExcel, sendPdf } from '../reports/reports.export';
 import { UserModel } from '../user/user.model';
 import { utilizeService } from './utilize.service';
 
@@ -20,6 +21,9 @@ function q(req: Request, key: string): string | undefined {
 export const utilizeController = {
   async searchReceipts(req: Request, res: Response) {
     send(res, await utilizeService.searchReceipts(schoolId(req), q(req, 'q') ?? ''));
+  },
+  async searchStudents(req: Request, res: Response) {
+    send(res, await utilizeService.searchStudents(schoolId(req), q(req, 'q') ?? ''));
   },
   async getDuplicates(req: Request, res: Response) {
     send(res, await utilizeService.getDuplicates(schoolId(req)));
@@ -50,5 +54,22 @@ export const utilizeController = {
         dateTo: q(req, 'dateTo'),
       }),
     );
+  },
+  async exportAuditLog(req: Request, res: Response) {
+    const format = String(req.query.format);
+    const report = await utilizeService.exportAuditLog(schoolId(req), {
+      type: q(req, 'type'),
+      operator: q(req, 'operator'),
+      student: q(req, 'student'),
+      status: q(req, 'status'),
+      dateFrom: q(req, 'dateFrom'),
+      dateTo: q(req, 'dateTo'),
+    });
+    const fileName = `correction-audit-log-${Date.now()}`;
+    if (format === 'excel') {
+      await sendExcel(res, report, fileName);
+    } else {
+      sendPdf(res, report, fileName);
+    }
   },
 };

@@ -1047,14 +1047,31 @@ export async function seedDemo() {
       ticketNumber: 'TKT-2026-004', subject: 'Login OTP not received', title: 'Login OTP not received',
       description: 'Parent app OTP SMS not arriving for some mobile numbers.', category: 'authentication',
       priority: 'critical', status: 'resolved', reporterName: 'Parent Demo', reporterRole: 'parent',
-      assignedTo: 'Support Engineer', resolvedAt: '2026-07-20T10:00:00.000Z',
+      assignedTo: 'Support Engineer',
+      // Pinned relative to each other (createdAt/updatedAt included, since
+      // this ticket disables the timestamps plugin below) so
+      // avgResolutionHours is a sane, stable demo number (~6h) — Mongoose's
+      // auto timestamps would otherwise be "whenever npm run seed last ran,"
+      // which could land before or long after the hardcoded resolvedAt.
+      createdAt: '2026-07-20T04:00:00.000Z',
+      updatedAt: '2026-07-20T10:00:00.000Z',
+      resolvedAt: '2026-07-20T10:00:00.000Z',
     },
   ];
   for (const t of tickets) {
     await TicketModel.findOneAndUpdate(
       { schoolId: school._id, subject: t.subject },
       { schoolId: school._id, schoolName: school.name, ...t },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        // Only disable auto-timestamps for the one ticket that pins its own
+        // createdAt (TKT-2026-004) — Mongoose's timestamps plugin otherwise
+        // always overwrites an explicit createdAt with "whenever npm run
+        // seed last ran." Other tickets keep normal auto createdAt/updatedAt.
+        timestamps: !('createdAt' in t),
+      },
     );
   }
 

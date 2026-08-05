@@ -1,3 +1,5 @@
+import { Types } from 'mongoose';
+
 import { ApiError } from '../../lib/api-error';
 import { AttendanceModel } from '../attendance/attendance.models';
 import { ExamMarkModel } from '../exams/exams.models';
@@ -83,9 +85,19 @@ async function fee(schoolId: string): Promise<ReportData> {
 }
 
 async function attendance(schoolId: string): Promise<ReportData> {
-  const monthPrefix = new Date().toISOString().slice(0, 7);
+  // Report on the most recent month the school actually has attendance
+  // data for, not the server's real wall-clock month — attendance is
+  // marked against the school's own academic-year dates, which won't
+  // generally line up with "today" (e.g. seeded historical demo data).
+  const latest = await AttendanceModel.findOne({ schoolId }).sort({ date: -1 }).select('date').lean();
+  if (!latest) {
+    return { ...TITLES.attendance!, columns: ['Class', 'Records this month', 'Present', 'Attendance %'], rows: [] };
+  }
+  const monthPrefix = latest.date.slice(0, 7);
   const rows = await AttendanceModel.aggregate<{ _id: { className: string; section: string }; present: number; total: number }>([
-    { $match: { schoolId, date: { $regex: `^${monthPrefix}` } } },
+    // aggregate $match does not auto-cast like Mongoose's query builder does
+    // — schoolId must be cast to ObjectId explicitly or this never matches.
+    { $match: { schoolId: new Types.ObjectId(schoolId), date: { $regex: `^${monthPrefix}` } } },
     {
       $group: {
         _id: { className: '$className', section: '$section' },
@@ -103,7 +115,12 @@ async function attendance(schoolId: string): Promise<ReportData> {
       r.total ? `${Math.round((r.present / r.total) * 100)}%` : '0%',
     ]);
 
-  return { ...TITLES.attendance!, columns: ['Class', 'Records this month', 'Present', 'Attendance %'], rows: out };
+  return {
+    title: TITLES.attendance!.title,
+    subtitle: `Class + staff attendance trends — ${monthPrefix}.`,
+    columns: ['Class', 'Records', 'Present', 'Attendance %'],
+    rows: out,
+  };
 }
 
 async function hr(schoolId: string): Promise<ReportData> {

@@ -121,7 +121,7 @@ async function studentsInClass(schoolId: string, classKey: string) {
 }
 
 /** Shared by results(), analytics() and reportCard() so all three always agree. */
-async function computeClassRows(schoolId: string, exam: Doc, classKey: string) {
+export async function computeClassRows(schoolId: string, exam: Doc, classKey: string) {
   const pattern = patternFor(exam, classKey);
   const perSubjectMax = subjectMax(pattern);
   const students = await studentsInClass(schoolId, classKey);

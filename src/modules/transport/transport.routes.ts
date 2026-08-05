@@ -20,14 +20,23 @@ import {
  * student-transport assignment stay school_admin/principal-only — the
  * sidebar never exposes those to coordinator/teacher. The routes list and
  * the read-only vehicle/driver lookups it depends on (for the route
- * builder's Select dropdowns) are opened to coordinator/teacher, matching
- * the `/admin/transport/routes` page they're allowed to reach.
+ * builder's Select dropdowns, and for the GPS Devices table's Vehicle/Route
+ * columns) are opened to coordinator/teacher/super_admin/support_engineer,
+ * matching the `/admin/transport/routes` and `/admin/transport/gps-devices`
+ * pages they're allowed to reach.
  */
 export const transportRoutes = Router();
 transportRoutes.use(authenticate);
 
 const adminOnly = requireRole('school_admin', 'principal');
-const routesReaders = requireRole('school_admin', 'principal', 'coordinator', 'teacher');
+const routesReaders = requireRole(
+  'school_admin',
+  'principal',
+  'coordinator',
+  'teacher',
+  'super_admin',
+  'support_engineer',
+);
 
 transportRoutes.get('/dashboard', adminOnly, asyncHandler(transportController.kpi));
 

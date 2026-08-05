@@ -264,13 +264,17 @@ export const studentsService = {
     const exists = await StudentModel.exists({ schoolId, admissionNumber });
     if (exists) throw ApiError.conflict('Admission number already in use');
 
+    const parents = payload.parents as Record<string, unknown> | undefined;
+    const mobile = parents?.fatherMobile ?? parents?.motherMobile ?? parents?.guardianMobile ?? '';
+
     const doc = await StudentModel.create({
       schoolId,
       admissionNumber,
       rollNumber: payload.rollNumber ?? '',
       name: payload.name,
       photoUrl: payload.photoUrl,
-      fatherName: (payload.parents as Record<string, unknown> | undefined)?.fatherName ?? '',
+      fatherName: parents?.fatherName ?? '',
+      mobile,
       className,
       section,
       classKey: `${className}-${section}`,

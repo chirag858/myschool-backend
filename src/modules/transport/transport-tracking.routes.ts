@@ -8,7 +8,10 @@ import { addMaintenanceSchema, idParam, saveGpsDeviceSchema } from './transport-
 
 /** Mounted at /api/transport. */
 export const transportTrackingRoutes = Router();
-transportTrackingRoutes.use(authenticate, requireRole('school_admin', 'principal', 'coordinator', 'teacher'));
+transportTrackingRoutes.use(
+  authenticate,
+  requireRole('school_admin', 'principal', 'coordinator', 'teacher', 'super_admin', 'support_engineer'),
+);
 
 transportTrackingRoutes.get('/vehicles/:id/maintenance', validate({ params: idParam }), asyncHandler(transportTrackingController.getMaintenance));
 transportTrackingRoutes.post(

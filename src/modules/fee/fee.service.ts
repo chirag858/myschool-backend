@@ -71,7 +71,7 @@ export async function syncStudentFeeStatus(schoolId: string, studentId: string):
   await StudentModel.updateOne({ _id: studentId, schoolId }, { $set: { feeStatus } });
 }
 
-async function annualByClass(schoolId: string, session: string): Promise<Record<string, number>> {
+export async function annualByClass(schoolId: string, session: string): Promise<Record<string, number>> {
   const structure = await FeeStructureModel.find({ schoolId, session }).lean();
   const out: Record<string, number> = {};
   for (const row of structure) {
@@ -298,6 +298,74 @@ export const feeService = {
     );
     if (!doc) throw ApiError.notFound('Receipt not found');
     if (doc.schoolId && doc.studentId) await syncStudentFeeStatus(String(doc.schoolId), String(doc.studentId));
+    return toReceipt(doc.toObject());
+  },
+
+  async editReceiptRemarks(schoolId: string | undefined, id: string, remarks: string) {
+    const doc = await ReceiptModel.findOneAndUpdate(
+      schoolId ? { _id: id, schoolId } : { _id: id },
+      { remarks },
+      { new: true },
+    );
+    if (!doc) throw ApiError.notFound('Receipt not found');
+    return toReceipt(doc.toObject());
+  },
+
+  /** Reversal = a new offsetting negative-amount receipt, original stays active untouched — a credit note, not a mutation of history. */
+  async reverseReceipt(schoolId: string | undefined, id: string, reason: string, by: string) {
+    const original = await ReceiptModel.findOne(schoolId ? { _id: id, schoolId } : { _id: id });
+    if (!original) throw ApiError.notFound('Receipt not found');
+    if (original.status !== 'active') throw ApiError.badRequest('Only an active receipt can be reversed');
+    const reversalNumber = `${original.receiptNumber}-REV`;
+    // The (schoolId, receiptNumber) index is unique, so a second reversal
+    // would surface as a raw 11000 CONFLICT. Detect it here and repair the
+    // original's status so the receipt stops looking reversible.
+    const alreadyReversed = await ReceiptModel.findOne(
+      original.schoolId ? { schoolId: original.schoolId, receiptNumber: reversalNumber } : { receiptNumber: reversalNumber },
+    ).lean();
+    if (alreadyReversed) {
+      original.status = 'reversed';
+      await original.save();
+      throw ApiError.badRequest('This receipt has already been reversed');
+    }
+    const reversal = await ReceiptModel.create({
+      ...original.toObject(),
+      _id: undefined,
+      receiptNumber: reversalNumber,
+      amount: -Number(original.amount ?? 0),
+      status: 'active',
+      generatedBy: by,
+      remarks: reason,
+      payments: [],
+      waiveOff: undefined,
+    });
+    // Mark the original reversed so it can't be reversed twice and drops out
+    // of the active-only duplicate finder.
+    original.status = 'reversed';
+    await original.save();
+    if (reversal.schoolId && reversal.studentId) await syncStudentFeeStatus(String(reversal.schoolId), String(reversal.studentId));
+    return toReceipt(reversal.toObject());
+  },
+
+  async transferReceipt(schoolId: string | undefined, id: string, targetStudentId: string) {
+    const doc = await ReceiptModel.findOne(schoolId ? { _id: id, schoolId } : { _id: id });
+    if (!doc) throw ApiError.notFound('Receipt not found');
+    const target = await StudentModel.findOne(
+      schoolId ? { _id: targetStudentId, schoolId } : { _id: targetStudentId },
+    ).lean();
+    if (!target) throw ApiError.notFound('Target student not found');
+    const previousStudentId = doc.studentId ? String(doc.studentId) : '';
+    doc.set({
+      studentId: targetStudentId,
+      studentName: target.name,
+      className: target.className ?? '',
+      section: target.section ?? '',
+    });
+    await doc.save();
+    if (doc.schoolId) {
+      if (previousStudentId) await syncStudentFeeStatus(String(doc.schoolId), previousStudentId);
+      await syncStudentFeeStatus(String(doc.schoolId), targetStudentId);
+    }
     return toReceipt(doc.toObject());
   },
 
