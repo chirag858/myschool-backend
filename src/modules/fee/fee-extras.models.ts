@@ -71,6 +71,8 @@ const appliedConcessionSchema = new Schema(
     appliedBy: String,
     approvalStatus: { type: String, enum: ['pending', 'approved', 'rejected', 'active', 'revoked'], default: 'active' },
     effectiveFrom: String,
+    revokeReason: String,
+    revokedAt: String,
   },
   { timestamps: true },
 );

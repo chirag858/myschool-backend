@@ -8,7 +8,7 @@ import { customReportSchema, exportQuery, reportKeyParam } from './admin-reports
 
 /** Mounted at /api/reports. School admin, principal, coordinator — scoped to their own school. */
 export const adminReportsRoutes = Router();
-adminReportsRoutes.use(authenticate, requireRole('school_admin', 'principal', 'coordinator'));
+adminReportsRoutes.use(authenticate, requireRole('school_admin', 'principal', 'coordinator', 'accountant'));
 
 // Fixed-shape /custom before /:key so the literal path wins over the param route.
 adminReportsRoutes.post('/custom', validate({ body: customReportSchema }), asyncHandler(adminReportsController.runCustom));

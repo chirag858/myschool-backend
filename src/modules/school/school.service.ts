@@ -39,7 +39,39 @@ async function staffCount(schoolId: unknown): Promise<number> {
   return UserModel.countDocuments({ schoolId, role: { $in: STAFF_ROLES } });
 }
 
+/** Uppercase letters from the school name, e.g. "Vibgyor School" -> "VIBGYOR". */
+function codeBase(name: string): string {
+  const words = name.trim().toUpperCase().split(/\s+/).filter(Boolean);
+  let base = (words[0] ?? '').replace(/[^A-Z0-9]/g, '');
+  let i = 1;
+  while (base.length < 3 && i < words.length) {
+    base += words[i]!.replace(/[^A-Z0-9]/g, '');
+    i += 1;
+  }
+  base = base.slice(0, 10);
+  return base.length >= 3 ? base : `${base}SCH`.slice(0, 10);
+}
+
 export const schoolService = {
+  /** Picks the plain name-derived code if free, else appends the lowest free suffix. */
+  async generateSchoolCode(name: string) {
+    const base = codeBase(name);
+    const existing = await SchoolModel.find({ code: new RegExp(`^${base}\\d*$`) })
+      .select('code')
+      .lean();
+    const taken = new Set(existing.map((d) => d.code));
+    if (!taken.has(base)) return { code: base };
+    let n = 2;
+    while (taken.has(`${base}${n}`)) n += 1;
+    return { code: `${base}${n}` };
+  },
+
+  async checkSchoolCode(code: string) {
+    const taken = (await SchoolModel.exists({ code: code.toUpperCase() })) !== null;
+    return { taken };
+  },
+
+
   async getSchools(query: SchoolsQuery) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.max(1, Number(query.pageSize) || 8);

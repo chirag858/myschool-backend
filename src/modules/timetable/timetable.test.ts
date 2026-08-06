@@ -610,6 +610,78 @@ describe('Timetable API', () => {
     expect(Array.isArray(res.body)).toBe(true);
   });
 
+  it('a coordinator with a non-empty assignedClasses may only save/clear/publish/copy slots for their supervised classes', async () => {
+    const coord = await token('coordinator');
+    const classes = await request(app).get('/api/classes').set(auth(admin));
+    const class1Id = classes.body.find((c: { name: string }) => c.name === 'Class 1').id;
+    const nurseryId = classes.body.find((c: { name: string }) => c.name === 'Nursery').id;
+
+    const subject = await request(app)
+      .post('/api/timetable/config/subjects')
+      .set(auth(admin))
+      .send({ name: 'Art', code: 'ART', type: 'core', applicableClasses: 'all', maxWeeklyPeriods: 5, color: '#EF4444' });
+    const room = await request(app)
+      .post('/api/timetable/config/rooms')
+      .set(auth(admin))
+      .send({ name: 'Room A', type: 'classroom', capacity: 30, floor: '1', facilities: [], status: 'available' });
+
+    const slotPayload = (classId: string) => ({
+      classId,
+      section: 'A',
+      day: 'mon',
+      periodId: 'p1',
+      subjectId: subject.body.id,
+      subjectName: 'Art',
+      subjectColor: '#EF4444',
+      teacherId: 'teacher123',
+      teacherName: 'Dr. Sharma',
+      roomId: room.body.id,
+      roomName: 'Room A',
+    });
+
+    // Class 1-A is within the seeded coordinator's assignedClasses — allowed.
+    expect((await request(app).post(`/api/timetable/${class1Id}/save`).set(auth(coord)).send(slotPayload(class1Id))).status).toBe(200);
+
+    // Nursery-A is outside — forbidden for save, clear, publish, and copy-day.
+    expect((await request(app).post(`/api/timetable/${nurseryId}/save`).set(auth(coord)).send(slotPayload(nurseryId))).status).toBe(403);
+    expect(
+      (
+        await request(app)
+          .delete(`/api/timetable/${nurseryId}/slots/p1`)
+          .set(auth(coord))
+          .send({ section: 'A', day: 'mon', periodId: 'p1' })
+      ).status,
+    ).toBe(403);
+    expect((await request(app).patch(`/api/timetable/${nurseryId}/publish`).set(auth(coord)).send({ section: 'A', publish: true })).status).toBe(403);
+    expect(
+      (
+        await request(app)
+          .post('/api/timetable/copy-day')
+          .set(auth(coord))
+          .send({ classId: nurseryId, section: 'A', fromDay: 'mon', toDays: ['tue'] })
+      ).status,
+    ).toBe(403);
+  });
+
+  // ─── Subject-Teacher Assignment ──────────────────────────────────────
+  it('a coordinator with a non-empty assignedClasses may only save/auto-assign subject-teachers for their supervised classes', async () => {
+    const coord = await token('coordinator');
+    const classes = await request(app).get('/api/classes').set(auth(admin));
+    const nurseryId = classes.body.find((c: { name: string }) => c.name === 'Nursery').id;
+
+    const save = await request(app)
+      .post('/api/timetable/subject-assignments')
+      .set(auth(coord))
+      .send({ classId: nurseryId, section: 'A', rows: [] });
+    expect(save.status).toBe(403);
+
+    const auto = await request(app)
+      .post('/api/timetable/subject-assignments/auto-assign')
+      .set(auth(coord))
+      .send({ classId: nurseryId, section: 'A' });
+    expect(auto.status).toBe(403);
+  });
+
   // ─── Subject-Teacher Assignment ──────────────────────────────────────
   it('subject assignments: lists applicable subjects, saves, auto-assigns, and reflects real teacher load', async () => {
     const subject = await request(app)

@@ -399,6 +399,57 @@ describe('Coordinator API (staff leaves + marks + staff overview)', () => {
     expect(onTeacher.status).toBe(400);
   });
 
+  it('support_engineer assigns classes to a coordinator via ?schoolId= (has no schoolId of its own)', async () => {
+    const admin = await token('schooladmin');
+    const eng = await token('support');
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    const schoolRes = await request(app).get('/api/auth/profile').set(auth(admin));
+    const schoolId = schoolRes.body.schoolId;
+
+    // Without ?schoolId= it's a straight 400, not a silent cross-tenant leak.
+    const noScope = await request(app)
+      .patch(`/api/coordinator/assigned-classes/${coordId}`)
+      .set(auth(eng))
+      .send({ classKeys: ['Class 1-A'] });
+    expect(noScope.status).toBe(400);
+
+    const assign = await request(app)
+      .patch(`/api/coordinator/assigned-classes/${coordId}`)
+      .query({ schoolId })
+      .set(auth(eng))
+      .send({ classKeys: ['Class 1-A'] });
+    expect(assign.status).toBe(200);
+    expect(assign.body).toMatchObject({ id: coordId, assignedClasses: ['Class 1-A'] });
+
+    // Real effect on the coordinator's own login: dashboard/students now scope to Class 1-A.
+    const students = await request(app).get('/api/coordinator/students').set(auth(coord));
+    expect(students.status).toBe(200);
+    for (const row of students.body) {
+      expect(`${row.className}-${row.section}`).toBe('Class 1-A');
+    }
+
+    // support_engineer stays locked out of the rest of the coordinator portal.
+    const dashboard = await request(app).get('/api/coordinator/dashboard').query({ schoolId }).set(auth(eng));
+    expect(dashboard.status).toBe(403);
+  });
+
+  it('support_engineer can search coordinators and list class keys for a chosen school', async () => {
+    const admin = await token('schooladmin');
+    const eng = await token('support');
+    const schoolRes = await request(app).get('/api/auth/profile').set(auth(admin));
+    const schoolId = schoolRes.body.schoolId;
+
+    const found = await request(app).get('/api/coordinator/search-coordinators').query({ schoolId, q: 'Coord' }).set(auth(eng));
+    expect(found.status).toBe(200);
+    expect(found.body.length).toBeGreaterThan(0);
+    expect(found.body[0]).toHaveProperty('assignedClasses');
+
+    const keys = await request(app).get('/api/coordinator/class-keys').query({ schoolId }).set(auth(eng));
+    expect(keys.status).toBe(200);
+    expect(keys.body).toContain('Class 1-A');
+  });
+
   it('teacher-assignments: school_admin can create/update/delete; coordinator can only read', async () => {
     const admin = await token('schooladmin');
     const teachers = await request(app).get('/api/coordinator/teachers').set(auth(coord));

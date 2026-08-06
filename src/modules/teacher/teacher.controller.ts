@@ -2,12 +2,21 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { assignedClassesOf } from '../coordinator/coordinator.service';
 import { teacherService } from './teacher.service';
 
 function schoolId(req: Request): string {
   const id = req.user?.schoolId;
   if (!id) throw ApiError.forbidden('No school scope');
   return id;
+}
+
+/** A coordinator with a non-empty assignedClasses may only see homework for
+ * their supervised classes — empty means unscoped (whole school). */
+async function coordinatorAllowedClassKeys(req: Request): Promise<readonly string[] | undefined> {
+  if (req.user?.role !== 'coordinator') return undefined;
+  const keys = await assignedClassesOf(userId(req));
+  return keys.length ? keys : undefined;
 }
 const userId = (req: Request): string => String(req.user?._id);
 const p = (req: Request, key: string): string => String(req.params[key]);
@@ -39,7 +48,8 @@ export const teacherController = {
     send(res, await teacherService.getHomework(schoolId(req), userId(req)));
   },
   async getAllHomework(req: Request, res: Response) {
-    send(res, await teacherService.getAllHomework(schoolId(req), req.query as Record<string, string>));
+    const allowed = await coordinatorAllowedClassKeys(req);
+    send(res, await teacherService.getAllHomework(schoolId(req), req.query as Record<string, string>, allowed));
   },
   async createHomework(req: Request, res: Response) {
     created(res, await teacherService.createHomework(schoolId(req), userId(req), req.body, String(req.user?.role ?? 'unknown')));

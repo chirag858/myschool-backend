@@ -2,6 +2,7 @@ import { getInchargeSection } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { AttendanceModel } from '../attendance/attendance.models';
 import { CircularModel } from '../communication/communication.models';
+import { assignedClassesOf } from '../coordinator/coordinator.service';
 import { ExamModel } from '../exams/exams.models';
 import { StudentModel } from '../students/student.model';
 import { timetableService } from '../timetable/timetable.service';
@@ -269,16 +270,25 @@ export const teacherService = {
     return (await TeacherHomeworkModel.find({ schoolId, teacherUserId: userId }).sort({ assignedDate: -1 }).lean()).map(dto);
   },
 
-  async getAllHomework(schoolId: string, filters: Record<string, string>) {
+  /** `allowedClassKeys`, when given (a coordinator's non-empty assignedClasses),
+   * is a hard boundary ANDed on top of the client's own filters — even a
+   * request for "all classes" can never surface a class outside it. */
+  async getAllHomework(schoolId: string, filters: Record<string, string>, allowedClassKeys?: readonly string[]) {
     const q: Record<string, unknown> = { schoolId };
     if (filters.type && filters.type !== 'all') q.homeworkType = filters.type;
     if (filters.classKey && filters.classKey !== 'all') q.classKey = filters.classKey;
     if (filters.subject && filters.subject !== 'all') q.subject = filters.subject;
+    if (allowedClassKeys?.length) q.classKey = q.classKey ?? { $in: allowedClassKeys };
     const rows = (await TeacherHomeworkModel.find(q).sort({ assignedDate: -1 }).lean()).map(dto);
     // `section` lives either in its own field or as the tail of classKey, so it
     // is filtered after the query rather than as a Mongo condition.
-    if (!filters.section || filters.section === 'all') return rows;
-    return rows.filter((r) => sectionOf(r) === filters.section);
+    let scoped = rows;
+    if (allowedClassKeys?.length && q.classKey && typeof q.classKey === 'string') {
+      // filters.classKey was already a specific class — still verify it's within bounds.
+      scoped = allowedClassKeys.includes(q.classKey) ? rows : [];
+    }
+    if (!filters.section || filters.section === 'all') return scoped;
+    return scoped.filter((r) => sectionOf(r) === filters.section);
   },
 
   async getHomeworkById(schoolId: string, id: string) {
@@ -316,8 +326,10 @@ export const teacherService = {
   async updateHomework(schoolId: string, userId: string, id: string, patch: Record<string, unknown>, role: string) {
     const hw = await TeacherHomeworkModel.findOne({ _id: id, schoolId });
     if (!hw) throw ApiError.notFound('Homework not found');
-    // A teacher may only edit their own homework; admin/principal/coordinator
-    // may edit any, and the edit trail records who did it.
+    // A teacher may only edit their own homework; admin/principal may edit
+    // any; a coordinator with a non-empty assignedClasses may only edit
+    // homework for their supervised classes, and the edit trail records who
+    // did it.
     if (role === 'teacher' && String(hw.teacherUserId) !== userId) {
       throw ApiError.forbidden('You can only edit homework you created');
     }
@@ -326,6 +338,13 @@ export const teacherService = {
       const classKey = String(patch.classKey ?? hw.classKey);
       const subject = String(patch.subject ?? hw.subject);
       assertCanTeach(scope, classKey, subject);
+    }
+    if (role === 'coordinator') {
+      const allowed = await assignedClassesOf(userId);
+      const targetClassKey = String(patch.classKey ?? hw.classKey);
+      if (allowed.length && (!allowed.includes(targetClassKey) || !allowed.includes(String(hw.classKey)))) {
+        throw ApiError.forbidden('You can only edit homework for your assigned classes');
+      }
     }
     const name = await teacherName(userId);
     Object.assign(hw, patch, {

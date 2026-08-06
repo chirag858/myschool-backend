@@ -122,6 +122,30 @@ describe('Super-Admin Schools API', () => {
     expect((await request(app).get('/api/super-admin/schools/not-an-id').set(auth(sa))).status).toBe(400);
   });
 
+  it('GET /schools/generate-code derives a memorable code from the name', async () => {
+    const gen = await request(app).get('/api/super-admin/schools/generate-code?name=Vibgyor School').set(auth(sa));
+    expect(gen.status).toBe(200);
+    expect(gen.body.code).toBe('VIBGYOR');
+  });
+
+  it('GET /schools/generate-code falls back to a numbered suffix on collision', async () => {
+    const first = await request(app).get('/api/super-admin/schools/generate-code?name=Sunrise Academy').set(auth(sa));
+    expect(first.body.code).toBe('SUNRISE');
+    await request(app)
+      .post('/api/super-admin/schools')
+      .set(auth(sa))
+      .send({ ...validPayload, identity: { ...validPayload.identity, name: 'Sunrise Academy', code: first.body.code } });
+    const second = await request(app).get('/api/super-admin/schools/generate-code?name=Sunrise Academy').set(auth(sa));
+    expect(second.body.code).toBe('SUNRISE2');
+  });
+
+  it('GET /schools/code-check reports taken vs. free codes', async () => {
+    const taken = await request(app).get('/api/super-admin/schools/code-check?code=MSC').set(auth(sa));
+    expect(taken.body).toEqual({ taken: true });
+    const free = await request(app).get('/api/super-admin/schools/code-check?code=ZZZ999').set(auth(sa));
+    expect(free.body).toEqual({ taken: false });
+  });
+
   it('POST /schools creates a tenant and detail reflects it', async () => {
     const res = await request(app).post('/api/super-admin/schools').set(auth(sa)).send(validPayload);
     expect(res.status).toBe(201);

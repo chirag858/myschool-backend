@@ -7,13 +7,16 @@ const userSchema = new Schema(
     name: { type: String, required: true, trim: true },
     /** Staff login handle (parents/students log in by mobile). */
     username: { type: String, trim: true, lowercase: true, index: true, sparse: true },
-    email: { type: String, required: true, lowercase: true, trim: true },
+    email: { type: String, lowercase: true, trim: true, sparse: true },
     mobile: { type: String, trim: true, index: true },
     role: { type: String, enum: USER_ROLES, required: true },
     passwordHash: { type: String, select: false },
     schoolId: { type: Schema.Types.ObjectId, ref: 'School', index: true },
     schoolName: { type: String },
     active: { type: Boolean, default: true },
+    /** Forces a password-change prompt at next login (set on parent-account
+     * creation/reset, cleared on successful change-password). */
+    mustChangePassword: { type: Boolean, default: false },
     dateOfBirth: { type: String, default: '' },
     address: { type: String, default: '' },
     photoUrl: { type: String, default: '' },
@@ -29,7 +32,17 @@ const userSchema = new Schema(
   { timestamps: true },
 );
 
-userSchema.index({ email: 1, schoolId: 1 }, { unique: true });
+// `sparse` on a COMPOUND index only skips a document when EVERY indexed
+// field is missing — since `schoolId` is always set, a document with a
+// missing `email` alone still gets indexed as {email: null, schoolId: X},
+// so a second parent account (no email, same school) collided on that as
+// a duplicate key. A partial index with an explicit filter is the correct
+// way to say "unique only when email is actually present".
+userSchema.index(
+  { email: 1, schoolId: 1 },
+  { unique: true, partialFilterExpression: { email: { $exists: true, $type: 'string' } } },
+);
+userSchema.index({ mobile: 1, schoolId: 1, role: 1 });
 
 // Never leak the hash; serialize ids to strings (frontend reads `_id`).
 userSchema.set('toJSON', {

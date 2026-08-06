@@ -13,6 +13,14 @@ export const schoolController = {
     send(res, await schoolService.getSchools(req.query));
   },
 
+  async generateCode(req: Request, res: Response) {
+    send(res, await schoolService.generateSchoolCode(String(req.query.name ?? '')));
+  },
+
+  async checkCode(req: Request, res: Response) {
+    send(res, await schoolService.checkSchoolCode(String(req.query.code ?? '')));
+  },
+
   async listLite(_req: Request, res: Response) {
     send(res, await schoolService.getSchoolList());
   },

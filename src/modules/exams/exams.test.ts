@@ -62,6 +62,34 @@ describe('Exams API', () => {
     expect(unpub.body).toMatchObject({ published: false, status: 'scheduled' });
   });
 
+  it('a coordinator with a non-empty assignedClasses may only schedule exams for their supervised classes', async () => {
+    const coord = await token('coordinator');
+
+    // Class 1-A and Class 2-A are the seeded coordinator's assignedClasses — allowed.
+    const inScope = await request(app)
+      .post('/api/exams')
+      .set(auth(coord))
+      .send({ name: 'Scoped Test', type: 'unit_test', classes: ['Class 1-A', 'Class 2-A'], patternByClass: {} });
+    expect(inScope.status).toBe(201);
+
+    // Nursery-A is outside their assignedClasses — forbidden, even mixed with an in-scope class.
+    const outOfScope = await request(app)
+      .post('/api/exams')
+      .set(auth(coord))
+      .send({ name: 'Leaky Test', type: 'unit_test', classes: ['Class 1-A', 'Nursery-A'], patternByClass: {} });
+    expect(outOfScope.status).toBe(403);
+
+    // Unscope the coordinator — now unrestricted like school_admin.
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+    const unscoped = await request(app)
+      .post('/api/exams')
+      .set(auth(coord))
+      .send({ name: 'Unscoped Test', type: 'unit_test', classes: ['Nursery-A'], patternByClass: {} });
+    expect(unscoped.status).toBe(201);
+  });
+
   it('404 for a missing exam, 400 for invalid payload', async () => {
     expect((await request(app).get('/api/exams/000000000000000000000000').set(auth(admin))).status).toBe(404);
     expect((await request(app).post('/api/exams').set(auth(admin)).send({ type: 'unit_test' })).status).toBe(400);

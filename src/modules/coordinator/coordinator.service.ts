@@ -18,7 +18,11 @@ type Doc = Record<string, unknown> & { _id: unknown };
 const nowIso = (): string => new Date().toISOString();
 const keyOf = (className: string, section: string): string => `${className}-${section}`;
 
-async function assignedClassesOf(userId: string): Promise<string[]> {
+/** A coordinator's supervised classes — empty means unscoped (whole school),
+ * same convention used throughout this file. Exported so other modules
+ * (homework, timetable, academics) can apply the same class boundary to a
+ * coordinator without re-deriving it. */
+export async function assignedClassesOf(userId: string): Promise<string[]> {
   const user = await UserModel.findById(userId).lean();
   return (user?.assignedClasses as string[] | undefined) ?? [];
 }
@@ -54,6 +58,27 @@ async function validClassKeys(schoolId: string): Promise<Set<string>> {
       })
       .filter((key): key is string => Boolean(key)),
   );
+}
+
+/** Coordinator lookup for the class-assignment picker — support_engineer/
+ * super_admin assign classes to a coordinator in any school, so they need to
+ * find one by name/username without already knowing the school's staff list. */
+async function searchCoordinators(schoolId: string, q: string) {
+  const term = q.trim();
+  const filter: Record<string, unknown> = { schoolId, role: 'coordinator' };
+  if (term) {
+    const rx = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    filter.$or = [{ name: rx }, { username: rx }, { email: rx }];
+  }
+  const users = await UserModel.find(filter).select('name username email assignedClasses coordinatorTitle').limit(20).lean();
+  return users.map((u) => ({
+    id: String(u._id),
+    name: u.name,
+    username: u.username ?? '',
+    email: u.email ?? '',
+    coordinatorTitle: u.coordinatorTitle ?? '',
+    assignedClasses: u.assignedClasses ?? [],
+  }));
 }
 
 /** Marks-entry rows for the given exam, scoped to `classKeys` (all classes if omitted).
@@ -130,6 +155,14 @@ async function decide(schoolId: string, userId: string, id: string, patch: Recor
 }
 
 export const coordinatorService = {
+  async searchCoordinators(schoolId: string, q: string) {
+    return searchCoordinators(schoolId, q);
+  },
+
+  async getClassKeys(schoolId: string) {
+    return [...(await validClassKeys(schoolId))].sort();
+  },
+
   async dashboard(schoolId: string, userId: string) {
     const assignedClasses = await assignedClassesOf(userId);
     const supervisedClassSet = new Set(assignedClasses);

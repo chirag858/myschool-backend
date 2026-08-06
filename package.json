@@ -15,7 +15,8 @@
     "seed": "tsx src/seed/seed.ts",
     "backfill:fee-status": "tsx src/scripts/backfill-fee-status.ts",
     "backfill:missing-classes": "tsx src/scripts/backfill-missing-classes.ts",
-    "backfill:class-incharge": "tsx src/scripts/backfill-class-incharge.ts"
+    "backfill:class-incharge": "tsx src/scripts/backfill-class-incharge.ts",
+    "backfill:parent-accounts": "tsx src/scripts/backfill-parent-accounts.ts"
   },
   "dependencies": {
     "@types/node-cron": "^3.0.11",

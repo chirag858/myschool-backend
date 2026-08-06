@@ -5,10 +5,18 @@ import { created, noContent, send } from '../../lib/api-response';
 import { sendExcel } from '../reports/reports.export';
 import { coordinatorService } from './coordinator.service';
 
+/**
+ * Tenant roles (school_admin/principal/coordinator) are scoped to their own
+ * school via the JWT. support_engineer has no schoolId (cross-school role,
+ * same as transport-tracking/school-reports) and must pass ?schoolId= to say
+ * which school it's assigning classes in.
+ */
 function schoolId(req: Request): string {
-  const id = req.user?.schoolId;
-  if (!id) throw ApiError.forbidden('No school scope');
-  return id;
+  const own = req.user?.schoolId;
+  if (own) return own;
+  const query = typeof req.query.schoolId === 'string' ? req.query.schoolId : undefined;
+  if (query) return query;
+  throw ApiError.badRequest('schoolId is required for this role');
 }
 function userId(req: Request): string {
   const id = req.user?._id;
@@ -18,6 +26,13 @@ function userId(req: Request): string {
 const p = (req: Request, key: string): string => String(req.params[key]);
 
 export const coordinatorController = {
+  async searchCoordinators(req: Request, res: Response) {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    send(res, await coordinatorService.searchCoordinators(schoolId(req), q));
+  },
+  async getClassKeys(req: Request, res: Response) {
+    send(res, await coordinatorService.getClassKeys(schoolId(req)));
+  },
   async dashboard(req: Request, res: Response) {
     send(res, await coordinatorService.dashboard(schoolId(req), userId(req)));
   },

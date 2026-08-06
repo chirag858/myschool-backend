@@ -56,6 +56,25 @@ describe('Parent Web API', () => {
     expect(apr.receiptNumber).toBe('RCPT-PARENT-001');
   });
 
+  it('fee monthly amountDue matches the annual total ÷ 12 (not just monthly-frequency heads)', async () => {
+    const summary = await request(app).get(`/api/parent/fee-summary?childId=${childId}`).set(auth(parent));
+    const monthly = await request(app).get(`/api/parent/fee-monthly?childId=${childId}`).set(auth(parent));
+    const expectedMonthlyDue = Math.round(summary.body.totalThisSession / 12);
+    for (const row of monthly.body) {
+      expect(row.amountDue).toBe(expectedMonthlyDue);
+    }
+  });
+
+  it('fee monthly amountPaid matches the full seeded receipt amount across its covered months, not a mismatched fraction', async () => {
+    const res = await request(app).get(`/api/parent/fee-monthly?childId=${childId}`).set(auth(parent));
+    const apr = res.body.find((r: { month: string }) => r.month === 'Apr 2025');
+    const may = res.body.find((r: { month: string }) => r.month === 'May 2025');
+    // Seeded receipt: amount 5000, monthsCovered ['April', 'May'] → 2500 each.
+    expect(apr.amountPaid).toBe(2500);
+    expect(may.amountPaid).toBe(2500);
+    expect(apr.amountPaid + may.amountPaid).toBe(5000);
+  });
+
   it('attendance returns the child history', async () => {
     const res = await request(app).get(`/api/parent/attendance?childId=${childId}`).set(auth(parent));
     expect(res.status).toBe(200);

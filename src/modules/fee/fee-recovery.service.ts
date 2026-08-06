@@ -2,7 +2,8 @@ import { getActiveSessionName } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { sendBulk, type MessagingChannel } from '../../lib/messaging-provider';
 import { StudentModel } from '../students/student.model';
-import { FeeStructureModel, FREQUENCY_MULTIPLIER, ReceiptModel } from './fee.models';
+import { annualByClass } from './fee.service';
+import { ReceiptModel } from './fee.models';
 import {
   InstallmentPlanModel,
   ReminderLogModel,
@@ -15,22 +16,10 @@ type Doc = Record<string, unknown> & { _id: unknown };
 
 const MONTHS = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
 
-async function annualByClass(schoolId: string, session: string): Promise<Record<string, number>> {
-  const structure = await FeeStructureModel.find({ schoolId, session }).lean();
-  const out: Record<string, number> = {};
-  for (const row of structure) {
-    const mult = FREQUENCY_MULTIPLIER[row.frequency] ?? 1;
-    for (const [cls, amt] of Object.entries((row.amounts as Record<string, number>) ?? {})) {
-      out[cls] = (out[cls] ?? 0) + Number(amt) * mult;
-    }
-  }
-  return out;
-}
-
-function monthDueDate(monthIndex: number): Date {
+function monthDueDate(monthIndex: number, startYear: number): Date {
   // Session runs April(0)..March(11); first 9 months fall in the earlier
   // calendar year, the rest in the next — mirrors fee.service.studentContext.
-  const year = monthIndex < 9 ? 2025 : 2026;
+  const year = monthIndex < 9 ? startYear : startYear + 1;
   const calendarMonth = (monthIndex + 3) % 12; // April(0) -> month index 3
   return new Date(year, calendarMonth, 5);
 }
@@ -45,6 +34,7 @@ export function agingBucketFor(daysOverdue: number): '0_30' | '30_60' | '60_90' 
 /** Live-computed defaulter rows — no stored collection, always reflects current receipts. */
 async function computeDefaulters(schoolId: string): Promise<Array<ReturnType<typeof toDefaulter>>> {
   const session = await getActiveSessionName(schoolId);
+  const startYear = parseInt(session.split('-')[0]!, 10) || new Date().getFullYear();
   const annual = await annualByClass(schoolId, session);
   const students = await StudentModel.find({ schoolId }).lean();
   const receipts = await ReceiptModel.find({ schoolId, status: 'active' }).lean();
@@ -86,7 +76,7 @@ async function computeDefaulters(schoolId: string): Promise<Array<ReturnType<typ
     }
     if (oldestUnpaidIdx === -1) continue;
 
-    const dueDate = monthDueDate(oldestUnpaidIdx);
+    const dueDate = monthDueDate(oldestUnpaidIdx, startYear);
     if (dueDate.getTime() > now) continue; // not yet due
     const daysOverdue = Math.floor((now - dueDate.getTime()) / DAY);
     if (daysOverdue <= 0) continue;

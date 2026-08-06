@@ -73,6 +73,7 @@ const studentSchema = new Schema(
     profileStatus: { type: String, enum: PROFILE_STATUSES, default: 'active' },
     photoUrl: String,
     mobile: { type: String, default: '' },
+    parentUserId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     sessionLabel: { type: String, default: '' },
     dateOfBirth: { type: String, default: '' },
     gender: { type: String, enum: GENDERS, default: 'male' },

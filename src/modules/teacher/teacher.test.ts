@@ -227,6 +227,37 @@ describe('Teacher Portal API', () => {
     expect(patch.body.createdBy).toBe('Teacher'); // original author preserved
   });
 
+  it('a coordinator with a non-empty assignedClasses only sees/edits homework for their supervised classes', async () => {
+    const coord = await token('coordinator');
+    const admin = await token('schooladmin');
+
+    // Seeded homework is Class 1-A — within the seeded coordinator's
+    // assignedClasses (['Class 1-A', 'Class 2-A']).
+    const overview = await request(app).get('/api/homework').set(auth(coord));
+    expect(overview.body.length).toBe(1);
+    expect(overview.body[0].classKey).toBe('Class 1-A');
+    const id = overview.body[0].id;
+
+    // In-scope edit succeeds.
+    const patch = await request(app).patch(`/api/homework/${id}`).set(auth(coord)).send({ title: 'Coordinator edit' });
+    expect(patch.status).toBe(200);
+
+    // Requesting an out-of-scope class explicitly returns nothing, not a leak.
+    const outOfScope = await request(app).get('/api/homework?classKey=Nursery-A').set(auth(coord));
+    expect(outOfScope.body).toEqual([]);
+
+    // Moving homework to an out-of-scope class is refused.
+    const moveOut = await request(app).patch(`/api/homework/${id}`).set(auth(coord)).send({ classKey: 'Nursery-A' });
+    expect(moveOut.status).toBe(403);
+
+    // Unscope the coordinator — now unrestricted like before.
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+    const unscoped = await request(app).get('/api/homework?classKey=Nursery-A').set(auth(coord));
+    expect(unscoped.status).toBe(200);
+  });
+
   it('assignments: list seeded, create, grade a submission, close, delete', async () => {
     const list = await request(app).get('/api/teacher/assignments').set(auth(teacher));
     expect(list.body.length).toBe(1);

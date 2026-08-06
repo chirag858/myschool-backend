@@ -815,7 +815,7 @@ export async function seedDemo() {
         studentName: kid.name,
         className: kid.className,
         section: kid.section,
-        monthsCovered: ['Apr 2025', 'May 2025'],
+        monthsCovered: ['April', 'May'],
         feeHeads: [{ name: 'Tuition', amount: 5000 }],
         amount: 5000,
         paymentMode: 'cash',

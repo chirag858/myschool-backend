@@ -1,5 +1,26 @@
 import type { Request, Response } from 'express';
+
+import { ClassModel } from '../academics/academics.models';
+import { ApiError } from '../../lib/api-error';
+import { assignedClassesOf } from '../coordinator/coordinator.service';
 import { timetableService } from './timetable.service';
+
+/**
+ * A coordinator with a non-empty assignedClasses may only create/edit slots,
+ * copy days, publish, or reassign subject-teachers for their own supervised
+ * classes — empty means unscoped (whole school), same convention as
+ * coordinator.service.ts. school_admin/principal stay unrestricted.
+ */
+async function assertCoordinatorClassAccess(req: Request, classId: string, section: string): Promise<void> {
+  if (req.user?.role !== 'coordinator') return;
+  const allowed = await assignedClassesOf(String(req.user._id));
+  if (!allowed.length) return;
+  const cls = await ClassModel.findOne({ _id: classId, schoolId: req.user.schoolId }).lean();
+  const classKey = `${cls?.name ?? ''}-${section}`;
+  if (!allowed.includes(classKey)) {
+    throw ApiError.forbidden('You can only manage timetable for your assigned classes');
+  }
+}
 
 export const timetableController = {
   // ── Periods ───────────────────────────────────────────────────────
@@ -62,6 +83,7 @@ export const timetableController = {
   },
 
   saveSlot: async (req: Request, res: Response) => {
+    await assertCoordinatorClassAccess(req, req.body.classId, req.body.section);
     const slot = await timetableService.saveSlot(req.user!.schoolId!, req.body);
     res.json(slot);
   },
@@ -69,6 +91,7 @@ export const timetableController = {
   clearSlot: async (req: Request, res: Response) => {
     const classId = req.params['classId'] as string;
     const { section, day, periodId } = req.body;
+    await assertCoordinatorClassAccess(req, classId, section);
     await timetableService.clearSlot(req.user!.schoolId!, classId, section, day, periodId);
     res.json({ success: true });
   },
@@ -76,12 +99,14 @@ export const timetableController = {
   togglePublish: async (req: Request, res: Response) => {
     const classId = req.params['classId'] as string;
     const { section, publish } = req.body;
+    await assertCoordinatorClassAccess(req, classId, section);
     await timetableService.togglePublish(req.user!.schoolId!, classId, section, publish);
     res.json({ success: true });
   },
 
   copyDay: async (req: Request, res: Response) => {
     const { classId, section, fromDay, toDays } = req.body;
+    await assertCoordinatorClassAccess(req, classId, section);
     await timetableService.copyDay(req.user!.schoolId!, classId, section, fromDay, toDays);
     res.json({ success: true });
   },
@@ -121,11 +146,13 @@ export const timetableController = {
   },
   saveSubjectAssignments: async (req: Request, res: Response) => {
     const { classId, section, rows } = req.body;
+    await assertCoordinatorClassAccess(req, classId, section);
     const result = await timetableService.saveSubjectAssignments(req.user!.schoolId!, classId, section, rows);
     res.json(result);
   },
   autoAssignSubjects: async (req: Request, res: Response) => {
     const { classId, section } = req.body;
+    await assertCoordinatorClassAccess(req, classId, section);
     const rows = await timetableService.autoAssignSubjects(req.user!.schoolId!, classId, section);
     res.json(rows);
   },

@@ -5,7 +5,9 @@ import { authenticate, requireRole } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { schoolController } from './school.controller';
 import {
+  codeCheckQuerySchema,
   createSchoolSchema,
+  generateCodeQuerySchema,
   idParamSchema,
   modulesSchema,
   schoolsQuerySchema,
@@ -36,6 +38,19 @@ schoolRoutes.get(
 );
 schoolRoutes.get('/schools/list', readRoles, asyncHandler(schoolController.listLite));
 schoolRoutes.get('/schools/activation-overview', writeOnly, asyncHandler(schoolController.activationOverview));
+// Specific single-segment routes must precede the blanket '/schools/:id' below.
+schoolRoutes.get(
+  '/schools/generate-code',
+  writeOnly,
+  validate({ query: generateCodeQuerySchema }),
+  asyncHandler(schoolController.generateCode),
+);
+schoolRoutes.get(
+  '/schools/code-check',
+  writeOnly,
+  validate({ query: codeCheckQuerySchema }),
+  asyncHandler(schoolController.checkCode),
+);
 schoolRoutes.post(
   '/schools',
   writeOnly,

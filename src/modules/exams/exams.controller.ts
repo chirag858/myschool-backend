@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { assignedClassesOf } from '../coordinator/coordinator.service';
 import { examService } from './exams.service';
 
 function schoolId(req: Request): string {
@@ -11,6 +12,18 @@ function schoolId(req: Request): string {
 }
 const p = (req: Request, key: string): string => String(req.params[key]);
 const actor = (req: Request): string => String(req.user?.role ?? 'System');
+
+/** A coordinator with a non-empty assignedClasses may only schedule exams
+ * for their own supervised classes — empty means unscoped (whole school). */
+async function assertCoordinatorExamClasses(req: Request, classes: unknown): Promise<void> {
+  if (req.user?.role !== 'coordinator') return;
+  const allowed = await assignedClassesOf(String(req.user._id));
+  if (!allowed.length) return;
+  const requested = Array.isArray(classes) ? (classes as string[]) : [];
+  if (requested.some((c) => !allowed.includes(c))) {
+    throw ApiError.forbidden('You can only schedule exams for your assigned classes');
+  }
+}
 
 export const examController = {
   async list(req: Request, res: Response) {
@@ -26,6 +39,7 @@ export const examController = {
     send(res, await examService.get(schoolId(req), p(req, 'id')));
   },
   async create(req: Request, res: Response) {
+    await assertCoordinatorExamClasses(req, (req.body as { classes?: unknown }).classes);
     created(res, await examService.create(schoolId(req), req.body));
   },
   async publish(req: Request, res: Response) {

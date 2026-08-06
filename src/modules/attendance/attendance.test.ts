@@ -262,6 +262,57 @@ describe('Attendance API', () => {
     );
   });
 
+  it('a coordinator with a non-empty assignedClasses may only mark/see their supervised classes', async () => {
+    const coord = await token('coordinator');
+
+    // Seeded coordinator supervises Class 1-A and Class 2-A — allowed.
+    const mine = await request(app)
+      .get('/api/attendance/mark?date=2025-04-22&class=Class 1&section=A')
+      .set(auth(coord));
+    expect(mine.status).toBe(200);
+    expect(
+      (
+        await request(app)
+          .post('/api/attendance/save')
+          .set(auth(coord))
+          .send({
+            date: '2025-04-22',
+            classKey: 'Class 1-A',
+            attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+          })
+      ).status,
+    ).toBe(200);
+
+    // Nursery-A is outside their assignedClasses — forbidden to mark.
+    expect(
+      (
+        await request(app)
+          .post('/api/attendance/save')
+          .set(auth(coord))
+          .send({ date: '2025-04-22', classKey: 'Nursery-A', attendance: [{ studentId: 'x', status: 'present' }] })
+      ).status,
+    ).toBe(403);
+
+    // Reports scope to only their assigned classes even with no explicit filter.
+    const daily = await request(app).get('/api/attendance/reports/daily?date=2025-04-22').set(auth(coord));
+    expect(daily.body.every((r: { classLabel: string }) => ['Class 1', 'Class 2'].includes(r.classLabel))).toBe(true);
+
+    // Explicitly asking for an out-of-scope class via query param is refused, not silently ignored.
+    const monthlyOutOfScope = await request(app)
+      .get('/api/attendance/reports/monthly?classKey=Nursery-A')
+      .set(auth(coord));
+    expect(monthlyOutOfScope.body).toEqual([]);
+
+    // An unscoped coordinator (no assignedClasses) stays unrestricted.
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+    const unscoped = await request(app)
+      .get('/api/attendance/mark?date=2025-04-22&class=Nursery&section=A')
+      .set(auth(coord));
+    expect(unscoped.status).toBe(200);
+  });
+
   it('GET /attendance/reports/register returns a student×date matrix', async () => {
     const res = await request(app).get('/api/attendance/reports/register?classKey=Nursery-A').set(auth(admin));
     expect(res.status).toBe(200);

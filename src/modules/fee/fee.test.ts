@@ -90,6 +90,47 @@ describe('Fee API', () => {
     expect(res.body.feeHeads.length).toBeGreaterThan(0);
   });
 
+  it('per-month figures respect fee-head frequency, not just the raw configured amount', async () => {
+    // A half-yearly (or quarterly/yearly) head must contribute its share
+    // divided across all 12 months — previously the raw `amounts[cls]` was
+    // used as-is regardless of frequency, so a half-yearly head configured
+    // at, say, 2000 was billed as 2000 EVERY month (24000/year) instead of
+    // its true 2000×2/12 ≈ 333/month share (4000/year total contribution).
+    const sid = await class1StudentId();
+    const res = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
+    const sumOfMonthlyHeads = res.body.feeHeads.reduce((s: number, h: { monthlyAmount: number }) => s + h.monthlyAmount, 0);
+    // months[].amount is the same monthlyTotal for every month — must equal
+    // the annual total (outstandingBalance + already paid) divided by 12,
+    // within rounding, for every one of the 12 rows.
+    const perMonth = res.body.months[0].amount;
+    expect(res.body.months.every((m: { amount: number }) => m.amount === perMonth)).toBe(true);
+    expect(perMonth).toBe(sumOfMonthlyHeads);
+
+    // Cross-check against the independently-computed annual total (same
+    // annualByClass() helper the parent portal and fee ledger use) — the
+    // 12 monthly figures must sum to within a rounding tolerance of it.
+    // The old bug (summing raw configured amounts regardless of frequency)
+    // would overstate this whenever any head isn't 'monthly' frequency.
+    const structureRes = await request(app).get('/api/fee/structure').set(auth(acc));
+    const cls1Rows = structureRes.body.rows.filter((r: { amounts: Record<string, number> }) => r.amounts['Class 1'] != null);
+    const hasNonMonthlyHead = structureRes.body.rows.some(
+      (r: { frequency: string; amounts: Record<string, number> }) => r.amounts['Class 1'] != null && r.frequency !== 'monthly',
+    );
+    expect(hasNonMonthlyHead).toBe(true); // sanity: this test only proves anything if the seed actually has a mixed-frequency head
+
+    const trueAnnual = cls1Rows.reduce((sum: number, r: { frequency: string; amounts: Record<string, number> }) => {
+      const mult = { monthly: 12, quarterly: 4, half_yearly: 2, yearly: 1, one_time: 1 }[r.frequency] ?? 1;
+      return sum + r.amounts['Class 1'] * mult;
+    }, 0);
+    expect(Math.abs(perMonth * 12 - trueAnnual)).toBeLessThanOrEqual(12); // rounding slack across 12 months
+
+    // And it must NOT equal the old-bug figure: raw configured amounts summed as-is.
+    const buggyMonthlyFigure = cls1Rows.reduce((sum: number, r: { amounts: Record<string, number> }) => sum + r.amounts['Class 1'], 0);
+    if (buggyMonthlyFigure !== Math.round(trueAnnual / 12)) {
+      expect(perMonth).not.toBe(buggyMonthlyFigure);
+    }
+  });
+
   it('collect → receipt → list/get/duplicate/cancel, and stats reflect today', async () => {
     const sid = await class1StudentId();
     const hid = await headId();

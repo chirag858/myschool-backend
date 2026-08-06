@@ -13,7 +13,7 @@ import {
 type Doc = Record<string, unknown> & { _id: unknown };
 
 /** UI sends the 3-letter abbreviation; receipts store the full month name in `monthsCovered`. */
-const MONTH_ABBR_TO_FULL: Record<string, string> = {
+export const MONTH_ABBR_TO_FULL: Record<string, string> = {
   Apr: 'April', May: 'May', Jun: 'June', Jul: 'July', Aug: 'August', Sep: 'September',
   Oct: 'October', Nov: 'November', Dec: 'December', Jan: 'January', Feb: 'February', Mar: 'March',
 };
@@ -146,13 +146,24 @@ export const feeService = {
     const headMap = new Map(heads.map((h) => [String(h._id), h.name]));
     const cls = student.className ?? '';
 
+    // Spread each head's annual contribution evenly across the 12 months —
+    // matches `annualByClass` (session-total math used by admin dashboard,
+    // fee ledger, and the parent portal). Previously this used the raw
+    // configured `amounts[cls]` as-is regardless of frequency, so a
+    // half-yearly head configured at 2000 was billed as 2000/month instead
+    // of its true 2000×2/12 ≈ 333/month share — inflating every month's
+    // due amount and letting one payment mark the whole month "paid".
     const feeHeads = structure
       .filter((r) => (r.amounts as Record<string, number>)?.[cls] != null)
-      .map((r) => ({
-        id: r.feeHeadId,
-        name: headMap.get(r.feeHeadId) ?? r.feeHeadId,
-        monthlyAmount: Number((r.amounts as Record<string, number>)[cls]) || 0,
-      }));
+      .map((r) => {
+        const configured = Number((r.amounts as Record<string, number>)[cls]) || 0;
+        const mult = FREQUENCY_MULTIPLIER[r.frequency as string] ?? 1;
+        return {
+          id: r.feeHeadId,
+          name: headMap.get(r.feeHeadId) ?? r.feeHeadId,
+          monthlyAmount: Math.round((configured * mult) / 12),
+        };
+      });
 
     const annual = await annualByClass(schoolId, session);
     const totalFee = annual[cls] ?? 0;
@@ -161,13 +172,14 @@ export const feeService = {
     const paid = receipts.reduce((s, r) => s + (r.amount ?? 0), 0);
 
     const MONTHS = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
+    const startYear = parseInt(session.split('-')[0]!, 10) || new Date().getFullYear();
     const monthlyTotal = feeHeads.reduce((s, h) => s + h.monthlyAmount, 0);
     const months = MONTHS.map((m, i) => {
       const paidForMonth = receipts
         .filter((r) => (r.monthsCovered ?? []).includes(m))
         .reduce((s, r) => s + (r.amount ?? 0), 0);
       const status = paidForMonth <= 0 ? 'pending' : paidForMonth >= monthlyTotal ? 'paid' : 'partial';
-      return { month: m, year: i < 9 ? 2025 : 2026, amount: monthlyTotal, paid: paidForMonth, status };
+      return { month: m, year: i < 9 ? startYear : startYear + 1, amount: monthlyTotal, paid: paidForMonth, status };
     });
 
     const siblings = student.parents?.fatherMobile

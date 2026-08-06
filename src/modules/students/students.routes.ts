@@ -52,7 +52,12 @@ studentsRoutes.post(
   requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
   asyncHandler(studentsController.checkMobile),
 );
-studentsRoutes.get('/', adminGate, validate({ query: studentsQuerySchema }), asyncHandler(studentsController.list));
+studentsRoutes.get(
+  '/',
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant'),
+  validate({ query: studentsQuerySchema }),
+  asyncHandler(studentsController.list),
+);
 studentsRoutes.post('/', adminGate, validate({ body: createStudentSchema }), asyncHandler(studentsController.create));
 studentsRoutes.get('/class-summary', adminGate, asyncHandler(studentsController.classSummary));
 studentsRoutes.post('/bulk/status', adminGate, validate({ body: bulkStatusSchema }), asyncHandler(studentsController.bulkStatus));
@@ -85,3 +90,17 @@ studentsRoutes.get('/:id/documents', adminGate, validate({ params: idParam }), a
 studentsRoutes.post('/:id/documents', adminGate, validate({ params: idParam, body: documentSchema }), asyncHandler(studentsController.addDocument));
 studentsRoutes.delete('/:id/documents/:docId', adminGate, validate({ params: docIdParam }), asyncHandler(studentsController.deleteDocument));
 studentsRoutes.get('/:id', adminGate, validate({ params: idParam }), asyncHandler(studentsController.profile));
+// Parent login credentials (auto-created at student admission). Same roles
+// that can create/edit a student manage the linked parent account.
+studentsRoutes.get(
+  '/:id/parent-credentials',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  validate({ params: idParam }),
+  asyncHandler(studentsController.getParentCredentials),
+);
+studentsRoutes.post(
+  '/:id/parent-credentials/reset',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  validate({ params: idParam }),
+  asyncHandler(studentsController.resetParentCredentials),
+);

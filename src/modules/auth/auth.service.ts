@@ -147,6 +147,7 @@ export const authService = {
       return { ok: false, reason: 'wrong_current' };
     }
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.mustChangePassword = false;
     await user.save();
     return { ok: true };
   },

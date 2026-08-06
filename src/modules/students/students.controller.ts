@@ -75,4 +75,10 @@ export const studentsController = {
     await studentsService.deleteDocument(schoolId(req), String(req.params.id), String(req.params.docId));
     res.status(204).end();
   },
+  async getParentCredentials(req: Request, res: Response) {
+    send(res, await studentsService.getParentCredentials(schoolId(req), String(req.params.id)));
+  },
+  async resetParentCredentials(req: Request, res: Response) {
+    send(res, await studentsService.resetParentCredentials(schoolId(req), String(req.params.id)));
+  },
 };

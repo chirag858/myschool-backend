@@ -1,8 +1,52 @@
+import { randomUUID } from 'node:crypto';
+
+import bcrypt from 'bcryptjs';
 import { Types } from 'mongoose';
 
 import { ApiError } from '../../lib/api-error';
+import { UserModel } from '../user/user.model';
 import { StudentModel } from './student.model';
 import { EnquiryModel } from '../enquiries/enquiry.model';
+
+/** Resolves the parent contact number for a student from `parents.*` first
+ * (the real source of truth, always present when the student has any
+ * parent contact on file), falling back to the denormalised top-level
+ * `mobile` field — which is only ever set at creation time and stays blank
+ * forever on students admitted before that mirroring existed, or wherever
+ * it wasn't derivable. Never trust `mobile` alone. */
+function parentMobileOf(student: { mobile?: string; parents?: Record<string, unknown> }): string {
+  const p = student.parents ?? {};
+  return String(p.fatherMobile ?? p.motherMobile ?? p.guardianMobile ?? student.mobile ?? '');
+}
+
+/** Creates a parent login the first time a mobile number is seen for this
+ * school, or links the student to an existing parent account when a
+ * sibling already registered that same mobile. Never creates a duplicate
+ * account per mobile+school. Returns the one-time generated password only
+ * when a brand-new account was created (undefined when linked to an
+ * existing sibling account). */
+async function createOrLinkParentAccount(
+  schoolId: string,
+  studentName: string,
+  mobile: string,
+): Promise<{ parentUserId: unknown; tempPassword?: string }> {
+  const existing = await UserModel.findOne({ schoolId, mobile, role: 'parent' });
+  if (existing) return { parentUserId: existing._id };
+
+  const tempPassword = randomUUID().slice(0, 10);
+  const passwordHash = await bcrypt.hash(tempPassword, 10);
+  const user = await UserModel.create({
+    name: `Parent of ${studentName}`,
+    username: mobile,
+    mobile,
+    role: 'parent',
+    passwordHash,
+    schoolId,
+    active: true,
+    mustChangePassword: true,
+  });
+  return { parentUserId: user._id, tempPassword };
+}
 
 type Doc = Record<string, unknown> & { _id: unknown };
 
@@ -301,7 +345,57 @@ export const studentsService = {
       })) ?? [],
     });
 
-    return { id: String(doc._id), admissionNumber: doc.admissionNumber };
+    let parentCredentials: { tempPassword?: string } | undefined;
+    if (mobile) {
+      const { parentUserId, tempPassword } = await createOrLinkParentAccount(schoolId, doc.name, String(mobile));
+      doc.parentUserId = parentUserId as typeof doc.parentUserId;
+      await doc.save();
+      parentCredentials = tempPassword ? { tempPassword } : undefined;
+    }
+
+    return {
+      id: String(doc._id),
+      admissionNumber: doc.admissionNumber,
+      ...(parentCredentials ? { parentCredentials } : {}),
+    };
+  },
+
+  async getParentCredentials(schoolId: string, studentId: string) {
+    const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
+    if (!student) throw ApiError.notFound('Student not found');
+    if (!student.parentUserId) return { hasLogin: false };
+    const user = await UserModel.findOne({ _id: student.parentUserId, schoolId }).lean();
+    if (!user) return { hasLogin: false };
+    return {
+      hasLogin: true,
+      userId: String(user._id),
+      username: user.username ?? '',
+      mobile: user.mobile ?? '',
+      active: user.active ?? true,
+    };
+  },
+
+  async resetParentCredentials(schoolId: string, studentId: string) {
+    const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
+    if (!student) throw ApiError.notFound('Student not found');
+
+    const mobile = parentMobileOf(student);
+    if (!student.parentUserId) {
+      if (!mobile) throw ApiError.badRequest('Student has no parent mobile number on file');
+      const { parentUserId, tempPassword } = await createOrLinkParentAccount(schoolId, student.name, mobile);
+      await StudentModel.updateOne({ _id: studentId, schoolId }, { $set: { parentUserId, mobile } });
+      return { tempPassword };
+    }
+
+    const tempPassword = randomUUID().slice(0, 10);
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const user = await UserModel.findOneAndUpdate(
+      { _id: student.parentUserId, schoolId },
+      { $set: { passwordHash, mustChangePassword: true } },
+      { new: true },
+    ).lean();
+    if (!user) throw ApiError.notFound('No parent login found for this student');
+    return { tempPassword };
   },
 
   async profile(schoolId: string, id: string) {
