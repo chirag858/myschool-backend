@@ -59,7 +59,11 @@ studentsRoutes.get(
   asyncHandler(studentsController.list),
 );
 studentsRoutes.post('/', adminGate, validate({ body: createStudentSchema }), asyncHandler(studentsController.create));
-studentsRoutes.get('/class-summary', adminGate, asyncHandler(studentsController.classSummary));
+studentsRoutes.get(
+  '/class-summary',
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant'),
+  asyncHandler(studentsController.classSummary),
+);
 studentsRoutes.post('/bulk/status', adminGate, validate({ body: bulkStatusSchema }), asyncHandler(studentsController.bulkStatus));
 studentsRoutes.post('/bulk/transfer', adminGate, validate({ body: bulkTransferSchema }), asyncHandler(studentsController.bulkTransfer));
 studentsRoutes.post('/bulk/promote', adminGate, validate({ body: bulkPromoteSchema }), asyncHandler(studentsController.bulkPromote));
@@ -89,7 +93,13 @@ studentsRoutes.get('/:id/transport', adminGate, validate({ params: idParam }), a
 studentsRoutes.get('/:id/documents', adminGate, validate({ params: idParam }), asyncHandler(studentsController.getDocuments));
 studentsRoutes.post('/:id/documents', adminGate, validate({ params: idParam, body: documentSchema }), asyncHandler(studentsController.addDocument));
 studentsRoutes.delete('/:id/documents/:docId', adminGate, validate({ params: docIdParam }), asyncHandler(studentsController.deleteDocument));
-studentsRoutes.get('/:id', adminGate, validate({ params: idParam }), asyncHandler(studentsController.profile));
+// Also allow accountant (Fee Ledger's Profile action opens a student's read-only record).
+studentsRoutes.get(
+  '/:id',
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant'),
+  validate({ params: idParam }),
+  asyncHandler(studentsController.profile),
+);
 // Parent login credentials (auto-created at student admission). Same roles
 // that can create/edit a student manage the linked parent account.
 studentsRoutes.get(

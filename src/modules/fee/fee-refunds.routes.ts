@@ -12,5 +12,11 @@ feeRefundsRoutes.use(authenticate, requireRole('school_admin', 'accountant', 'pr
 
 feeRefundsRoutes.get('/refund-requests', asyncHandler(feeRefundsController.list));
 feeRefundsRoutes.post('/refund-requests', validate({ body: createSchema }), asyncHandler(feeRefundsController.create));
-feeRefundsRoutes.patch('/refund-requests/:id/decide', validate({ params: idParam, body: decideSchema }), asyncHandler(feeRefundsController.decide));
+// Approve/reject is Director-level only — accountant raises requests but never decides its own.
+feeRefundsRoutes.patch(
+  '/refund-requests/:id/decide',
+  requireRole('school_admin', 'principal'),
+  validate({ params: idParam, body: decideSchema }),
+  asyncHandler(feeRefundsController.decide),
+);
 feeRefundsRoutes.delete('/refund-requests/:id', validate({ params: idParam }), asyncHandler(feeRefundsController.cancel));

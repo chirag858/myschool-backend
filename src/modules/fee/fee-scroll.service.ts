@@ -50,10 +50,11 @@ function collectionEntries(
     const id = String(r._id);
     const receiptNumber = String(r.receiptNumber ?? '');
     const particulars = `${r.studentName} · ${r.className}-${r.section}`;
+    const time = String(r.createdAt ?? r.paymentDate ?? '');
     if (r.status === 'cancelled') {
       entries.push({
         id: `${id}_x`,
-        time: String(r.paymentDate ?? ''),
+        time,
         type: 'collection',
         reference: receiptNumber,
         particulars,
@@ -73,7 +74,7 @@ function collectionEntries(
     payments.forEach((p, i) => {
       entries.push({
         id: `${id}_${i}`,
-        time: String(r.paymentDate ?? ''),
+        time,
         type: 'collection',
         reference: receiptNumber,
         particulars,

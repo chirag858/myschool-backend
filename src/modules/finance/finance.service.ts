@@ -85,14 +85,25 @@ export const financeService = {
     return dto(doc.toObject());
   },
 
-  // ── Cash book (merged income + expense + vendor payments, chronological — computed server-side) ──
+  // ── Cash book (merged fee receipts + income + expense + vendor payments, chronological) ──
   async getCashBook(schoolId: string) {
-    const [income, expenses, vendorPayments] = await Promise.all([
+    const sid = new Types.ObjectId(schoolId);
+    const [feeReceipts, income, expenses, vendorPayments] = await Promise.all([
+      ReceiptModel.find({ schoolId: sid, status: 'active' }).lean(),
       IncomeModel.find({ schoolId }).lean(),
       ScrollExpenseModel.find({ schoolId }).lean(),
       VendorPaymentModel.find({ schoolId }).lean(),
     ]);
     const rows = [
+      ...feeReceipts.map((r) => ({
+        id: String(r._id),
+        date: r.paymentDate ?? '',
+        type: 'fee' as const,
+        particulars: `Fee — ${r.studentName} (${r.className})`,
+        mode: r.paymentMode ?? 'cash',
+        amountIn: r.amount ?? 0,
+        amountOut: 0,
+      })),
       ...income.map((i) => ({
         id: String(i._id),
         date: i.date,

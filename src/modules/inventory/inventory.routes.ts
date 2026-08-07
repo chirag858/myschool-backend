@@ -13,25 +13,30 @@ import {
   upsertVendorSchema,
 } from './inventory.validation';
 
-/** Mounted at /api/inventory. School admin + principal. (requests/mismatch/dept-stock deferred.) */
+/**
+ * Mounted at /api/inventory. School admin + principal by default (`adminGate`).
+ * `/vendors` (GET) also allows accountant — Accounts > Vendor Payments reuses
+ * the inventory vendor master to populate its "Vendor" picker.
+ */
 export const inventoryRoutes = Router();
-inventoryRoutes.use(authenticate, requireRole('school_admin', 'principal'));
+inventoryRoutes.use(authenticate);
+const adminGate = requireRole('school_admin', 'principal');
 
-inventoryRoutes.get('/dashboard', asyncHandler(inventoryController.kpi));
+inventoryRoutes.get('/dashboard', adminGate, asyncHandler(inventoryController.kpi));
 
-inventoryRoutes.get('/items', asyncHandler(inventoryController.getItems));
-inventoryRoutes.post('/items', validate({ body: upsertItemSchema }), asyncHandler(inventoryController.upsertItem));
-inventoryRoutes.get('/items/:id/movements', validate({ params: idParam }), asyncHandler(inventoryController.getMovements));
-inventoryRoutes.get('/items/:id', validate({ params: idParam }), asyncHandler(inventoryController.getItem));
+inventoryRoutes.get('/items', adminGate, asyncHandler(inventoryController.getItems));
+inventoryRoutes.post('/items', adminGate, validate({ body: upsertItemSchema }), asyncHandler(inventoryController.upsertItem));
+inventoryRoutes.get('/items/:id/movements', adminGate, validate({ params: idParam }), asyncHandler(inventoryController.getMovements));
+inventoryRoutes.get('/items/:id', adminGate, validate({ params: idParam }), asyncHandler(inventoryController.getItem));
 
-inventoryRoutes.get('/purchase', asyncHandler(inventoryController.getPurchases));
-inventoryRoutes.post('/purchase', validate({ body: purchaseSchema }), asyncHandler(inventoryController.addPurchase));
+inventoryRoutes.get('/purchase', adminGate, asyncHandler(inventoryController.getPurchases));
+inventoryRoutes.post('/purchase', adminGate, validate({ body: purchaseSchema }), asyncHandler(inventoryController.addPurchase));
 
-inventoryRoutes.get('/issue', asyncHandler(inventoryController.getIssues));
-inventoryRoutes.post('/issue', validate({ body: issueSchema }), asyncHandler(inventoryController.addIssue));
+inventoryRoutes.get('/issue', adminGate, asyncHandler(inventoryController.getIssues));
+inventoryRoutes.post('/issue', adminGate, validate({ body: issueSchema }), asyncHandler(inventoryController.addIssue));
 
-inventoryRoutes.get('/vendors', asyncHandler(inventoryController.getVendors));
-inventoryRoutes.post('/vendors', validate({ body: upsertVendorSchema }), asyncHandler(inventoryController.upsertVendor));
+inventoryRoutes.get('/vendors', requireRole('school_admin', 'principal', 'accountant'), asyncHandler(inventoryController.getVendors));
+inventoryRoutes.post('/vendors', adminGate, validate({ body: upsertVendorSchema }), asyncHandler(inventoryController.upsertVendor));
 
-inventoryRoutes.get('/assets', asyncHandler(inventoryController.getAssets));
-inventoryRoutes.post('/assets', validate({ body: upsertAssetSchema }), asyncHandler(inventoryController.upsertAsset));
+inventoryRoutes.get('/assets', adminGate, asyncHandler(inventoryController.getAssets));
+inventoryRoutes.post('/assets', adminGate, validate({ body: upsertAssetSchema }), asyncHandler(inventoryController.upsertAsset));
