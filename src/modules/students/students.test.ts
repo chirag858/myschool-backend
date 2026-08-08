@@ -8,7 +8,12 @@ import { StudentModel } from './student.model';
 async function token(username: string): Promise<string> {
   const res = await request(app)
     .post('/api/auth/login')
-    .send({ username, password: 'demo1234', captcha: 'x' });
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -286,7 +291,12 @@ describe('Students API', () => {
 
     const login = await request(app)
       .post('/api/auth/login')
-      .send({ username: '9990003333', password: created.body.parentCredentials.tempPassword, captcha: 'x' });
+      .send({
+        username: '9990003333',
+        password: created.body.parentCredentials.tempPassword,
+        captcha: 'x',
+        schoolCode: 'MSC',
+      });
     expect(login.status).toBe(200);
     expect(login.body.user).toMatchObject({ role: 'parent', mustChangePassword: true });
   });
@@ -425,12 +435,12 @@ describe('Students API', () => {
 
     const oldLogin = await request(app)
       .post('/api/auth/login')
-      .send({ username: '9990005555', password: firstPassword, captcha: 'x' });
+      .send({ username: '9990005555', password: firstPassword, captcha: 'x', schoolCode: 'MSC' });
     expect(oldLogin.status).toBe(401);
 
     const newLogin = await request(app)
       .post('/api/auth/login')
-      .send({ username: '9990005555', password: reset.body.tempPassword, captcha: 'x' });
+      .send({ username: '9990005555', password: reset.body.tempPassword, captcha: 'x', schoolCode: 'MSC' });
     expect(newLogin.status).toBe(200);
   });
 

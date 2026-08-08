@@ -5,7 +5,14 @@ import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
 
 async function token(username: string): Promise<string> {
-  const res = await request(app).post('/api/auth/login').send({ username, password: 'demo1234', captcha: 'x' });
+  const res = await request(app)
+    .post('/api/auth/login')
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });

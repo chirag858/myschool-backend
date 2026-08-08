@@ -681,7 +681,7 @@ export async function seedDemo() {
   // Reception: an appointment + a call log.
   await AppointmentModel.findOneAndUpdate(
     { schoolId: school._id, visitorName: 'Mr. Gupta', date: '2025-05-05' },
-    { schoolId: school._id, visitorName: 'Mr. Gupta', visitorMobile: '9876530001', date: '2025-05-05', time: '10:00', durationMinutes: 30, purpose: 'admission', withWhom: 'Principal', status: 'scheduled', sendReminder: true },
+    { schoolId: school._id, visitorName: 'Mr. Gupta', visitorMobile: '9876530001', date: '2025-05-05', time: '10:00', durationMinutes: 30, purpose: 'admission_enquiry', withWhom: 'Principal', status: 'scheduled', sendReminder: true },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   await CallLogModel.findOneAndUpdate(

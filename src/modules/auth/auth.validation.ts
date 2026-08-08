@@ -2,10 +2,13 @@ import { z } from 'zod';
 
 const mobile = z.string().regex(/^[6-9]\d{9}$/, 'Invalid mobile number');
 
+const schoolCode = z.string().trim().min(1).max(20).optional();
+
 export const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
   captcha: z.string().optional(),
+  schoolCode,
 });
 
 export const detectSchema = z.object({
@@ -26,6 +29,7 @@ export const refreshSchema = z.object({
 export const forgotSendSchema = z.object({
   username: z.string().min(1),
   contact: z.string().min(1),
+  schoolCode,
 });
 
 export const forgotResetSchema = z.object({
@@ -33,6 +37,7 @@ export const forgotResetSchema = z.object({
   contact: z.string().min(1),
   otp: z.string().length(6),
   password: z.string().min(6),
+  schoolCode,
 });
 
 export const updateProfileSchema = z.object({

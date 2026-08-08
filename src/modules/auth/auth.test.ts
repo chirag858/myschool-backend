@@ -4,8 +4,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
 
-async function login(username: string, password = 'demo1234') {
-  return request(app).post('/api/auth/login').send({ username, password, captcha: 'abcde' });
+/** Pass `schoolCode: null` for platform accounts (super_admin/support) that log in code-less. */
+async function login(username: string, password = 'demo1234', schoolCode: string | null = 'MSC') {
+  const body: Record<string, unknown> = { username, password, captcha: 'abcde' };
+  if (schoolCode) body.schoolCode = schoolCode;
+  return request(app).post('/api/auth/login').send(body);
 }
 
 describe('Auth API', () => {
@@ -106,13 +109,13 @@ describe('Auth API', () => {
     const contact = 'coordinator@msc.test';
     const send = await request(app)
       .post('/api/auth/forgot-password/send-otp')
-      .send({ username: 'coordinator', contact });
+      .send({ username: 'coordinator', contact, schoolCode: 'MSC' });
     expect(send.status).toBe(200);
     const otp = send.body.otp as string;
 
     const reset = await request(app)
       .post('/api/auth/forgot-password/reset')
-      .send({ username: 'coordinator', contact, otp, password: 'newpass123' });
+      .send({ username: 'coordinator', contact, otp, password: 'newpass123', schoolCode: 'MSC' });
     expect(reset.status).toBe(200);
     expect(reset.body.success).toBe(true);
 
@@ -121,10 +124,38 @@ describe('Auth API', () => {
   });
 
   it('tenant scoping: super_admin has no schoolId, staff has one', async () => {
-    const sa = await login('superadmin');
+    const sa = await login('superadmin', 'demo1234', null);
+    expect(sa.status).toBe(200);
     expect(sa.body.user.schoolId).toBeUndefined();
     const admin = await login('schooladmin');
     expect(admin.body.user.schoolId).toEqual(expect.any(String));
+  });
+
+  it('school code: platform accounts (super_admin) log in without one', async () => {
+    const res = await login('superadmin', 'demo1234', null);
+    expect(res.status).toBe(200);
+    expect(res.body.user.role).toBe('super_admin');
+  });
+
+  it('school code: wrong code returns 401 "Invalid school code"', async () => {
+    const res = await login('accountant', 'demo1234', 'NOPE');
+    expect(res.status).toBe(401);
+    expect(res.body.message).toMatch(/Invalid school code/);
+  });
+
+  it('school code: tenant account without a code hints at needing one (400)', async () => {
+    const res = await login('accountant', 'demo1234', null);
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/school code/i);
+  });
+
+  it('school code: right code, right school scopes users to that tenant', async () => {
+    const gvn = await login('gvn_admin', 'demo1234', 'GVN');
+    expect(gvn.status).toBe(200);
+    expect(gvn.body.user.role).toBe('school_admin');
+    // Same username under the wrong school code doesn't resolve.
+    const wrongSchool = await login('gvn_admin', 'demo1234', 'MSC');
+    expect(wrongSchool.status).toBe(401);
   });
 
   it('unknown route returns 404 NOT_FOUND', async () => {

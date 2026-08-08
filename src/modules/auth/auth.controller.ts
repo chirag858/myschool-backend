@@ -10,8 +10,12 @@ export const authController = {
   },
 
   async login(req: Request, res: Response) {
-    const { username, password } = req.body as { username: string; password: string };
-    send(res, await authService.staffLogin(username, password, req.ip ?? ''));
+    const { username, password, schoolCode } = req.body as {
+      username: string;
+      password: string;
+      schoolCode?: string;
+    };
+    send(res, await authService.staffLogin(username, password, req.ip ?? '', schoolCode));
   },
 
   async detect(req: Request, res: Response) {
@@ -56,17 +60,22 @@ export const authController = {
   },
 
   async forgotSendOtp(req: Request, res: Response) {
-    const { username, contact } = req.body as { username: string; contact: string };
-    send(res, await authService.forgotSendOtp(username, contact));
+    const { username, contact, schoolCode } = req.body as {
+      username: string;
+      contact: string;
+      schoolCode?: string;
+    };
+    send(res, await authService.forgotSendOtp(username, contact, schoolCode));
   },
 
   async forgotReset(req: Request, res: Response) {
-    const { username, contact, otp, password } = req.body as {
+    const { username, contact, otp, password, schoolCode } = req.body as {
       username: string;
       contact: string;
       otp: string;
       password: string;
+      schoolCode?: string;
     };
-    send(res, await authService.forgotReset(username, contact, otp, password));
+    send(res, await authService.forgotReset(username, contact, otp, password, schoolCode));
   },
 };

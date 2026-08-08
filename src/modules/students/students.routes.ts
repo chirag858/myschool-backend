@@ -34,8 +34,17 @@ export const studentsRoutes = Router();
 studentsRoutes.use(authenticate);
 const adminGate = requireRole(...ACADEMIC_ADMIN_ROLES);
 
-studentsRoutes.get('/generate-number', adminGate, asyncHandler(studentsController.generateAdmissionNumber));
-studentsRoutes.post('/check-number', adminGate, asyncHandler(studentsController.checkAdmissionNumber));
+// Admission number helpers: also allow receptionist (New Admission wizard step 0).
+studentsRoutes.get(
+  '/generate-number',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  asyncHandler(studentsController.generateAdmissionNumber),
+);
+studentsRoutes.post(
+  '/check-number',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  asyncHandler(studentsController.checkAdmissionNumber),
+);
 // Admission helper routes: also allow receptionist (they manage the admissions page).
 studentsRoutes.get(
   '/admission-stats',
@@ -52,13 +61,19 @@ studentsRoutes.post(
   requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
   asyncHandler(studentsController.checkMobile),
 );
+// Also allow receptionist (Student Search, New Admission duplicate lookups).
 studentsRoutes.get(
   '/',
-  requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant'),
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant', 'receptionist'),
   validate({ query: studentsQuerySchema }),
   asyncHandler(studentsController.list),
 );
-studentsRoutes.post('/', adminGate, validate({ body: createStudentSchema }), asyncHandler(studentsController.create));
+studentsRoutes.post(
+  '/',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  validate({ body: createStudentSchema }),
+  asyncHandler(studentsController.create),
+);
 studentsRoutes.get(
   '/class-summary',
   requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant'),
@@ -69,34 +84,56 @@ studentsRoutes.post('/bulk/transfer', adminGate, validate({ body: bulkTransferSc
 studentsRoutes.post('/bulk/promote', adminGate, validate({ body: bulkPromoteSchema }), asyncHandler(studentsController.bulkPromote));
 // Student attendance calendar views (Attendance domain). Also allow teacher
 // (Attendance Reports > Student detail reads a real student's own history).
+// Also allow receptionist — read-only Student Search profile view.
 studentsRoutes.get(
   '/:id/attendance/annual-summary',
-  requireRole(...ACADEMIC_ADMIN_ROLES, 'teacher'),
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'teacher', 'receptionist'),
   validate({ params: idParam }),
   asyncHandler(attendanceController.studentAnnual),
 );
 studentsRoutes.get(
   '/:id/attendance',
-  requireRole(...ACADEMIC_ADMIN_ROLES, 'teacher'),
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'teacher', 'receptionist'),
   validate({ params: idParam, query: studentAttendanceQuery }),
   asyncHandler(attendanceController.studentMonth),
 );
-// Student exam results (Exams domain).
-studentsRoutes.get('/:id/exams', adminGate, validate({ params: idParam }), asyncHandler(examController.studentExams));
-// Student academic/promotion history (embedded).
-studentsRoutes.get('/:id/academic-history', adminGate, validate({ params: idParam }), asyncHandler(studentsController.academicHistory));
-// Student hostel allocation (Hostel domain).
-studentsRoutes.get('/:id/hostel', adminGate, validate({ params: idParam }), asyncHandler(hostelController.studentHostel));
-// Student transport assignment (Transport domain).
-studentsRoutes.get('/:id/transport', adminGate, validate({ params: idParam }), asyncHandler(transportController.studentTransport));
-// Student documents (embedded).
-studentsRoutes.get('/:id/documents', adminGate, validate({ params: idParam }), asyncHandler(studentsController.getDocuments));
-studentsRoutes.post('/:id/documents', adminGate, validate({ params: idParam, body: documentSchema }), asyncHandler(studentsController.addDocument));
-studentsRoutes.delete('/:id/documents/:docId', adminGate, validate({ params: docIdParam }), asyncHandler(studentsController.deleteDocument));
-// Also allow accountant (Fee Ledger's Profile action opens a student's read-only record).
+// Student exam results (Exams domain). Also allow receptionist (read-only profile view).
+studentsRoutes.get(
+  '/:id/exams',
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'receptionist'),
+  validate({ params: idParam }),
+  asyncHandler(examController.studentExams),
+);
+// Student academic/promotion history (embedded). Also allow receptionist (read-only profile view).
+studentsRoutes.get(
+  '/:id/academic-history',
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'receptionist'),
+  validate({ params: idParam }),
+  asyncHandler(studentsController.academicHistory),
+);
+// Student hostel allocation (Hostel domain). Also allow receptionist (read-only profile view).
+studentsRoutes.get(
+  '/:id/hostel',
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'receptionist'),
+  validate({ params: idParam }),
+  asyncHandler(hostelController.studentHostel),
+);
+// Student transport assignment (Transport domain). Also allow receptionist (read-only profile view).
+studentsRoutes.get(
+  '/:id/transport',
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'receptionist'),
+  validate({ params: idParam }),
+  asyncHandler(transportController.studentTransport),
+);
+// Student documents (embedded). Also allow receptionist (Document Collection screen).
+const documentsGate = requireRole('school_admin', 'principal', 'coordinator', 'receptionist');
+studentsRoutes.get('/:id/documents', documentsGate, validate({ params: idParam }), asyncHandler(studentsController.getDocuments));
+studentsRoutes.post('/:id/documents', documentsGate, validate({ params: idParam, body: documentSchema }), asyncHandler(studentsController.addDocument));
+studentsRoutes.delete('/:id/documents/:docId', documentsGate, validate({ params: docIdParam }), asyncHandler(studentsController.deleteDocument));
+// Also allow accountant (Fee Ledger's Profile action) and receptionist (Student Search profile link).
 studentsRoutes.get(
   '/:id',
-  requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant'),
+  requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant', 'receptionist'),
   validate({ params: idParam }),
   asyncHandler(studentsController.profile),
 );

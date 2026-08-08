@@ -56,9 +56,10 @@ feeRoutes.patch('/receipts/:id/cancel', staffOnly, validate({ params: idParam, b
 feeRoutes.get('/ledger', staffOnly, validate({ query: ledgerQuery }), asyncHandler(feeController.ledger));
 
 // Student ledger — used by the student profile fee tab. Broader access:
-// principal/coordinator can view a student's fee history too.
+// principal/coordinator can view a student's fee history too; receptionist
+// gets read-only access from the Student Search profile view.
 feeRoutes.get(
   '/student-ledger/:studentId',
-  requireRole('school_admin', 'principal', 'coordinator', 'accountant'),
+  requireRole('school_admin', 'principal', 'coordinator', 'accountant', 'receptionist'),
   asyncHandler(feeController.studentLedger),
 );

@@ -42,6 +42,13 @@ userSchema.index(
   { email: 1, schoolId: 1 },
   { unique: true, partialFilterExpression: { email: { $exists: true, $type: 'string' } } },
 );
+// Username only needs to be unique within a school — the login flow now
+// disambiguates by school code first, so the same handle (e.g. "accountant")
+// can exist at multiple schools without colliding.
+userSchema.index(
+  { schoolId: 1, username: 1 },
+  { unique: true, partialFilterExpression: { username: { $exists: true, $type: 'string' } } },
+);
 userSchema.index({ mobile: 1, schoolId: 1, role: 1 });
 
 // Never leak the hash; serialize ids to strings (frontend reads `_id`).

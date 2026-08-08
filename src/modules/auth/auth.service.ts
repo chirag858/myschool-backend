@@ -6,7 +6,9 @@ import { env } from '../../config/env';
 import { ApiError } from '../../lib/api-error';
 import { signTokens, verifyRefresh, type TokenPair } from '../../lib/jwt';
 import { OtpModel } from './otp.model';
-import { UserModel } from '../user/user.model';
+import { UserModel, type UserDoc } from '../user/user.model';
+import { SchoolModel } from '../school/school.model';
+import type { HydratedDocument } from 'mongoose';
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 
@@ -33,6 +35,43 @@ function generateOtp(): string {
   return String(randomInt(100000, 1000000));
 }
 
+/**
+ * Resolves username/email to a user, scoped by school code. `School.code` is
+ * the tenant boundary: with a code, only that school's users are candidates;
+ * without one, only platform-level accounts (no schoolId at all — super_admin
+ * / support_engineer) are — a school-scoped account can't be found code-less
+ * since usernames are only unique per-school, not globally.
+ */
+async function resolveTenantUser(
+  username: string,
+  schoolCode?: string,
+): Promise<HydratedDocument<UserDoc> | null> {
+  const key = username.toLowerCase();
+  if (schoolCode) {
+    const school = await SchoolModel.findOne({ code: schoolCode.toUpperCase() });
+    if (!school) throw ApiError.unauthorized('Invalid school code');
+    if (school.status !== 'active' && school.status !== 'trial') {
+      throw ApiError.forbidden("This school's account is not active. Contact support.");
+    }
+    return UserModel.findOne({
+      schoolId: school._id,
+      $or: [{ username: key }, { email: key }],
+    }).select('+passwordHash');
+  }
+  const user = await UserModel.findOne({
+    $or: [{ username: key }, { email: key }],
+    schoolId: { $exists: false },
+  }).select('+passwordHash');
+  if (!user) {
+    const scoped = await UserModel.exists({
+      $or: [{ username: key }, { email: key }],
+      schoolId: { $exists: true },
+    });
+    if (scoped) throw ApiError.badRequest('Enter your school code to sign in');
+  }
+  return user;
+}
+
 export const authService = {
   getConfig() {
     return {
@@ -45,12 +84,14 @@ export const authService = {
     };
   },
 
-  /** Web staff login (username/email + password). Returns { user, tokens }. */
-  async staffLogin(username: string, password: string, ip = ''): Promise<AuthResult> {
-    const key = username.toLowerCase();
-    const user = await UserModel.findOne({
-      $or: [{ username: key }, { email: key }],
-    }).select('+passwordHash');
+  /** Web staff login (school code + username/email + password). Returns { user, tokens }. */
+  async staffLogin(
+    username: string,
+    password: string,
+    ip = '',
+    schoolCode?: string,
+  ): Promise<AuthResult> {
+    const user = await resolveTenantUser(username, schoolCode);
     if (!user || !user.passwordHash) throw ApiError.unauthorized('Invalid credentials');
     if (!(await bcrypt.compare(password, user.passwordHash))) {
       throw ApiError.unauthorized('Invalid credentials');
@@ -152,9 +193,12 @@ export const authService = {
     return { ok: true };
   },
 
-  async forgotSendOtp(username: string, contact: string): Promise<{ expiresAt: number; otp?: string }> {
-    const key = username.toLowerCase();
-    const user = await UserModel.findOne({ $or: [{ username: key }, { email: key }] });
+  async forgotSendOtp(
+    username: string,
+    contact: string,
+    schoolCode?: string,
+  ): Promise<{ expiresAt: number; otp?: string }> {
+    const user = await resolveTenantUser(username, schoolCode);
     if (!user) throw ApiError.notFound('No account found');
     const code = generateOtp();
     const expires = new Date(Date.now() + OTP_TTL_MS);
@@ -170,6 +214,7 @@ export const authService = {
     contact: string,
     otp: string,
     password: string,
+    schoolCode?: string,
   ): Promise<{ success: true }> {
     const record = await OtpModel.findOne({
       channel: contact,
@@ -179,10 +224,7 @@ export const authService = {
     if (!record || record.code !== otp) throw ApiError.unauthorized('Invalid OTP');
     if (record.expiresAt.getTime() < Date.now()) throw ApiError.unauthorized('OTP expired');
 
-    const key = username.toLowerCase();
-    const user = await UserModel.findOne({ $or: [{ username: key }, { email: key }] }).select(
-      '+passwordHash',
-    );
+    const user = await resolveTenantUser(username, schoolCode);
     if (!user) throw ApiError.notFound('No account found');
 
     user.passwordHash = await bcrypt.hash(password, 10);
