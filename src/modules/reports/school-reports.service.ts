@@ -126,7 +126,7 @@ async function attendance(schoolId: string): Promise<ReportData> {
 async function hr(schoolId: string): Promise<ReportData> {
   const staff = await StaffModel.find({ schoolId }).select('name designationLabel netSalary employeeId').lean();
   const leaveDays = await StaffLeaveApplicationModel.aggregate<{ _id: string; days: number }>([
-    { $match: { schoolId, status: 'approved' } },
+    { $match: { schoolId: new Types.ObjectId(schoolId), status: 'approved' } },
     { $group: { _id: '$staffId', days: { $sum: '$days' } } },
   ]);
   const leaveByStaff = new Map(leaveDays.map((l) => [l._id, l.days]));

@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { getActiveSessionName } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { sendBulk, type MessagingChannel } from '../../lib/messaging-provider';
@@ -212,7 +213,7 @@ export const feeRecoveryService = {
     const [plans, counts] = await Promise.all([
       InstallmentPlanModel.find({ schoolId }).sort({ createdAt: -1 }).lean(),
       StudentInstallmentModel.aggregate<{ _id: string; count: number }>([
-        { $match: { schoolId } },
+        { $match: { schoolId: new Types.ObjectId(schoolId) } },
         { $group: { _id: '$planId', count: { $sum: 1 } } },
       ]),
     ]);

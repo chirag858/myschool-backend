@@ -51,7 +51,7 @@ transportRoutes.post('/drivers', adminOnly, validate({ body: createDriverSchema 
 transportRoutes.put('/drivers/:id', adminOnly, validate({ params: idParam, body: updateDriverSchema }), asyncHandler(transportController.updateDriver));
 
 transportRoutes.get('/routes', routesReaders, asyncHandler(transportController.getRoutes));
-transportRoutes.post('/routes', routesReaders, validate({ body: upsertRouteSchema }), asyncHandler(transportController.upsertRoute));
+transportRoutes.post('/routes', adminOnly, validate({ body: upsertRouteSchema }), asyncHandler(transportController.upsertRoute));
 transportRoutes.get('/routes/:id', routesReaders, validate({ params: idParam }), asyncHandler(transportController.getRoute));
 transportRoutes.delete('/routes/:id', adminOnly, validate({ params: idParam }), asyncHandler(transportController.deleteRoute));
 

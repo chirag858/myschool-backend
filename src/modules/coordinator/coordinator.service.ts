@@ -93,7 +93,7 @@ async function marksOverviewRows(schoolId: string, examId: string, classKeys?: S
   const teacherIds = [...new Set(assignments.map((a) => a.teacherUserId))];
   const teachers = await UserModel.find({ _id: { $in: teacherIds } }).lean();
   const nameById = new Map(teachers.map((t) => [String(t._id), t.name as string]));
-  const marks = await ExamMarkModel.find({ examId }).lean();
+  const marks = await ExamMarkModel.find({ examId, schoolId }).lean();
 
   const rows: Array<Record<string, unknown>> = [];
   for (const a of assignments) {
