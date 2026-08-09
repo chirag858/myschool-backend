@@ -61,6 +61,14 @@ const teacherPassSchema = new Schema(
   { timestamps: true },
 );
 
+/** Per-school atomic sequence counters (e.g. visitor pass numbers). */
+const counterSchema = new Schema({
+  schoolId: school,
+  key: { type: String, required: true },
+  value: { type: Number, default: 0 },
+});
+counterSchema.index({ schoolId: 1, key: 1 }, { unique: true });
+
 export type PickupDoc = InferSchemaType<typeof pickupSchema>;
 export type VisitorDoc = InferSchemaType<typeof visitorSchema>;
 export type TeacherPassDoc = InferSchemaType<typeof teacherPassSchema>;
@@ -68,3 +76,4 @@ export type TeacherPassDoc = InferSchemaType<typeof teacherPassSchema>;
 export const PickupModel = model('GatePickup', pickupSchema);
 export const VisitorModel = model('GateVisitor', visitorSchema);
 export const TeacherPassModel = model('TeacherGatePass', teacherPassSchema);
+export const GateCounterModel = model('GateCounter', counterSchema);

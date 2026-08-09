@@ -25,8 +25,8 @@ export const gateManagerController = {
   async releaseStudent(req: Request, res: Response) {
     created(res, await gateManagerService.releaseStudent(schoolId(req), userId(req), req.body));
   },
-  async sendOtp(_req: Request, res: Response) {
-    send(res, gateManagerService.sendOtp());
+  async sendOtp(req: Request, res: Response) {
+    send(res, gateManagerService.sendOtp(String(req.body.mobile)));
   },
   async getVisitors(req: Request, res: Response) {
     send(res, await gateManagerService.getVisitors(schoolId(req)));

@@ -1,7 +1,7 @@
 import { ApiError } from '../../lib/api-error';
 import { StudentModel } from '../students/student.model';
 import { UserModel } from '../user/user.model';
-import { PickupModel, TeacherPassModel, VisitorModel } from './gate-manager.models';
+import { GateCounterModel, PickupModel, TeacherPassModel, VisitorModel } from './gate-manager.models';
 
 type Doc = Record<string, unknown> & { _id: unknown };
 const nowIso = (): string => new Date().toISOString();
@@ -78,7 +78,6 @@ export const gateManagerService = {
       reason: payload.reason,
       proofPhotoUrl: payload.proofPhotoUrl,
       verificationMethod: payload.verificationMethod,
-      inTime: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),
       outTime: now,
       approvedBy: await operatorName(userId),
       status: 'passed_out',
@@ -87,8 +86,11 @@ export const gateManagerService = {
     return dto(doc.toObject());
   },
 
-  // Demo OTP — the UI echoes it back to the operator to read aloud.
-  sendOtp(): { otp: string } {
+  // Demo OTP — no real SMS provider wired up, so the UI echoes it back to
+  // the operator to read aloud. `mobile` is accepted (and validated) for
+  // API-shape parity with a real send, but isn't used by this mock.
+  sendOtp(mobile: string): { otp: string } {
+    void mobile;
     return { otp: String(Math.floor(100000 + Math.random() * 900000)) };
   },
 
@@ -97,7 +99,11 @@ export const gateManagerService = {
   },
 
   async logVisitor(schoolId: string, payload: Record<string, unknown>) {
-    const count = await VisitorModel.countDocuments({ schoolId });
+    const counter = await GateCounterModel.findOneAndUpdate(
+      { schoolId, key: 'visitorPass' },
+      { $inc: { value: 1 } },
+      { new: true, upsert: true },
+    );
     const { id, inTime, passNumber, ...fields } = payload;
     void id;
     void inTime;
@@ -106,7 +112,7 @@ export const gateManagerService = {
       schoolId,
       ...fields,
       inTime: nowIso(),
-      passNumber: `V-${1000 + count + 45}`,
+      passNumber: `V-${1045 + counter.value}`,
     });
     return dto(doc.toObject());
   },
