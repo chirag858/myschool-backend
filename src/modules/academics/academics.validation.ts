@@ -13,7 +13,11 @@ export const classIdParam = z.object({
 
 // Sessions
 export const createSessionSchema = z.object({
-  name: z.string().min(1),
+  // Session names are compared as exact strings everywhere (exam KPIs,
+  // dashboards, filters) — normalize en-dash/em-dash to a plain hyphen so a
+  // pasted "2024–25" doesn't silently become invisible to every "2024-25"
+  // filter in the app.
+  name: z.string().min(1).transform((s) => s.replace(/[‒–—―−]/g, '-')),
   startDate: z.string().min(1),
   endDate: z.string().min(1),
   description: z.string().optional(),
