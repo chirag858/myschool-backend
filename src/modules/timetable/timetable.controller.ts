@@ -137,6 +137,10 @@ export const timetableController = {
     const loads = await timetableService.getTeacherLoads(req.user!.schoolId!);
     res.json(loads);
   },
+  getTeachersList: async (req: Request, res: Response) => {
+    const teachers = await timetableService.getTeachersList(req.user!.schoolId!);
+    res.json(teachers);
+  },
 
   // ── Subject-Teacher Assignment ───────────────────────────────────
   getSubjectAssignments: async (req: Request, res: Response) => {

@@ -438,6 +438,23 @@ export const timetableService = {
     return Object.fromEntries(loads);
   },
 
+  // Teaching-staff picker for the slot-assignment modal — deliberately kept
+  // inside the timetable module (readGate: any authenticated school user,
+  // same as periods/subjects/rooms) rather than reusing `/staff`, which is
+  // restricted to school_admin/principal and 403s for a coordinator even
+  // though coordinators are allowed to edit timetables.
+  getTeachersList: async (schoolId: string) => {
+    const [staff, loads] = await Promise.all([
+      StaffModel.find({ schoolId, department: 'teaching', status: 'active' }, { name: 1 }).sort({ name: 1 }).lean(),
+      teacherWeeklyLoads(schoolId),
+    ]);
+    return staff.map((s) => ({
+      id: String(s._id),
+      name: s.name,
+      weeklyLoad: loads.get(String(s._id)) ?? 0,
+    }));
+  },
+
   // ── Subject-Teacher Assignment ───────────────────────────────────
   getSubjectAssignments: async (schoolId: string, classId: string, section: string) => {
     const [subjects, assignments, loads] = await Promise.all([

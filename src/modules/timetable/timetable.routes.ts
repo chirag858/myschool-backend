@@ -52,6 +52,7 @@ timetableRoutes.post('/copy-day', ...editGate, validate({ body: copyDaySchema })
 
 // Teacher load + subject assignment (static — must stay above the /:classId catch-all)
 timetableRoutes.get('/teacher-loads', ...readGate, asyncHandler(timetableController.getTeacherLoads));
+timetableRoutes.get('/teachers', ...readGate, asyncHandler(timetableController.getTeachersList));
 timetableRoutes.get(
   '/subject-assignments',
   ...readGate,
