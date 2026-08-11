@@ -1,9 +1,34 @@
 import { HolidayModel } from '../academics/academics.models';
 import { StudentModel } from '../students/student.model';
+import { ApiError } from '../../lib/api-error';
 import { AttendanceModel, OverrideModel } from './attendance.models';
 
 type Doc = Record<string, unknown> & { _id: unknown };
 const round = (n: number): number => Math.round(n);
+
+// Regular marking (not the admin correction/override flow) is only allowed
+// for today, and only inside the school's marking window — keeps the
+// attendance record honest instead of being backfilled after the fact.
+const MARK_WINDOW_START_MIN = 9 * 60; // 9:00 AM
+const MARK_WINDOW_END_MIN = 10 * 60 + 45; // 10:45 AM
+
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function assertWithinMarkingWindow(date: string): void {
+  const now = new Date();
+  if (date !== localDateStr(now)) {
+    throw ApiError.forbidden('Attendance can only be marked for today.');
+  }
+  const minutesNow = now.getHours() * 60 + now.getMinutes();
+  if (minutesNow < MARK_WINDOW_START_MIN || minutesNow > MARK_WINDOW_END_MIN) {
+    throw ApiError.forbidden('Attendance can only be marked between 9:00 AM and 10:45 AM.');
+  }
+}
 
 /** attendance classKey is `${className}-${section}` (split on the last hyphen). */
 function parseClassKey(classKey: string): { className: string; section: string } {
@@ -45,7 +70,7 @@ export const attendanceService = {
       classLabel: className,
       section,
       lockStatus: records.length > 0 ? 'locked' : 'unlocked',
-      cutoffTime: '10:00 AM',
+      cutoffTime: '10:45 AM',
       students: students.map((s) => {
         const r = recMap.get(String(s._id));
         return {
@@ -63,6 +88,7 @@ export const attendanceService = {
   },
 
   async save(schoolId: string, payload: SavePayload, markedBy: string) {
+    assertWithinMarkingWindow(payload.date);
     const { className, section } = parseClassKey(payload.classKey);
     await Promise.all(
       payload.attendance.map((a) =>

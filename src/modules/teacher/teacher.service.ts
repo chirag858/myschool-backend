@@ -751,6 +751,34 @@ export const teacherService = {
     if (!doc) throw ApiError.notFound('Leave not found');
     return dto(doc.toObject());
   },
+
+  // Principal/school_admin review queue — a teacher's own /leave/* endpoints
+  // above only ever touch their own applications, never another teacher's.
+  async getAllPendingLeaves(schoolId: string) {
+    const rows = await TeacherLeaveModel.find({ schoolId, status: 'pending' }).sort({ appliedOn: -1 }).lean();
+    const userIds = [...new Set(rows.map((r) => String(r.teacherUserId)))];
+    const users = await UserModel.find({ _id: { $in: userIds } }, { name: 1 }).lean();
+    const nameById = new Map(users.map((u) => [String(u._id), u.name as string]));
+    return rows.map((r) => ({
+      ...dto(r),
+      teacherName: nameById.get(String(r.teacherUserId)) ?? 'Teacher',
+    }));
+  },
+  async reviewLeave(schoolId: string, id: string, action: 'approve' | 'reject', reviewerUserId: string, remarks?: string) {
+    const status = action === 'approve' ? 'approved' : 'rejected';
+    const decidedByName = await teacherName(reviewerUserId);
+    // Atomic check-and-update on status: 'pending' — a leave already decided can't be re-decided.
+    const doc = await TeacherLeaveModel.findOneAndUpdate(
+      { _id: id, schoolId, status: 'pending' },
+      { $set: { status, decidedBy: decidedByName, remarks, rejectionReason: action === 'reject' ? remarks : undefined } },
+      { new: true },
+    );
+    if (!doc) {
+      const exists = await TeacherLeaveModel.exists({ _id: id, schoolId });
+      throw exists ? ApiError.conflict('This leave has already been decided') : ApiError.notFound('Leave not found');
+    }
+    return dto(doc.toObject());
+  },
 };
 
 function splitKey(classKey: string): [string, string] {

@@ -387,4 +387,41 @@ describe('Teacher Portal API', () => {
     const cancel = await request(app).delete(`/api/teacher/leave/${apply.body.id}/cancel`).set(auth(teacher));
     expect(cancel.body.status).toBe('cancelled');
   });
+
+  it('leave: school_admin/principal can list and review pending applications; a teacher cannot', async () => {
+    const admin = await token('schooladmin');
+    const principal = await token('principal');
+
+    const apply = await request(app)
+      .post('/api/teacher/leave/apply')
+      .set(auth(teacher))
+      .send({ type: 'sick', fromDate: '2025-08-01', toDate: '2025-08-02', days: 2, reason: 'Fever' });
+    expect(apply.status).toBe(201);
+
+    // A teacher may not list or review the review queue — only admin/principal.
+    expect((await request(app).get('/api/teacher/leave/all-pending').set(auth(teacher))).status).toBe(403);
+    expect(
+      (await request(app).patch(`/api/teacher/leave/${apply.body.id}/review`).set(auth(teacher)).send({ action: 'approve' })).status,
+    ).toBe(403);
+
+    const pending = await request(app).get('/api/teacher/leave/all-pending').set(auth(admin));
+    expect(pending.status).toBe(200);
+    expect(pending.body.some((r: { id: string; teacherName: string }) => r.id === apply.body.id && r.teacherName)).toBe(true);
+
+    const approve = await request(app)
+      .patch(`/api/teacher/leave/${apply.body.id}/review`)
+      .set(auth(principal))
+      .send({ action: 'approve', remarks: 'Get well soon' });
+    expect(approve.status).toBe(200);
+    expect(approve.body).toMatchObject({ status: 'approved', decidedBy: 'Principal', remarks: 'Get well soon' });
+
+    // Already decided — re-deciding is rejected, not silently re-applied.
+    expect(
+      (await request(app).patch(`/api/teacher/leave/${apply.body.id}/review`).set(auth(admin)).send({ action: 'reject' })).status,
+    ).toBe(409);
+
+    // Decided leaves drop off the pending queue.
+    const pendingAfter = await request(app).get('/api/teacher/leave/all-pending').set(auth(admin));
+    expect(pendingAfter.body.some((r: { id: string }) => r.id === apply.body.id)).toBe(false);
+  });
 });

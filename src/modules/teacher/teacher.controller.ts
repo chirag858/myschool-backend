@@ -152,4 +152,13 @@ export const teacherController = {
   async cancelLeave(req: Request, res: Response) {
     send(res, await teacherService.cancelLeave(schoolId(req), userId(req), p(req, 'id')));
   },
+  async getAllPendingLeaves(req: Request, res: Response) {
+    if (req.user?.role === 'teacher') throw ApiError.forbidden('Only school_admin/principal can review leaves');
+    send(res, await teacherService.getAllPendingLeaves(schoolId(req)));
+  },
+  async reviewLeave(req: Request, res: Response) {
+    if (req.user?.role === 'teacher') throw ApiError.forbidden('Only school_admin/principal can review leaves');
+    const { action, remarks } = req.body as { action: 'approve' | 'reject'; remarks?: string };
+    send(res, await teacherService.reviewLeave(schoolId(req), p(req, 'id'), action, userId(req), remarks));
+  },
 };

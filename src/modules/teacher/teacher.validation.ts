@@ -94,3 +94,8 @@ export const applyLeaveSchema = z
     days: z.number().optional(),
   })
   .passthrough();
+
+export const reviewTeacherLeaveSchema = z.object({
+  action: z.enum(['approve', 'reject']),
+  remarks: z.string().optional(),
+});

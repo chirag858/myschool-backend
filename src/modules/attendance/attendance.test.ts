@@ -1,8 +1,21 @@
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
+
+// POST /attendance/save only allows marking "today" inside a 9:00–10:45 AM
+// window — fake only `Date` (not timers) so supertest's real network/timeout
+// machinery keeps working while the marking-window check sees a fixed clock.
+async function withFakeNow<T>(iso: string, fn: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(iso));
+  try {
+    return await fn();
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 async function token(username: string): Promise<string> {
   const res = await request(app)
@@ -50,7 +63,9 @@ describe('Attendance API', () => {
       classKey: 'Nursery-A',
       attendance: ms.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
     };
-    const save = await request(app).post('/api/attendance/save').set(auth(admin)).send(payload);
+    const save = await withFakeNow('2025-04-11T09:30:00', () =>
+      request(app).post('/api/attendance/save').set(auth(admin)).send(payload),
+    );
     expect(save.body.saved).toBe(ms.body.students.length);
 
     const ms2 = await request(app)
@@ -58,6 +73,35 @@ describe('Attendance API', () => {
       .set(auth(admin));
     expect(ms2.body.lockStatus).toBe('locked');
     expect(ms2.body.students[0].status).toBe('present');
+  });
+
+  it('POST /attendance/save rejects a non-today date and rejects outside the 9:00–10:45 AM window', async () => {
+    const ms = await request(app)
+      .get('/api/attendance/mark?date=2025-04-12&class=Nursery&section=A')
+      .set(auth(admin));
+    const payload = {
+      date: '2025-04-12',
+      classKey: 'Nursery-A',
+      attendance: ms.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+    };
+
+    // Server clock inside the window, but the payload's date isn't "today".
+    const wrongDay = await withFakeNow('2025-04-13T09:30:00', () =>
+      request(app).post('/api/attendance/save').set(auth(admin)).send(payload),
+    );
+    expect(wrongDay.status).toBe(403);
+
+    // Payload's date is "today", but the server clock is outside the window.
+    const outsideWindow = await withFakeNow('2025-04-12T11:00:00', () =>
+      request(app).post('/api/attendance/save').set(auth(admin)).send(payload),
+    );
+    expect(outsideWindow.status).toBe(403);
+
+    // Inside both the day and the window — succeeds.
+    const ok = await withFakeNow('2025-04-12T09:00:00', () =>
+      request(app).post('/api/attendance/save').set(auth(admin)).send(payload),
+    );
+    expect(ok.status).toBe(200);
   });
 
   it('POST /attendance/save-and-alert counts absentee alerts', async () => {
@@ -69,7 +113,9 @@ describe('Attendance API', () => {
       classKey: 'Nursery-A',
       attendance: ms.body.students.map((s: { id: string }, i: number) => ({ studentId: s.id, status: i === 0 ? 'absent' : 'present' })),
     };
-    const res = await request(app).post('/api/attendance/save-and-alert').set(auth(admin)).send(payload);
+    const res = await withFakeNow('2025-04-14T09:30:00', () =>
+      request(app).post('/api/attendance/save-and-alert').set(auth(admin)).send(payload),
+    );
     expect(res.body).toMatchObject({ saved: ms.body.students.length, alertsSent: 1 });
   });
 
@@ -199,7 +245,13 @@ describe('Attendance API', () => {
       classKey: 'Class 1-A',
       attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
     };
-    expect((await request(app).post('/api/attendance/save').set(auth(teacher)).send(savePayload)).status).toBe(200);
+    expect(
+      (
+        await withFakeNow('2025-04-20T09:30:00', () =>
+          request(app).post('/api/attendance/save').set(auth(teacher)).send(savePayload),
+        )
+      ).status,
+    ).toBe(200);
 
     // Any other class — forbidden, even though the teacher also teaches it (Class 2-A).
     expect(
@@ -228,14 +280,16 @@ describe('Attendance API', () => {
     const mine = await request(app)
       .get('/api/attendance/mark?date=2025-04-21&class=Class 1&section=A')
       .set(auth(teacher));
-    await request(app)
-      .post('/api/attendance/save')
-      .set(auth(teacher))
-      .send({
-        date: '2025-04-21',
-        classKey: 'Class 1-A',
-        attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
-      });
+    await withFakeNow('2025-04-21T09:30:00', () =>
+      request(app)
+        .post('/api/attendance/save')
+        .set(auth(teacher))
+        .send({
+          date: '2025-04-21',
+          classKey: 'Class 1-A',
+          attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+        }),
+    );
 
     const dashboard = await request(app).get('/api/attendance/dashboard?date=2025-04-21').set(auth(teacher));
     expect(dashboard.body.classSummaries).toHaveLength(1);
@@ -277,14 +331,16 @@ describe('Attendance API', () => {
     expect(mine.status).toBe(200);
     expect(
       (
-        await request(app)
-          .post('/api/attendance/save')
-          .set(auth(coord))
-          .send({
-            date: '2025-04-22',
-            classKey: 'Class 1-A',
-            attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
-          })
+        await withFakeNow('2025-04-22T09:30:00', () =>
+          request(app)
+            .post('/api/attendance/save')
+            .set(auth(coord))
+            .send({
+              date: '2025-04-22',
+              classKey: 'Class 1-A',
+              attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+            }),
+        )
       ).status,
     ).toBe(200);
 

@@ -17,6 +17,7 @@ import {
   homeworkSubmissionSchema,
   idParam,
   receiveSubmissionSchema,
+  reviewTeacherLeaveSchema,
 } from './teacher.validation';
 
 /** Mounted at /api/teacher. The logged-in teacher's own portal. */
@@ -71,8 +72,14 @@ teacherRoutes.delete('/circulars/:id', validate({ params: idParam }), asyncHandl
 
 teacherRoutes.get('/leave/balance', asyncHandler(teacherController.leaveBalance));
 teacherRoutes.get('/leave/history', asyncHandler(teacherController.leaveHistory));
+teacherRoutes.get('/leave/all-pending', asyncHandler(teacherController.getAllPendingLeaves));
 teacherRoutes.post('/leave/apply', validate({ body: applyLeaveSchema }), asyncHandler(teacherController.applyLeave));
 teacherRoutes.delete('/leave/:id/cancel', validate({ params: idParam }), asyncHandler(teacherController.cancelLeave));
+teacherRoutes.patch(
+  '/leave/:id/review',
+  validate({ params: idParam, body: reviewTeacherLeaveSchema }),
+  asyncHandler(teacherController.reviewLeave),
+);
 
 /** Mounted at /api/homework. Cross-role homework overview + role-gated edit. */
 export const homeworkRoutes = Router();
