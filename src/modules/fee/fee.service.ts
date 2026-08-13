@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 
-import { SessionModel } from '../academics/academics.models';
+import { getActiveSessionName } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { StudentModel } from '../students/student.model';
 import {
@@ -12,10 +12,11 @@ import {
 
 type Doc = Record<string, unknown> & { _id: unknown };
 
-async function activeSession(schoolId: string): Promise<string> {
-  const s = await SessionModel.findOne({ schoolId, status: 'active' }).lean();
-  return s?.name ?? '2025-26';
-}
+/** UI sends the 3-letter abbreviation; receipts store the full month name in `monthsCovered`. */
+export const MONTH_ABBR_TO_FULL: Record<string, string> = {
+  Apr: 'April', May: 'May', Jun: 'June', Jul: 'July', Aug: 'August', Sep: 'September',
+  Oct: 'October', Nov: 'November', Dec: 'December', Jan: 'January', Feb: 'February', Mar: 'March',
+};
 
 async function nextReceiptNumber(schoolId: string): Promise<string> {
   const count = await ReceiptModel.countDocuments({ schoolId });
@@ -57,7 +58,20 @@ function toReceipt(d: Doc) {
   };
 }
 
-async function annualByClass(schoolId: string, session: string): Promise<Record<string, number>> {
+/** Recompute and persist Student.feeStatus from actual receipts — keeps the denormalized field in sync after any collect/cancel/duplicate. */
+export async function syncStudentFeeStatus(schoolId: string, studentId: string): Promise<void> {
+  const student = await StudentModel.findOne({ _id: studentId, schoolId }, { className: 1 }).lean();
+  if (!student) return;
+  const session = await getActiveSessionName(schoolId);
+  const annual = await annualByClass(schoolId, session);
+  const totalFee = annual[student.className ?? ''] ?? 0;
+  const receipts = await ReceiptModel.find({ schoolId, studentId, status: 'active' }, { amount: 1 }).lean();
+  const paid = receipts.reduce((s, r) => s + Number(r.amount ?? 0), 0);
+  const feeStatus = paid <= 0 ? 'pending' : paid > totalFee ? 'advance' : paid >= totalFee ? 'paid' : 'partial';
+  await StudentModel.updateOne({ _id: studentId, schoolId }, { $set: { feeStatus } });
+}
+
+export async function annualByClass(schoolId: string, session: string): Promise<Record<string, number>> {
   const structure = await FeeStructureModel.find({ schoolId, session }).lean();
   const out: Record<string, number> = {};
   for (const row of structure) {
@@ -95,7 +109,7 @@ export const feeService = {
 
   // ── Structure ──
   async getStructure(schoolId: string) {
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     const rows = await FeeStructureModel.find({ schoolId, session }).lean();
     const classes = (await StudentModel.distinct('className', { schoolId })) as string[];
     return {
@@ -105,7 +119,7 @@ export const feeService = {
     };
   },
   async saveStructure(schoolId: string, rows: Array<{ feeHeadId: string; frequency: string; amounts: Record<string, number> }>) {
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     await Promise.all(
       rows.map((r) =>
         FeeStructureModel.updateOne(
@@ -126,19 +140,30 @@ export const feeService = {
   async studentContext(schoolId: string, studentId: string) {
     const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
     if (!student) throw ApiError.notFound('Student not found');
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     const structure = await FeeStructureModel.find({ schoolId, session }).lean();
     const heads = await FeeHeadModel.find({ schoolId }).lean();
     const headMap = new Map(heads.map((h) => [String(h._id), h.name]));
     const cls = student.className ?? '';
 
+    // Spread each head's annual contribution evenly across the 12 months —
+    // matches `annualByClass` (session-total math used by admin dashboard,
+    // fee ledger, and the parent portal). Previously this used the raw
+    // configured `amounts[cls]` as-is regardless of frequency, so a
+    // half-yearly head configured at 2000 was billed as 2000/month instead
+    // of its true 2000×2/12 ≈ 333/month share — inflating every month's
+    // due amount and letting one payment mark the whole month "paid".
     const feeHeads = structure
       .filter((r) => (r.amounts as Record<string, number>)?.[cls] != null)
-      .map((r) => ({
-        id: r.feeHeadId,
-        name: headMap.get(r.feeHeadId) ?? r.feeHeadId,
-        monthlyAmount: Number((r.amounts as Record<string, number>)[cls]) || 0,
-      }));
+      .map((r) => {
+        const configured = Number((r.amounts as Record<string, number>)[cls]) || 0;
+        const mult = FREQUENCY_MULTIPLIER[r.frequency as string] ?? 1;
+        return {
+          id: r.feeHeadId,
+          name: headMap.get(r.feeHeadId) ?? r.feeHeadId,
+          monthlyAmount: Math.round((configured * mult) / 12),
+        };
+      });
 
     const annual = await annualByClass(schoolId, session);
     const totalFee = annual[cls] ?? 0;
@@ -147,13 +172,14 @@ export const feeService = {
     const paid = receipts.reduce((s, r) => s + (r.amount ?? 0), 0);
 
     const MONTHS = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
+    const startYear = parseInt(session.split('-')[0]!, 10) || new Date().getFullYear();
     const monthlyTotal = feeHeads.reduce((s, h) => s + h.monthlyAmount, 0);
     const months = MONTHS.map((m, i) => {
       const paidForMonth = receipts
         .filter((r) => (r.monthsCovered ?? []).includes(m))
         .reduce((s, r) => s + (r.amount ?? 0), 0);
       const status = paidForMonth <= 0 ? 'pending' : paidForMonth >= monthlyTotal ? 'paid' : 'partial';
-      return { month: m, year: i < 9 ? 2025 : 2026, amount: monthlyTotal, paid: paidForMonth, status };
+      return { month: m, year: i < 9 ? startYear : startYear + 1, amount: monthlyTotal, paid: paidForMonth, status };
     });
 
     const siblings = student.parents?.fatherMobile
@@ -227,6 +253,7 @@ export const feeService = {
       status: 'active',
       remarks: p.remarks,
     });
+    await syncStudentFeeStatus(schoolId, p.studentId);
     return toReceipt(doc.toObject());
   },
 
@@ -271,6 +298,7 @@ export const feeService = {
       receiptNumber: `${original.receiptNumber}-DUP`,
       status: 'active',
     });
+    if (dup.schoolId && dup.studentId) await syncStudentFeeStatus(String(dup.schoolId), String(dup.studentId));
     return toReceipt(dup.toObject());
   },
 
@@ -281,6 +309,75 @@ export const feeService = {
       { new: true },
     );
     if (!doc) throw ApiError.notFound('Receipt not found');
+    if (doc.schoolId && doc.studentId) await syncStudentFeeStatus(String(doc.schoolId), String(doc.studentId));
+    return toReceipt(doc.toObject());
+  },
+
+  async editReceiptRemarks(schoolId: string | undefined, id: string, remarks: string) {
+    const doc = await ReceiptModel.findOneAndUpdate(
+      schoolId ? { _id: id, schoolId } : { _id: id },
+      { remarks },
+      { new: true },
+    );
+    if (!doc) throw ApiError.notFound('Receipt not found');
+    return toReceipt(doc.toObject());
+  },
+
+  /** Reversal = a new offsetting negative-amount receipt, original stays active untouched — a credit note, not a mutation of history. */
+  async reverseReceipt(schoolId: string | undefined, id: string, reason: string, by: string) {
+    const original = await ReceiptModel.findOne(schoolId ? { _id: id, schoolId } : { _id: id });
+    if (!original) throw ApiError.notFound('Receipt not found');
+    if (original.status !== 'active') throw ApiError.badRequest('Only an active receipt can be reversed');
+    const reversalNumber = `${original.receiptNumber}-REV`;
+    // The (schoolId, receiptNumber) index is unique, so a second reversal
+    // would surface as a raw 11000 CONFLICT. Detect it here and repair the
+    // original's status so the receipt stops looking reversible.
+    const alreadyReversed = await ReceiptModel.findOne(
+      original.schoolId ? { schoolId: original.schoolId, receiptNumber: reversalNumber } : { receiptNumber: reversalNumber },
+    ).lean();
+    if (alreadyReversed) {
+      original.status = 'reversed';
+      await original.save();
+      throw ApiError.badRequest('This receipt has already been reversed');
+    }
+    const reversal = await ReceiptModel.create({
+      ...original.toObject(),
+      _id: undefined,
+      receiptNumber: reversalNumber,
+      amount: -Number(original.amount ?? 0),
+      status: 'active',
+      generatedBy: by,
+      remarks: reason,
+      payments: [],
+      waiveOff: undefined,
+    });
+    // Mark the original reversed so it can't be reversed twice and drops out
+    // of the active-only duplicate finder.
+    original.status = 'reversed';
+    await original.save();
+    if (reversal.schoolId && reversal.studentId) await syncStudentFeeStatus(String(reversal.schoolId), String(reversal.studentId));
+    return toReceipt(reversal.toObject());
+  },
+
+  async transferReceipt(schoolId: string | undefined, id: string, targetStudentId: string) {
+    const doc = await ReceiptModel.findOne(schoolId ? { _id: id, schoolId } : { _id: id });
+    if (!doc) throw ApiError.notFound('Receipt not found');
+    const target = await StudentModel.findOne(
+      schoolId ? { _id: targetStudentId, schoolId } : { _id: targetStudentId },
+    ).lean();
+    if (!target) throw ApiError.notFound('Target student not found');
+    const previousStudentId = doc.studentId ? String(doc.studentId) : '';
+    doc.set({
+      studentId: targetStudentId,
+      studentName: target.name,
+      className: target.className ?? '',
+      section: target.section ?? '',
+    });
+    await doc.save();
+    if (doc.schoolId) {
+      if (previousStudentId) await syncStudentFeeStatus(String(doc.schoolId), previousStudentId);
+      await syncStudentFeeStatus(String(doc.schoolId), targetStudentId);
+    }
     return toReceipt(doc.toObject());
   },
 
@@ -297,29 +394,174 @@ export const feeService = {
     };
   },
 
+  /** School-wide outstanding balance: sum of (class annual fee - paid) across students with dues. */
+  async getTotalOutstanding(schoolId: string): Promise<{ amount: number; studentsCount: number }> {
+    const session = await getActiveSessionName(schoolId);
+    const annual = await annualByClass(schoolId, session);
+    const [students, receipts] = await Promise.all([
+      StudentModel.find({ schoolId, profileStatus: 'active' }, { className: 1 }).lean(),
+      ReceiptModel.find({ schoolId, status: 'active' }, { studentId: 1, amount: 1 }).lean(),
+    ]);
+    const paidByStudent = new Map<string, number>();
+    for (const r of receipts) {
+      const key = String(r.studentId);
+      paidByStudent.set(key, (paidByStudent.get(key) ?? 0) + Number(r.amount ?? 0));
+    }
+    let amount = 0;
+    let studentsCount = 0;
+    for (const s of students) {
+      const totalFee = annual[s.className ?? ''] ?? 0;
+      const due = Math.max(0, totalFee - (paidByStudent.get(String(s._id)) ?? 0));
+      if (due > 0) {
+        amount += due;
+        studentsCount += 1;
+      }
+    }
+    return { amount, studentsCount };
+  },
+
+  /** Accountant dashboard — today's collection, pending/defaulter/online counts, outstanding by class. */
+  async accountantDashboard(schoolId: string) {
+    const today = new Date().toISOString().slice(0, 10);
+    const session = await getActiveSessionName(schoolId);
+    const annual = await annualByClass(schoolId, session);
+    const [students, receipts, todayReceipts] = await Promise.all([
+      StudentModel.find({ schoolId, profileStatus: 'active' }, { className: 1, feeStatus: 1 }).lean(),
+      ReceiptModel.find({ schoolId, status: 'active' }, { studentId: 1, amount: 1 }).lean(),
+      ReceiptModel.find(
+        { schoolId, status: 'active', paymentDate: { $regex: `^${today}` } },
+        { amount: 1, paymentMode: 1 },
+      ).lean(),
+    ]);
+    const paidByStudent = new Map<string, number>();
+    for (const r of receipts) {
+      const key = String(r.studentId);
+      paidByStudent.set(key, (paidByStudent.get(key) ?? 0) + Number(r.amount ?? 0));
+    }
+    const byClass = new Map<string, { dues: number; amount: number }>();
+    let pendingCount = 0;
+    for (const s of students) {
+      if (s.feeStatus === 'pending' || s.feeStatus === 'partial') pendingCount += 1;
+      const className = s.className ?? 'Unassigned';
+      const totalFee = annual[className] ?? 0;
+      const due = Math.max(0, totalFee - (paidByStudent.get(String(s._id)) ?? 0));
+      if (due > 0) {
+        const cur = byClass.get(className) ?? { dues: 0, amount: 0 };
+        cur.dues += 1;
+        cur.amount += due;
+        byClass.set(className, cur);
+      }
+    }
+    const outstandingByClass = [...byClass.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([className, v]) => ({ className, dues: v.dues, amount: v.amount }));
+
+    return {
+      todayCollection: todayReceipts.reduce((s, r) => s + (r.amount ?? 0), 0),
+      pendingCount,
+      defaultersCount: outstandingByClass.reduce((s, c) => s + c.dues, 0),
+      onlineCount: todayReceipts.filter((r) => r.paymentMode === 'online').length,
+      outstandingByClass,
+    };
+  },
+
+  // ── Student Ledger (single student, for student profile tab) ──
+  async studentLedger(schoolId: string, studentId: string) {
+    const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
+    if (!student) throw ApiError.notFound('Student not found');
+
+    const session = await getActiveSessionName(schoolId);
+    const annual = await annualByClass(schoolId, session);
+    const totalFee = annual[student.className ?? ''] ?? 0;
+
+    // All active receipts for this student
+    const receipts = await ReceiptModel.find({
+      schoolId,
+      studentId: student._id,
+      status: 'active',
+    })
+      .sort({ paymentDate: 1 })
+      .lean();
+
+    const paid = receipts.reduce((s, r) => s + Number(r.amount ?? 0), 0);
+    const balance = Math.max(0, totalFee - paid);
+
+    // Build per-receipt ledger rows
+    const rows = receipts.map((r) => {
+      const heads = (r.feeHeads as Array<{ name: string; amount: number }> | undefined) ?? [];
+      const months = (r.monthsCovered as string[] | undefined) ?? [];
+      return {
+        month: months.join(', ') || (r.paymentDate as string ?? '').slice(0, 7),
+        feeHead: heads.map((h) => h.name).join(', ') || 'Fee',
+        amount: Number(r.amount ?? 0),
+        paid: Number(r.amount ?? 0),
+        balance: 0,
+        status: 'paid' as const,
+        receiptNumber: r.receiptNumber as string | undefined,
+      };
+    });
+
+    return {
+      totalFees: totalFee,
+      paid,
+      balance,
+      concessionApplied: 0,
+      rows,
+    };
+  },
+
   // ── Ledger ──
   async ledger(schoolId: string, query: Record<string, string>) {
-    const session = await activeSession(schoolId);
+    const session = await getActiveSessionName(schoolId);
     const annual = await annualByClass(schoolId, session);
     const filter: Record<string, unknown> = { schoolId };
     if (query.className && query.className !== 'all') filter.className = query.className;
     if (query.section && query.section !== 'all') filter.section = query.section;
     const students = await StudentModel.find(filter).lean();
 
-    const paidAgg = await ReceiptModel.aggregate<{ _id: unknown; paid: number; last: string }>([
-      { $match: { schoolId: new Types.ObjectId(schoolId), status: 'active', studentId: { $in: students.map((s) => s._id) } } },
-      { $group: { _id: '$studentId', paid: { $sum: '$amount' }, last: { $max: '$paymentDate' } } },
-    ]);
-    const paidMap = new Map(paidAgg.map((p) => [String(p._id), p]));
+    const receipts = await ReceiptModel.find({
+      schoolId: new Types.ObjectId(schoolId),
+      status: 'active',
+      studentId: { $in: students.map((s) => s._id) },
+    }).lean();
+    const byStudent = new Map<string, typeof receipts>();
+    for (const r of receipts) {
+      const sid = String(r.studentId ?? '');
+      const list = byStudent.get(sid) ?? [];
+      list.push(r);
+      byStudent.set(sid, list);
+    }
+
+    const monthFull = MONTH_ABBR_TO_FULL[query.month ?? ''];
+    const latestOf = (list: typeof receipts): string | undefined =>
+      list.reduce<string | undefined>((latest, r) => {
+        const d = (r.paymentDate as string | undefined) ?? '';
+        return !latest || d > latest ? d : latest;
+      }, undefined);
 
     let rows = students.map((s) => {
-      const totalFee = annual[s.className ?? ''] ?? 0;
-      const p = paidMap.get(String(s._id));
-      const paid = p?.paid ?? 0;
+      const sid = String(s._id);
+      const studentReceipts = byStudent.get(sid) ?? [];
+      const annualFee = annual[s.className ?? ''] ?? 0;
+
+      let totalFee: number;
+      let paid: number;
+      let lastPaymentDate: string | undefined;
+      if (monthFull) {
+        totalFee = Math.round(annualFee / 12);
+        const monthReceipts = studentReceipts.filter((r) => ((r.monthsCovered as string[] | undefined) ?? []).includes(monthFull));
+        paid = monthReceipts.reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
+        lastPaymentDate = latestOf(monthReceipts);
+      } else {
+        totalFee = annualFee;
+        paid = studentReceipts.reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
+        lastPaymentDate = latestOf(studentReceipts);
+      }
+
       const balance = Math.max(0, totalFee - paid);
       const status = paid <= 0 ? 'pending' : balance <= 0 ? 'paid' : 'partial';
       return {
-        studentId: String(s._id),
+        studentId: sid,
         admissionNumber: s.admissionNumber,
         studentName: s.name,
         className: s.className ?? '',
@@ -333,7 +575,7 @@ export const feeService = {
         fine: 0,
         waived: 0,
         status,
-        lastPaymentDate: p?.last,
+        lastPaymentDate,
       };
     });
     if (query.status && query.status !== 'all') rows = rows.filter((r) => r.status === query.status);

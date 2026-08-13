@@ -1,13 +1,31 @@
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
 
+// POST /attendance/save only allows marking "today" inside a 9:00–10:45 AM
+// window — fake only `Date` (not timers) so supertest's real network/timeout
+// machinery keeps working while the marking-window check sees a fixed clock.
+async function withFakeNow<T>(iso: string, fn: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(iso));
+  try {
+    return await fn();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 async function token(username: string): Promise<string> {
   const res = await request(app)
     .post('/api/auth/login')
-    .send({ username, password: 'demo1234', captcha: 'x' });
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -45,7 +63,9 @@ describe('Attendance API', () => {
       classKey: 'Nursery-A',
       attendance: ms.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
     };
-    const save = await request(app).post('/api/attendance/save').set(auth(admin)).send(payload);
+    const save = await withFakeNow('2025-04-11T09:30:00', () =>
+      request(app).post('/api/attendance/save').set(auth(admin)).send(payload),
+    );
     expect(save.body.saved).toBe(ms.body.students.length);
 
     const ms2 = await request(app)
@@ -53,6 +73,35 @@ describe('Attendance API', () => {
       .set(auth(admin));
     expect(ms2.body.lockStatus).toBe('locked');
     expect(ms2.body.students[0].status).toBe('present');
+  });
+
+  it('POST /attendance/save rejects a non-today date and rejects outside the 9:00–10:45 AM window', async () => {
+    const ms = await request(app)
+      .get('/api/attendance/mark?date=2025-04-12&class=Nursery&section=A')
+      .set(auth(admin));
+    const payload = {
+      date: '2025-04-12',
+      classKey: 'Nursery-A',
+      attendance: ms.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+    };
+
+    // Server clock inside the window, but the payload's date isn't "today".
+    const wrongDay = await withFakeNow('2025-04-13T09:30:00', () =>
+      request(app).post('/api/attendance/save').set(auth(admin)).send(payload),
+    );
+    expect(wrongDay.status).toBe(403);
+
+    // Payload's date is "today", but the server clock is outside the window.
+    const outsideWindow = await withFakeNow('2025-04-12T11:00:00', () =>
+      request(app).post('/api/attendance/save').set(auth(admin)).send(payload),
+    );
+    expect(outsideWindow.status).toBe(403);
+
+    // Inside both the day and the window — succeeds.
+    const ok = await withFakeNow('2025-04-12T09:00:00', () =>
+      request(app).post('/api/attendance/save').set(auth(admin)).send(payload),
+    );
+    expect(ok.status).toBe(200);
   });
 
   it('POST /attendance/save-and-alert counts absentee alerts', async () => {
@@ -64,7 +113,9 @@ describe('Attendance API', () => {
       classKey: 'Nursery-A',
       attendance: ms.body.students.map((s: { id: string }, i: number) => ({ studentId: s.id, status: i === 0 ? 'absent' : 'present' })),
     };
-    const res = await request(app).post('/api/attendance/save-and-alert').set(auth(admin)).send(payload);
+    const res = await withFakeNow('2025-04-14T09:30:00', () =>
+      request(app).post('/api/attendance/save-and-alert').set(auth(admin)).send(payload),
+    );
     expect(res.body).toMatchObject({ saved: ms.body.students.length, alertsSent: 1 });
   });
 
@@ -114,8 +165,33 @@ describe('Attendance API', () => {
     expect(absentees.status).toBe(200);
     expect(Array.isArray(absentees.body)).toBe(true);
     if (absentees.body.length > 0) {
-      expect(absentees.body[0]).toMatchObject({ studentId: expect.any(String), studentName: expect.any(String), rollNumber: expect.any(String) });
+      expect(absentees.body[0]).toMatchObject({ studentId: expect.any(String), studentName: expect.any(String), rollNumber: expect.any(String), alertSent: false });
     }
+  });
+
+  it('POST /attendance/reports/absentees/alert marks absentees alerted, persisted and idempotent', async () => {
+    const before = await request(app).get('/api/attendance/reports/absentees?date=2025-04-07').set(auth(admin));
+    expect(before.body.every((a: { alertSent: boolean }) => a.alertSent === false)).toBe(true);
+    if (before.body.length === 0) return;
+
+    const res = await request(app)
+      .post('/api/attendance/reports/absentees/alert')
+      .set(auth(admin))
+      .send({ date: '2025-04-07' });
+    expect(res.status).toBe(200);
+    expect(res.body.sent).toBe(before.body.length);
+
+    const after = await request(app).get('/api/attendance/reports/absentees?date=2025-04-07').set(auth(admin));
+    expect(after.body.every((a: { alertSent: boolean }) => a.alertSent === true)).toBe(true);
+
+    // Idempotent: re-running for the same date is safe and every row stays alerted.
+    const again = await request(app)
+      .post('/api/attendance/reports/absentees/alert')
+      .set(auth(admin))
+      .send({ date: '2025-04-07' });
+    expect(again.status).toBe(200);
+    const stillAfter = await request(app).get('/api/attendance/reports/absentees?date=2025-04-07').set(auth(admin));
+    expect(stillAfter.body.every((a: { alertSent: boolean }) => a.alertSent === true)).toBe(true);
   });
 
   it('GET /students/:id/attendance builds the monthly calendar', async () => {
@@ -154,6 +230,148 @@ describe('Attendance API', () => {
     if (all.body.length) expect(all.body[0]).toMatchObject({ studentId: expect.any(String), percentage: expect.any(Number), totalDays: expect.any(Number) });
     const none = await request(app).get('/api/attendance/reports/low-attendance?threshold=0').set(auth(admin));
     expect(none.body.length).toBe(0);
+  });
+
+  it('a teacher may only mark/override attendance for their incharge class', async () => {
+    const teacher = await token('teacher');
+
+    // Demo teacher is incharge of Class 1-A (seed) — allowed.
+    const mine = await request(app)
+      .get('/api/attendance/mark?date=2025-04-20&class=Class 1&section=A')
+      .set(auth(teacher));
+    expect(mine.status).toBe(200);
+    const savePayload = {
+      date: '2025-04-20',
+      classKey: 'Class 1-A',
+      attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+    };
+    expect(
+      (
+        await withFakeNow('2025-04-20T09:30:00', () =>
+          request(app).post('/api/attendance/save').set(auth(teacher)).send(savePayload),
+        )
+      ).status,
+    ).toBe(200);
+
+    // Any other class — forbidden, even though the teacher also teaches it (Class 2-A).
+    expect(
+      (await request(app).get('/api/attendance/mark?date=2025-04-20&class=Class 2&section=A').set(auth(teacher))).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(app)
+          .post('/api/attendance/save')
+          .set(auth(teacher))
+          .send({ date: '2025-04-20', classKey: 'Class 2-A', attendance: [{ studentId: 'x', status: 'present' }] })
+      ).status,
+    ).toBe(403);
+
+    // Admin remains unrestricted.
+    expect(
+      (await request(app).get('/api/attendance/mark?date=2025-04-20&class=Class 2&section=A').set(auth(admin))).status,
+    ).toBe(200);
+  });
+
+  it('a teacher only ever sees their incharge class in reports, regardless of query params', async () => {
+    const teacher = await token('teacher');
+
+    // Mark the demo teacher's own class (Class 1-A) present for a date so
+    // there's data to scope down to.
+    const mine = await request(app)
+      .get('/api/attendance/mark?date=2025-04-21&class=Class 1&section=A')
+      .set(auth(teacher));
+    await withFakeNow('2025-04-21T09:30:00', () =>
+      request(app)
+        .post('/api/attendance/save')
+        .set(auth(teacher))
+        .send({
+          date: '2025-04-21',
+          classKey: 'Class 1-A',
+          attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+        }),
+    );
+
+    const dashboard = await request(app).get('/api/attendance/dashboard?date=2025-04-21').set(auth(teacher));
+    expect(dashboard.body.classSummaries).toHaveLength(1);
+    expect(dashboard.body.classSummaries[0].classKey).toBe('Class 1-A');
+
+    const daily = await request(app).get('/api/attendance/reports/daily?date=2025-04-21').set(auth(teacher));
+    expect(daily.body).toHaveLength(1);
+    expect(daily.body[0]).toMatchObject({ classLabel: 'Class 1', section: 'A' });
+
+    // Explicitly asking for a different class via query param is ignored —
+    // the teacher's own incharge class always wins.
+    const monthly = await request(app)
+      .get('/api/attendance/reports/monthly?classKey=Nursery-A')
+      .set(auth(teacher));
+    expect(monthly.body.every((r: { name: string }) => Boolean(r.name))).toBe(true);
+    const monthlyAdmin = await request(app).get('/api/attendance/reports/monthly?classKey=Nursery-A').set(auth(admin));
+    // The admin's Nursery-A result must differ from what the teacher got for their own class
+    // (unless coincidentally both classes have zero students, which isn't the case in seed data).
+    expect(monthly.body.map((r: { studentId: string }) => r.studentId).sort()).not.toEqual(
+      monthlyAdmin.body.map((r: { studentId: string }) => r.studentId).sort(),
+    );
+
+    const register = await request(app)
+      .get('/api/attendance/reports/register?classKey=Nursery-A')
+      .set(auth(teacher));
+    const registerAdmin = await request(app).get('/api/attendance/reports/register?classKey=Nursery-A').set(auth(admin));
+    expect(register.body.students.map((s: { id: string }) => s.id).sort()).not.toEqual(
+      registerAdmin.body.students.map((s: { id: string }) => s.id).sort(),
+    );
+  });
+
+  it('a coordinator with a non-empty assignedClasses may only mark/see their supervised classes', async () => {
+    const coord = await token('coordinator');
+
+    // Seeded coordinator supervises Class 1-A and Class 2-A — allowed.
+    const mine = await request(app)
+      .get('/api/attendance/mark?date=2025-04-22&class=Class 1&section=A')
+      .set(auth(coord));
+    expect(mine.status).toBe(200);
+    expect(
+      (
+        await withFakeNow('2025-04-22T09:30:00', () =>
+          request(app)
+            .post('/api/attendance/save')
+            .set(auth(coord))
+            .send({
+              date: '2025-04-22',
+              classKey: 'Class 1-A',
+              attendance: mine.body.students.map((s: { id: string }) => ({ studentId: s.id, status: 'present' })),
+            }),
+        )
+      ).status,
+    ).toBe(200);
+
+    // Nursery-A is outside their assignedClasses — forbidden to mark.
+    expect(
+      (
+        await request(app)
+          .post('/api/attendance/save')
+          .set(auth(coord))
+          .send({ date: '2025-04-22', classKey: 'Nursery-A', attendance: [{ studentId: 'x', status: 'present' }] })
+      ).status,
+    ).toBe(403);
+
+    // Reports scope to only their assigned classes even with no explicit filter.
+    const daily = await request(app).get('/api/attendance/reports/daily?date=2025-04-22').set(auth(coord));
+    expect(daily.body.every((r: { classLabel: string }) => ['Class 1', 'Class 2'].includes(r.classLabel))).toBe(true);
+
+    // Explicitly asking for an out-of-scope class via query param is refused, not silently ignored.
+    const monthlyOutOfScope = await request(app)
+      .get('/api/attendance/reports/monthly?classKey=Nursery-A')
+      .set(auth(coord));
+    expect(monthlyOutOfScope.body).toEqual([]);
+
+    // An unscoped coordinator (no assignedClasses) stays unrestricted.
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+    const unscoped = await request(app)
+      .get('/api/attendance/mark?date=2025-04-22&class=Nursery&section=A')
+      .set(auth(coord));
+    expect(unscoped.status).toBe(200);
   });
 
   it('GET /attendance/reports/register returns a student×date matrix', async () => {

@@ -6,7 +6,7 @@ import { validate } from '../../middleware/validate';
 import { financeController } from './finance.controller';
 import { depositSchema, incomeSchema, vendorPaymentSchema } from './finance.validation';
 
-const gate = [authenticate, requireRole('school_admin', 'accountant')];
+const gate = [authenticate, requireRole('school_admin', 'principal', 'accountant')];
 
 // ── /api/bank ──
 export const bankRoutes = Router();
@@ -23,3 +23,6 @@ expensesRoutes.get('/income', asyncHandler(financeController.getIncome));
 expensesRoutes.post('/income', validate({ body: incomeSchema }), asyncHandler(financeController.addIncome));
 expensesRoutes.get('/vendor-payments', asyncHandler(financeController.getVendorPayments));
 expensesRoutes.post('/vendor-payments', validate({ body: vendorPaymentSchema }), asyncHandler(financeController.recordVendorPayment));
+expensesRoutes.get('/cash-book', asyncHandler(financeController.getCashBook));
+expensesRoutes.get('/profit-loss', asyncHandler(financeController.getProfitLoss));
+expensesRoutes.get('/stats', asyncHandler(financeController.getExpenseStats));

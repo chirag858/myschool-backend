@@ -1,9 +1,34 @@
 import { HolidayModel } from '../academics/academics.models';
 import { StudentModel } from '../students/student.model';
+import { ApiError } from '../../lib/api-error';
 import { AttendanceModel, OverrideModel } from './attendance.models';
 
 type Doc = Record<string, unknown> & { _id: unknown };
 const round = (n: number): number => Math.round(n);
+
+// Regular marking (not the admin correction/override flow) is only allowed
+// for today, and only inside the school's marking window — keeps the
+// attendance record honest instead of being backfilled after the fact.
+const MARK_WINDOW_START_MIN = 9 * 60; // 9:00 AM
+const MARK_WINDOW_END_MIN = 10 * 60 + 45; // 10:45 AM
+
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function assertWithinMarkingWindow(date: string): void {
+  const now = new Date();
+  if (date !== localDateStr(now)) {
+    throw ApiError.forbidden('Attendance can only be marked for today.');
+  }
+  const minutesNow = now.getHours() * 60 + now.getMinutes();
+  if (minutesNow < MARK_WINDOW_START_MIN || minutesNow > MARK_WINDOW_END_MIN) {
+    throw ApiError.forbidden('Attendance can only be marked between 9:00 AM and 10:45 AM.');
+  }
+}
 
 /** attendance classKey is `${className}-${section}` (split on the last hyphen). */
 function parseClassKey(classKey: string): { className: string; section: string } {
@@ -45,7 +70,7 @@ export const attendanceService = {
       classLabel: className,
       section,
       lockStatus: records.length > 0 ? 'locked' : 'unlocked',
-      cutoffTime: '10:00 AM',
+      cutoffTime: '10:45 AM',
       students: students.map((s) => {
         const r = recMap.get(String(s._id));
         return {
@@ -63,6 +88,7 @@ export const attendanceService = {
   },
 
   async save(schoolId: string, payload: SavePayload, markedBy: string) {
+    assertWithinMarkingWindow(payload.date);
     const { className, section } = parseClassKey(payload.classKey);
     await Promise.all(
       payload.attendance.map((a) =>
@@ -90,8 +116,21 @@ export const attendanceService = {
 
   async saveAndAlert(schoolId: string, payload: SavePayload, markedBy: string) {
     const { saved } = await this.save(schoolId, payload, markedBy);
-    const alertsSent = payload.attendance.filter((a) => a.status === 'absent').length;
-    return { saved, alertsSent };
+    const absentIds = payload.attendance.filter((a) => a.status === 'absent').map((a) => a.studentId);
+    if (absentIds.length > 0) {
+      await AttendanceModel.updateMany(
+        { schoolId, date: payload.date, studentId: { $in: absentIds } },
+        { $set: { alertSent: true } },
+      );
+    }
+    return { saved, alertsSent: absentIds.length };
+  },
+
+  async sendAbsenteeAlerts(schoolId: string, date: string, studentIds?: string[]) {
+    const filter: Record<string, unknown> = { schoolId, date, status: 'absent' };
+    if (studentIds && studentIds.length > 0) filter.studentId = { $in: studentIds };
+    const res = await AttendanceModel.updateMany(filter, { $set: { alertSent: true } });
+    return { sent: res.modifiedCount };
   },
 
   async override(
@@ -124,8 +163,10 @@ export const attendanceService = {
     return { entries: payload.attendance.length };
   },
 
-  async overrideHistory(schoolId: string) {
-    const docs = await OverrideModel.find({ schoolId }).sort({ timestamp: -1 }).lean();
+  async overrideHistory(schoolId: string, allowedClassKeys?: readonly string[]) {
+    const filter: Record<string, unknown> = { schoolId };
+    if (allowedClassKeys?.length) filter.classLabel = { $in: allowedClassKeys };
+    const docs = await OverrideModel.find(filter).sort({ timestamp: -1 }).lean();
     return docs.map((d: Doc) => ({
       id: String(d._id),
       date: d.date,
@@ -139,9 +180,11 @@ export const attendanceService = {
     }));
   },
 
-  /** Group students by className+section with their record for `date`. */
-  async _groups(schoolId: string, date: string) {
-    const students = await StudentModel.find({ schoolId }).lean();
+  /** Group students by className+section with their record for `date`.
+   * `classKey` restricts to one class — used to scope a teacher to the class
+   * they're incharge of; admins/principals/coordinators pass `undefined`. */
+  async _groups(schoolId: string, date: string, classKey?: string, allowedClassKeys?: readonly string[]) {
+    const students = await filteredStudents(schoolId, classKey, allowedClassKeys);
     const records = await AttendanceModel.find({ schoolId, date }).lean();
     const recByStudent = new Map(records.map((r) => [String(r.studentId), r]));
     const groups = new Map<string, { className: string; section: string; students: Doc[] }>();
@@ -153,8 +196,10 @@ export const attendanceService = {
     return { groups, recByStudent, records, totalStudents: students.length };
   },
 
-  async dashboard(schoolId: string, date: string) {
-    const { groups, recByStudent, records, totalStudents } = await this._groups(schoolId, date);
+  async dashboard(schoolId: string, date: string, classKey?: string, allowedClassKeys?: readonly string[]) {
+    const { groups, recByStudent, totalStudents } = await this._groups(schoolId, date, classKey, allowedClassKeys);
+    const scopedIds = new Set([...groups.values()].flatMap((g) => g.students.map((s) => String(s._id))));
+    const records = [...recByStudent.values()].filter((r) => scopedIds.has(String(r.studentId)));
     const present = records.filter((r) => r.status === 'present').length;
     const absent = records.filter((r) => r.status === 'absent').length;
     const late = records.filter((r) => r.status === 'late').length;
@@ -186,8 +231,8 @@ export const attendanceService = {
     };
   },
 
-  async dailySummary(schoolId: string, date: string) {
-    const { groups, recByStudent } = await this._groups(schoolId, date);
+  async dailySummary(schoolId: string, date: string, classKey?: string, allowedClassKeys?: readonly string[]) {
+    const { groups, recByStudent } = await this._groups(schoolId, date, classKey, allowedClassKeys);
     return [...groups.values()].map((g) => {
       const marks = g.students.map((s) => recByStudent.get(String(s._id))?.status).filter(Boolean);
       const count = (st: string) => marks.filter((m) => m === st).length;
@@ -208,30 +253,39 @@ export const attendanceService = {
     });
   },
 
-  async absentees(schoolId: string, date: string) {
+  async absentees(schoolId: string, date: string, classKey?: string, allowedClassKeys?: readonly string[]) {
     const records = await AttendanceModel.find({ schoolId, date, status: 'absent' }).lean();
     const students = await StudentModel.find({
       schoolId,
       _id: { $in: records.map((r) => r.studentId) },
     }).lean();
     const map = new Map(students.map((s) => [String(s._id), s]));
-    return records.map((r) => {
-      const s = map.get(String(r.studentId));
-      return {
-        studentId: String(r.studentId),
-        studentName: s?.name ?? '',
-        classLabel: `${s?.className ?? ''}-${s?.section ?? ''}`,
-        rollNumber: s?.rollNumber ?? '',
-        parentMobile: s?.parents?.fatherMobile ?? s?.mobile ?? '',
-        alertSent: false,
-        reason: r.remarks,
-      };
-    });
+    const scoped = classKey ? splitClassKey(classKey) : null;
+    const allowedSet = allowedClassKeys?.length ? new Set(allowedClassKeys) : null;
+    return records
+      .filter((r) => {
+        const s = map.get(String(r.studentId));
+        if (allowedSet && !allowedSet.has(`${s?.className ?? ''}-${s?.section ?? ''}`)) return false;
+        if (!scoped) return true;
+        return s?.className === scoped.className && (!scoped.section || s?.section === scoped.section);
+      })
+      .map((r) => {
+        const s = map.get(String(r.studentId));
+        return {
+          studentId: String(r.studentId),
+          studentName: s?.name ?? '',
+          classLabel: `${s?.className ?? ''}-${s?.section ?? ''}`,
+          rollNumber: s?.rollNumber ?? '',
+          parentMobile: s?.parents?.fatherMobile ?? s?.mobile ?? '',
+          alertSent: Boolean(r.alertSent),
+          reason: r.remarks,
+        };
+      });
   },
 
   // ─── Report aggregations (matrices) ───
-  async monthlyReport(schoolId: string, query: { classKey?: string; month?: string }) {
-    const students = await filteredStudents(schoolId, query.classKey);
+  async monthlyReport(schoolId: string, query: { classKey?: string; month?: string }, allowedClassKeys?: readonly string[]) {
+    const students = await filteredStudents(schoolId, query.classKey, allowedClassKeys);
     const ids = students.map((s) => s._id);
     const recFilter: Record<string, unknown> = { schoolId, studentId: { $in: ids } };
     if (query.month) recFilter.date = { $regex: `^${query.month}` };
@@ -255,8 +309,8 @@ export const attendanceService = {
       .sort((a, b) => (a.name < b.name ? -1 : 1));
   },
 
-  async lowAttendance(schoolId: string, threshold: number, classKey?: string) {
-    const students = await filteredStudents(schoolId, classKey);
+  async lowAttendance(schoolId: string, threshold: number, classKey?: string, allowedClassKeys?: readonly string[]) {
+    const students = await filteredStudents(schoolId, classKey, allowedClassKeys);
     const ids = students.map((s) => s._id);
     const records = await AttendanceModel.find({ schoolId, studentId: { $in: ids } }).lean();
     const byStudent = groupStats(records);
@@ -277,8 +331,8 @@ export const attendanceService = {
       .sort((a, b) => a.percentage - b.percentage);
   },
 
-  async registerMatrix(schoolId: string, query: { classKey?: string; month?: string }) {
-    const students = await filteredStudents(schoolId, query.classKey);
+  async registerMatrix(schoolId: string, query: { classKey?: string; month?: string }, allowedClassKeys?: readonly string[]) {
+    const students = await filteredStudents(schoolId, query.classKey, allowedClassKeys);
     const ids = students.map((s) => s._id);
     const recFilter: Record<string, unknown> = { schoolId, studentId: { $in: ids } };
     if (query.month) recFilter.date = { $regex: `^${query.month}` };
@@ -395,13 +449,27 @@ function splitClassKey(classKey: string): { className: string; section?: string 
   return { className: classKey.slice(0, idx), section: classKey.slice(idx + 1) };
 }
 
-async function filteredStudents(schoolId: string, classKey?: string) {
-  const filter: Record<string, unknown> = { schoolId, profileStatus: 'active' };
+/**
+ * `classKey` is the client's requested filter (one class, or none = whole
+ * school). `allowedClassKeys`, when given, is a hard supervision boundary
+ * (e.g. a coordinator's `assignedClasses`) ANDed on top — even a request for
+ * "all classes" can never surface a class outside that boundary.
+ */
+async function filteredStudents(schoolId: string, classKey?: string, allowedClassKeys?: readonly string[]) {
+  const conditions: Record<string, unknown>[] = [{ schoolId, profileStatus: 'active' }];
   if (classKey && classKey !== 'all') {
     const { className, section } = splitClassKey(classKey);
-    filter.className = className;
-    if (section) filter.section = section;
+    conditions.push(section ? { className, section } : { className });
   }
+  if (allowedClassKeys?.length) {
+    conditions.push({
+      $or: allowedClassKeys.map((k) => {
+        const { className, section } = splitClassKey(k);
+        return section ? { className, section } : { className };
+      }),
+    });
+  }
+  const filter = conditions.length === 1 ? conditions[0] : { $and: conditions };
   return StudentModel.find(filter).sort({ rollNumber: 1 }).lean();
 }
 

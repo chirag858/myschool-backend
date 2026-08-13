@@ -37,3 +37,8 @@ export const studentAttendanceQuery = z.object({
 export const studentIdParam = z.object({
   id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id'),
 });
+
+export const sendAbsenteeAlertsSchema = z.object({
+  date: z.string().min(1),
+  studentIds: z.array(z.string().min(1)).optional(),
+});

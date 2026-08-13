@@ -7,7 +7,12 @@ import { seedDemo } from '../../seed/seed';
 async function token(username: string): Promise<string> {
   const res = await request(app)
     .post('/api/auth/login')
-    .send({ username, password: 'demo1234', captcha: 'x' });
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -73,6 +78,11 @@ describe('Fee API', () => {
     const sid = await class1StudentId();
     const res = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
     expect(res.status).toBe(200);
+
+    // Principal uses this exact endpoint via the Fee Collection page — must not 403.
+    const principal = await token('principal');
+    expect((await request(app).get(`/api/fee/pending/${sid}`).set(auth(principal))).status).toBe(200);
+
     expect(res.body).toMatchObject({
       studentId: sid,
       studentName: expect.any(String),
@@ -83,6 +93,47 @@ describe('Fee API', () => {
     });
     expect(res.body.months.length).toBe(12);
     expect(res.body.feeHeads.length).toBeGreaterThan(0);
+  });
+
+  it('per-month figures respect fee-head frequency, not just the raw configured amount', async () => {
+    // A half-yearly (or quarterly/yearly) head must contribute its share
+    // divided across all 12 months — previously the raw `amounts[cls]` was
+    // used as-is regardless of frequency, so a half-yearly head configured
+    // at, say, 2000 was billed as 2000 EVERY month (24000/year) instead of
+    // its true 2000×2/12 ≈ 333/month share (4000/year total contribution).
+    const sid = await class1StudentId();
+    const res = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
+    const sumOfMonthlyHeads = res.body.feeHeads.reduce((s: number, h: { monthlyAmount: number }) => s + h.monthlyAmount, 0);
+    // months[].amount is the same monthlyTotal for every month — must equal
+    // the annual total (outstandingBalance + already paid) divided by 12,
+    // within rounding, for every one of the 12 rows.
+    const perMonth = res.body.months[0].amount;
+    expect(res.body.months.every((m: { amount: number }) => m.amount === perMonth)).toBe(true);
+    expect(perMonth).toBe(sumOfMonthlyHeads);
+
+    // Cross-check against the independently-computed annual total (same
+    // annualByClass() helper the parent portal and fee ledger use) — the
+    // 12 monthly figures must sum to within a rounding tolerance of it.
+    // The old bug (summing raw configured amounts regardless of frequency)
+    // would overstate this whenever any head isn't 'monthly' frequency.
+    const structureRes = await request(app).get('/api/fee/structure').set(auth(acc));
+    const cls1Rows = structureRes.body.rows.filter((r: { amounts: Record<string, number> }) => r.amounts['Class 1'] != null);
+    const hasNonMonthlyHead = structureRes.body.rows.some(
+      (r: { frequency: string; amounts: Record<string, number> }) => r.amounts['Class 1'] != null && r.frequency !== 'monthly',
+    );
+    expect(hasNonMonthlyHead).toBe(true); // sanity: this test only proves anything if the seed actually has a mixed-frequency head
+
+    const trueAnnual = cls1Rows.reduce((sum: number, r: { frequency: string; amounts: Record<string, number> }) => {
+      const mult = { monthly: 12, quarterly: 4, half_yearly: 2, yearly: 1, one_time: 1 }[r.frequency] ?? 1;
+      return sum + r.amounts['Class 1'] * mult;
+    }, 0);
+    expect(Math.abs(perMonth * 12 - trueAnnual)).toBeLessThanOrEqual(12); // rounding slack across 12 months
+
+    // And it must NOT equal the old-bug figure: raw configured amounts summed as-is.
+    const buggyMonthlyFigure = cls1Rows.reduce((sum: number, r: { amounts: Record<string, number> }) => sum + r.amounts['Class 1'], 0);
+    if (buggyMonthlyFigure !== Math.round(trueAnnual / 12)) {
+      expect(perMonth).not.toBe(buggyMonthlyFigure);
+    }
   });
 
   it('collect → receipt → list/get/duplicate/cancel, and stats reflect today', async () => {
@@ -143,9 +194,45 @@ describe('Fee API', () => {
     expect(row).toMatchObject({ totalFee: expect.any(Number), paid: 5000, status: expect.any(String) });
     expect(row.totalFee).toBeGreaterThan(0);
     expect(row.balance).toBe(Math.max(0, row.totalFee - 5000));
+
+    // Month filter: April (the paid month) shows a small monthly due with
+    // paid=5000; a different month shows the same monthly due but paid=0 —
+    // proving `month` actually changes the numbers, not just annual totals.
+    const april = await request(app).get('/api/fee/ledger?month=Apr').set(auth(acc));
+    const aprilRow = april.body.find((r: { studentId: string }) => r.studentId === sid);
+    expect(aprilRow.totalFee).toBe(Math.round(row.totalFee / 12));
+    expect(aprilRow.paid).toBe(5000);
+    expect(aprilRow.status).toBe(aprilRow.balance <= 0 ? 'paid' : 'partial');
+
+    const july = await request(app).get('/api/fee/ledger?month=Jul').set(auth(acc));
+    const julyRow = july.body.find((r: { studentId: string }) => r.studentId === sid);
+    expect(julyRow.totalFee).toBe(aprilRow.totalFee);
+    expect(julyRow.paid).toBe(0);
+    expect(julyRow.status).toBe('pending');
   });
 
   it('rejects invalid collect payload (400)', async () => {
     expect((await request(app).post('/api/fee/collect').set(auth(acc)).send({ studentId: 'x' })).status).toBe(400);
+  });
+
+  it('GET /fee/student-ledger/:studentId is reachable by principal and coordinator, not just admin/accountant', async () => {
+    const studentId = await class1StudentId();
+    const principal = await token('principal');
+    const coordinator = await token('coordinator');
+
+    const asPrincipal = await request(app).get(`/api/fee/student-ledger/${studentId}`).set(auth(principal));
+    expect(asPrincipal.status).toBe(200);
+    expect(asPrincipal.body).toMatchObject({ totalFees: expect.any(Number), paid: expect.any(Number), balance: expect.any(Number) });
+
+    const asCoordinator = await request(app).get(`/api/fee/student-ledger/${studentId}`).set(auth(coordinator));
+    expect(asCoordinator.status).toBe(200);
+
+    // Every /api/fee/* route now also allows principal — matches every fee
+    // screen's frontend ProtectedRoute — but roles outside admin/accountant/
+    // principal/coordinator still get 403.
+    expect((await request(app).get('/api/fee/heads').set(auth(principal))).status).toBe(200);
+    const teacher = await token('teacher');
+    expect((await request(app).get(`/api/fee/student-ledger/${studentId}`).set(auth(teacher))).status).toBe(403);
+    expect((await request(app).get('/api/fee/heads').set(auth(teacher))).status).toBe(403);
   });
 });

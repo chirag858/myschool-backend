@@ -12,6 +12,14 @@ export const idParamSchema = z.object({
   id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id'),
 });
 
+export const generateCodeQuerySchema = z.object({
+  name: z.string().min(1),
+});
+
+export const codeCheckQuerySchema = z.object({
+  code: z.string().min(1),
+});
+
 export const schoolsQuerySchema = z.object({
   page: z.coerce.number().optional(),
   pageSize: z.coerce.number().optional(),

@@ -5,7 +5,14 @@ import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
 
 async function token(username: string): Promise<string> {
-  const res = await request(app).post('/api/auth/login').send({ username, password: 'demo1234', captcha: 'x' });
+  const res = await request(app)
+    .post('/api/auth/login')
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -54,6 +61,25 @@ describe('Parent Web API', () => {
     const apr = res.body.find((r: { month: string }) => r.month === 'Apr 2025');
     expect(apr.amountPaid).toBeGreaterThan(0);
     expect(apr.receiptNumber).toBe('RCPT-PARENT-001');
+  });
+
+  it('fee monthly amountDue matches the annual total ÷ 12 (not just monthly-frequency heads)', async () => {
+    const summary = await request(app).get(`/api/parent/fee-summary?childId=${childId}`).set(auth(parent));
+    const monthly = await request(app).get(`/api/parent/fee-monthly?childId=${childId}`).set(auth(parent));
+    const expectedMonthlyDue = Math.round(summary.body.totalThisSession / 12);
+    for (const row of monthly.body) {
+      expect(row.amountDue).toBe(expectedMonthlyDue);
+    }
+  });
+
+  it('fee monthly amountPaid matches the full seeded receipt amount across its covered months, not a mismatched fraction', async () => {
+    const res = await request(app).get(`/api/parent/fee-monthly?childId=${childId}`).set(auth(parent));
+    const apr = res.body.find((r: { month: string }) => r.month === 'Apr 2025');
+    const may = res.body.find((r: { month: string }) => r.month === 'May 2025');
+    // Seeded receipt: amount 5000, monthsCovered ['April', 'May'] → 2500 each.
+    expect(apr.amountPaid).toBe(2500);
+    expect(may.amountPaid).toBe(2500);
+    expect(apr.amountPaid + may.amountPaid).toBe(5000);
   });
 
   it('attendance returns the child history', async () => {

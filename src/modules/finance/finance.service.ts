@@ -1,4 +1,8 @@
+import { Types } from 'mongoose';
+
 import { ApiError } from '../../lib/api-error';
+import { ScrollExpenseModel } from '../fee/fee-scroll.models';
+import { ReceiptModel } from '../fee/fee.models';
 import {
   BankAccountModel,
   BankDepositModel,
@@ -79,5 +83,95 @@ export const financeService = {
   async recordVendorPayment(schoolId: string, payload: Record<string, unknown>, createdBy: string) {
     const doc = await VendorPaymentModel.create({ schoolId, ...payload, date: today(), createdBy, createdAt: nowIso() });
     return dto(doc.toObject());
+  },
+
+  // ── Cash book (merged fee receipts + income + expense + vendor payments, chronological) ──
+  async getCashBook(schoolId: string) {
+    const sid = new Types.ObjectId(schoolId);
+    const [feeReceipts, income, expenses, vendorPayments] = await Promise.all([
+      ReceiptModel.find({ schoolId: sid, status: 'active' }).lean(),
+      IncomeModel.find({ schoolId }).lean(),
+      ScrollExpenseModel.find({ schoolId }).lean(),
+      VendorPaymentModel.find({ schoolId }).lean(),
+    ]);
+    const rows = [
+      ...feeReceipts.map((r) => ({
+        id: String(r._id),
+        date: r.paymentDate ?? '',
+        type: 'fee' as const,
+        particulars: `Fee — ${r.studentName} (${r.className})`,
+        mode: r.paymentMode ?? 'cash',
+        amountIn: r.amount ?? 0,
+        amountOut: 0,
+      })),
+      ...income.map((i) => ({
+        id: String(i._id),
+        date: i.date,
+        type: 'income' as const,
+        particulars: i.description,
+        mode: i.mode,
+        amountIn: i.amount ?? 0,
+        amountOut: 0,
+      })),
+      ...expenses.map((e) => ({
+        id: String(e._id),
+        date: e.date,
+        type: 'expense' as const,
+        particulars: e.description,
+        mode: e.mode,
+        amountIn: 0,
+        amountOut: e.amount ?? 0,
+      })),
+      ...vendorPayments.map((v) => ({
+        id: String(v._id),
+        date: v.date,
+        type: 'vendor_payment' as const,
+        particulars: `${v.vendorName}${v.note ? ` — ${v.note}` : ''}`,
+        mode: v.mode,
+        amountIn: 0,
+        amountOut: v.amount ?? 0,
+      })),
+    ];
+    return rows.sort((a, b) => (a.date < b.date ? 1 : -1));
+  },
+
+  // ── Profit & Loss (session-wide — computed server-side, no full-table client fetch) ──
+  async getProfitLoss(schoolId: string) {
+    const sid = new Types.ObjectId(schoolId);
+    const [feeIncomeAgg, otherIncomeAgg, expenseAgg, vendorPaymentAgg] = await Promise.all([
+      ReceiptModel.aggregate([
+        { $match: { schoolId: sid, status: 'active' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ]),
+      IncomeModel.aggregate([{ $match: { schoolId: sid } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      ScrollExpenseModel.aggregate([{ $match: { schoolId: sid } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      VendorPaymentModel.aggregate([{ $match: { schoolId: sid } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+    ]);
+    const feeIncome = feeIncomeAgg[0]?.total ?? 0;
+    const otherIncome = otherIncomeAgg[0]?.total ?? 0;
+    const totalIncome = feeIncome + otherIncome;
+    const totalExpense = (expenseAgg[0]?.total ?? 0) + (vendorPaymentAgg[0]?.total ?? 0);
+    return { feeIncome, otherIncome, totalIncome, totalExpense, net: totalIncome - totalExpense };
+  },
+
+  // ── Dashboard stats (this calendar month — computed server-side) ──
+  async getExpenseStats(schoolId: string) {
+    const monthPrefix = today().slice(0, 7);
+    const monthMatch = { schoolId: new Types.ObjectId(schoolId), createdAt: { $regex: `^${monthPrefix}` } };
+    const [monthIncomeAgg, monthExpenseAgg, monthVendorAgg] = await Promise.all([
+      IncomeModel.aggregate([{ $match: monthMatch }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      ScrollExpenseModel.aggregate([{ $match: monthMatch }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      VendorPaymentModel.aggregate([{ $match: monthMatch }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+    ]);
+    const monthIncome = monthIncomeAgg[0]?.total ?? 0;
+    const monthExpense = (monthExpenseAgg[0]?.total ?? 0) + (monthVendorAgg[0]?.total ?? 0);
+    return {
+      monthIncome,
+      monthExpense,
+      netMonth: monthIncome - monthExpense,
+      // No invoice/dues model exists yet (Vendor/PurchaseEntry track spend, not outstanding
+      // balances) — vendorDue can't be computed for real until that data exists.
+      vendorDue: 0,
+    };
   },
 };

@@ -59,4 +59,5 @@ export const ledgerQuery = z.object({
   className: z.string().optional(),
   section: z.string().optional(),
   status: z.string().optional(),
+  month: z.string().optional(),
 });

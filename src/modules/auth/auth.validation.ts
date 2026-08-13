@@ -6,13 +6,16 @@ const identifierOrMobile = z.object({
   mobile: z.string().min(1).optional(),
 });
 
-/** Login accepts `username` (web) or `identifier` (mobile), + optional device. */
+const schoolCode = z.string().trim().min(1).max(20).optional();
+
+/** Login accepts `username` (web staff, + school code) or `identifier` (mobile). */
 export const loginSchema = z
   .object({
     username: z.string().min(1).optional(),
     identifier: z.string().min(1).optional(),
     password: z.string().min(1),
     captcha: z.string().optional(),
+    schoolCode,
     device: z.any().optional(),
   })
   .refine((d) => Boolean(d.username || d.identifier), {
@@ -55,6 +58,7 @@ export const refreshSchema = z.object({
 export const forgotSendSchema = z.object({
   contact: z.string().min(1),
   username: z.string().min(1).optional(),
+  schoolCode,
 });
 
 export const forgotResetSchema = z.object({
@@ -62,6 +66,7 @@ export const forgotResetSchema = z.object({
   username: z.string().min(1).optional(),
   otp: z.string().length(6),
   password: z.string().min(6),
+  schoolCode,
 });
 
 // Retained for callers importing the strict mobile-number schema.

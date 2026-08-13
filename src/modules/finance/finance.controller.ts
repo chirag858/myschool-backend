@@ -36,4 +36,13 @@ export const financeController = {
   async recordVendorPayment(req: Request, res: Response) {
     created(res, await financeService.recordVendorPayment(schoolId(req), req.body, actor(req)));
   },
+  async getCashBook(req: Request, res: Response) {
+    send(res, await financeService.getCashBook(schoolId(req)));
+  },
+  async getProfitLoss(req: Request, res: Response) {
+    send(res, await financeService.getProfitLoss(schoolId(req)));
+  },
+  async getExpenseStats(req: Request, res: Response) {
+    send(res, await financeService.getExpenseStats(schoolId(req)));
+  },
 };

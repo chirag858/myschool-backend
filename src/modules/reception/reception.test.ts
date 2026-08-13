@@ -7,7 +7,12 @@ import { seedDemo } from '../../seed/seed';
 async function token(username: string): Promise<string> {
   const res = await request(app)
     .post('/api/auth/login')
-    .send({ username, password: 'demo1234', captcha: 'x' });
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -48,7 +53,7 @@ describe('Reception API', () => {
     const create = await request(app)
       .post('/api/reception/appointments')
       .set(auth(recep))
-      .send({ visitorName: 'Ms. Verma', visitorMobile: '9990001111', date: '2026-08-01', time: '11:00', purpose: 'meeting', withWhom: 'Admin' });
+      .send({ visitorName: 'Ms. Verma', visitorMobile: '9990001111', date: '2026-08-01', time: '11:00', purpose: 'parent_meeting', withWhom: 'Admin' });
     expect(create.status).toBe(201);
     const id = create.body.id;
 
@@ -64,7 +69,7 @@ describe('Reception API', () => {
     const create = await request(app)
       .post('/api/reception/call-logs')
       .set(auth(recep))
-      .send({ direction: 'outgoing', callerName: 'Mr. Singh', mobile: '9990002222', purpose: 'admission_inquiry', followUpRequired: true });
+      .send({ direction: 'outgoing', callerName: 'Mr. Singh', mobile: '9990002222', purpose: 'admission', followUpRequired: true });
     expect(create.status).toBe(201);
     expect(create.body.loggedAt).toEqual(expect.any(String));
 

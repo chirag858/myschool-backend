@@ -1,4 +1,5 @@
 import { ApiError } from '../../lib/api-error';
+import { AdminGateVisitorModel, OutPassModel } from '../outpass/outpass.models';
 import { AppointmentModel, CallLogModel } from './reception.models';
 
 type Doc = Record<string, unknown> & { _id: unknown };
@@ -16,20 +17,24 @@ function dto(d: Doc): Record<string, unknown> {
 
 export const receptionService = {
   async dashboard(schoolId: string) {
-    const [appts, calls] = await Promise.all([
+    const [appts, calls, visitors, outPasses] = await Promise.all([
       AppointmentModel.find({ schoolId }).lean(),
       CallLogModel.find({ schoolId }).lean(),
+      AdminGateVisitorModel.find({ schoolId }).lean(),
+      OutPassModel.find({ schoolId }).lean(),
     ]);
     const t = today();
     const month = t.slice(0, 7);
+    const visitorsToday = visitors.filter((v) => (v.checkInTime ?? '').slice(0, 10) === t);
+    const outPassesToday = outPasses.filter((o) => (o.issueTime ?? '').slice(0, 10) === t);
     return {
-      visitorsToday: 0,
-      currentlyInside: 0,
-      checkedOut: 0,
-      outPassesIssuedToday: 0,
-      outPassesReturned: 0,
-      outPassesPending: 0,
-      outPassesOverdue: 0,
+      visitorsToday: visitorsToday.length,
+      currentlyInside: visitors.filter((v) => v.checkInTime && !v.checkOutTime).length,
+      checkedOut: visitors.filter((v) => v.checkOutTime).length,
+      outPassesIssuedToday: outPassesToday.length,
+      outPassesReturned: outPassesToday.filter((o) => o.status === 'returned').length,
+      outPassesPending: outPasses.filter((o) => o.status === 'issued').length,
+      outPassesOverdue: outPasses.filter((o) => o.status === 'overdue').length,
       inquiriesToday: calls.filter((c) => (c.loggedAt ?? '').slice(0, 10) === t).length,
       inquiriesThisMonth: calls.filter((c) => (c.loggedAt ?? '').slice(0, 7) === month).length,
       appointmentsToday: appts.filter((a) => a.date === t).length,

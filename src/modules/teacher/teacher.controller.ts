@@ -2,12 +2,21 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { assignedClassesOf } from '../coordinator/coordinator.service';
 import { teacherService } from './teacher.service';
 
 function schoolId(req: Request): string {
   const id = req.user?.schoolId;
   if (!id) throw ApiError.forbidden('No school scope');
   return id;
+}
+
+/** A coordinator with a non-empty assignedClasses may only see homework for
+ * their supervised classes — empty means unscoped (whole school). */
+async function coordinatorAllowedClassKeys(req: Request): Promise<readonly string[] | undefined> {
+  if (req.user?.role !== 'coordinator') return undefined;
+  const keys = await assignedClassesOf(userId(req));
+  return keys.length ? keys : undefined;
 }
 const userId = (req: Request): string => String(req.user?._id);
 const p = (req: Request, key: string): string => String(req.params[key]);
@@ -27,16 +36,23 @@ export const teacherController = {
   async myExams(req: Request, res: Response) {
     send(res, await teacherService.getMyExams(schoolId(req), userId(req)));
   },
+  async myTeaching(req: Request, res: Response) {
+    send(res, await teacherService.getMyTeaching(schoolId(req), userId(req)));
+  },
+  async dashboardSummary(req: Request, res: Response) {
+    send(res, await teacherService.getDashboardSummary(schoolId(req), userId(req)));
+  },
 
   // Homework
   async getHomework(req: Request, res: Response) {
     send(res, await teacherService.getHomework(schoolId(req), userId(req)));
   },
   async getAllHomework(req: Request, res: Response) {
-    send(res, await teacherService.getAllHomework(schoolId(req), req.query as Record<string, string>));
+    const allowed = await coordinatorAllowedClassKeys(req);
+    send(res, await teacherService.getAllHomework(schoolId(req), req.query as Record<string, string>, allowed));
   },
   async createHomework(req: Request, res: Response) {
-    created(res, await teacherService.createHomework(schoolId(req), userId(req), req.body));
+    created(res, await teacherService.createHomework(schoolId(req), userId(req), req.body, String(req.user?.role ?? 'unknown')));
   },
   async updateHomework(req: Request, res: Response) {
     send(res, await teacherService.updateHomework(schoolId(req), userId(req), p(req, 'id'), req.body, String(req.user?.role ?? 'unknown')));
@@ -45,8 +61,25 @@ export const teacherController = {
     await teacherService.deleteHomework(schoolId(req), userId(req), p(req, 'id'));
     res.status(204).end();
   },
+  async homeworkById(req: Request, res: Response) {
+    send(res, await teacherService.getHomeworkById(schoolId(req), p(req, 'id')));
+  },
   async homeworkSubmissions(req: Request, res: Response) {
     send(res, await teacherService.getHomeworkSubmissions(schoolId(req), p(req, 'id')));
+  },
+  async setHomeworkSubmission(req: Request, res: Response) {
+    send(
+      res,
+      await teacherService.setHomeworkSubmission(
+        schoolId(req),
+        p(req, 'id'),
+        p(req, 'studentId'),
+        req.body as { status: string; marks?: number; remark?: string; attachment?: string },
+      ),
+    );
+  },
+  async remindHomework(req: Request, res: Response) {
+    send(res, await teacherService.remindPendingHomework(schoolId(req), p(req, 'id')));
   },
 
   // Assignments
@@ -54,7 +87,10 @@ export const teacherController = {
     send(res, await teacherService.getAssignments(schoolId(req), userId(req), { classKey: q(req, 'classKey'), status: q(req, 'status') }));
   },
   async createAssignment(req: Request, res: Response) {
-    created(res, await teacherService.createAssignment(schoolId(req), userId(req), req.body));
+    created(res, await teacherService.createAssignment(schoolId(req), userId(req), req.body, String(req.user?.role ?? 'unknown')));
+  },
+  async updateAssignment(req: Request, res: Response) {
+    send(res, await teacherService.updateAssignment(schoolId(req), userId(req), p(req, 'id'), req.body, String(req.user?.role ?? 'unknown')));
   },
   async closeAssignment(req: Request, res: Response) {
     send(res, await teacherService.closeAssignment(schoolId(req), userId(req), p(req, 'id')));
@@ -65,6 +101,17 @@ export const teacherController = {
   },
   async getSubmissions(req: Request, res: Response) {
     send(res, await teacherService.getSubmissions(schoolId(req), p(req, 'id')));
+  },
+  async receiveSubmission(req: Request, res: Response) {
+    send(
+      res,
+      await teacherService.receiveSubmission(
+        schoolId(req),
+        p(req, 'id'),
+        p(req, 'studentId'),
+        req.body as { status: string; textContent?: string; fileName?: string },
+      ),
+    );
   },
   async gradeSubmission(req: Request, res: Response) {
     const { marks, feedback } = req.body as { marks: number; feedback: string };
@@ -79,7 +126,17 @@ export const teacherController = {
     send(res, await teacherService.getMyCirculars(schoolId(req), userId(req)));
   },
   async createCircular(req: Request, res: Response) {
-    created(res, await teacherService.createCircular(schoolId(req), userId(req), req.body));
+    created(res, await teacherService.createCircular(schoolId(req), userId(req), req.body, String(req.user?.role ?? 'unknown')));
+  },
+  async updateCircular(req: Request, res: Response) {
+    send(res, await teacherService.updateCircular(schoolId(req), userId(req), p(req, 'id'), req.body, String(req.user?.role ?? 'unknown')));
+  },
+  async deleteCircular(req: Request, res: Response) {
+    await teacherService.deleteCircular(schoolId(req), userId(req), p(req, 'id'));
+    res.status(204).end();
+  },
+  async readCircular(req: Request, res: Response) {
+    send(res, await teacherService.markCircularRead(schoolId(req), userId(req), p(req, 'id')));
   },
 
   // Leave
@@ -94,5 +151,14 @@ export const teacherController = {
   },
   async cancelLeave(req: Request, res: Response) {
     send(res, await teacherService.cancelLeave(schoolId(req), userId(req), p(req, 'id')));
+  },
+  async getAllPendingLeaves(req: Request, res: Response) {
+    if (req.user?.role === 'teacher') throw ApiError.forbidden('Only school_admin/principal can review leaves');
+    send(res, await teacherService.getAllPendingLeaves(schoolId(req)));
+  },
+  async reviewLeave(req: Request, res: Response) {
+    if (req.user?.role === 'teacher') throw ApiError.forbidden('Only school_admin/principal can review leaves');
+    const { action, remarks } = req.body as { action: 'approve' | 'reject'; remarks?: string };
+    send(res, await teacherService.reviewLeave(schoolId(req), p(req, 'id'), action, userId(req), remarks));
   },
 };

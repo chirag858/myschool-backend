@@ -58,7 +58,8 @@ export const feeExtrasController = {
     created(res, await feeExtrasService.applyConcession(schoolId(req), req.body, actor(req)));
   },
   async revokeAppliedConcession(req: Request, res: Response) {
-    send(res, await feeExtrasService.revokeAppliedConcession(schoolId(req), p(req, 'id')));
+    const { reason } = req.body as { reason: string };
+    send(res, await feeExtrasService.revokeAppliedConcession(schoolId(req), p(req, 'id'), reason ?? ''));
   },
 
   // approvals

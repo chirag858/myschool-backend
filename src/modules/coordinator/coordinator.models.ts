@@ -50,5 +50,6 @@ const staffLeaveSchema = new Schema(
   },
   { timestamps: true },
 );
+staffLeaveSchema.index({ schoolId: 1, currentLevel: 1, status: 1 });
 export type StaffLeaveDoc = InferSchemaType<typeof staffLeaveSchema>;
 export const StaffLeaveModel = model('CoordinatorStaffLeave', staffLeaveSchema);

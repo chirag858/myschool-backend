@@ -7,7 +7,12 @@ import { seedDemo } from '../../seed/seed';
 async function token(username: string): Promise<string> {
   const res = await request(app)
     .post('/api/auth/login')
-    .send({ username, password: 'demo1234', captcha: 'x' });
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -19,10 +24,18 @@ describe('Academics API', () => {
     admin = await token('schooladmin');
   });
 
-  it('requires auth (401) and forbids non-academic roles (403)', async () => {
+  it('requires auth (401); reads are open to any tenant role, writes are admin-only (403)', async () => {
     expect((await request(app).get('/api/sessions')).status).toBe(401);
     const teacher = await token('teacher');
-    expect((await request(app).get('/api/sessions').set(auth(teacher))).status).toBe(403);
+    // Reads: any authenticated tenant role can see the school's real
+    // class/section/session structure (e.g. teacher timetable resolving its
+    // own assigned class to a real classId).
+    expect((await request(app).get('/api/sessions').set(auth(teacher))).status).toBe(200);
+    expect((await request(app).get('/api/classes').set(auth(teacher))).status).toBe(200);
+    // Writes stay admin-only.
+    expect(
+      (await request(app).post('/api/sessions').set(auth(teacher)).send({ name: '2099-100' })).status,
+    ).toBe(403);
   });
 
   // ── Sessions ──

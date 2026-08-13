@@ -7,7 +7,12 @@ import { seedDemo } from '../../seed/seed';
 async function token(username: string): Promise<string> {
   const res = await request(app)
     .post('/api/auth/login')
-    .send({ username, password: 'demo1234', captcha: 'x' });
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -60,6 +65,34 @@ describe('Exams API', () => {
     expect(pub.body).toMatchObject({ published: true, status: 'marks_entry' });
     const unpub = await request(app).patch(`/api/exams/${id}/unpublish`).set(auth(admin));
     expect(unpub.body).toMatchObject({ published: false, status: 'scheduled' });
+  });
+
+  it('a coordinator with a non-empty assignedClasses may only schedule exams for their supervised classes', async () => {
+    const coord = await token('coordinator');
+
+    // Class 1-A and Class 2-A are the seeded coordinator's assignedClasses — allowed.
+    const inScope = await request(app)
+      .post('/api/exams')
+      .set(auth(coord))
+      .send({ name: 'Scoped Test', type: 'unit_test', classes: ['Class 1-A', 'Class 2-A'], patternByClass: {} });
+    expect(inScope.status).toBe(201);
+
+    // Nursery-A is outside their assignedClasses — forbidden, even mixed with an in-scope class.
+    const outOfScope = await request(app)
+      .post('/api/exams')
+      .set(auth(coord))
+      .send({ name: 'Leaky Test', type: 'unit_test', classes: ['Class 1-A', 'Nursery-A'], patternByClass: {} });
+    expect(outOfScope.status).toBe(403);
+
+    // Unscope the coordinator — now unrestricted like school_admin.
+    const meRes = await request(app).get('/api/auth/profile').set(auth(coord));
+    const coordId = meRes.body._id ?? meRes.body.id;
+    await request(app).patch(`/api/coordinator/assigned-classes/${coordId}`).set(auth(admin)).send({ classKeys: [] });
+    const unscoped = await request(app)
+      .post('/api/exams')
+      .set(auth(coord))
+      .send({ name: 'Unscoped Test', type: 'unit_test', classes: ['Nursery-A'], patternByClass: {} });
+    expect(unscoped.status).toBe(201);
   });
 
   it('404 for a missing exam, 400 for invalid payload', async () => {
@@ -131,6 +164,46 @@ describe('Exams API', () => {
 
     const pub = await request(app).patch(`/api/exams/${id}/results/publish`).set(auth(admin)).send({ classKey: 'Class 2' });
     expect(pub.body.success).toBe(true);
+  });
+
+  it('GET /exams/:id/analytics matches the results it summarizes; report card + remarks round-trip', async () => {
+    const id = await firstExamId(admin);
+    await request(app).post(`/api/exams/${id}/results/calculate`).set(auth(admin)).send({ classKey: 'Class 1' });
+
+    const analytics = await request(app).get(`/api/exams/${id}/analytics?classKey=Class 1`).set(auth(admin));
+    expect(analytics.status).toBe(200);
+    expect(analytics.body).toMatchObject({
+      totalStudents: 3,
+      pass: expect.any(Number),
+      fail: expect.any(Number),
+      absent: expect.any(Number),
+      classAverage: expect.any(Number),
+    });
+    expect(analytics.body.pass + analytics.body.fail + analytics.body.absent).toBe(3);
+
+    const sid = await class1StudentId(admin);
+    const card = await request(app).get(`/api/exams/${id}/report-card/${sid}`).set(auth(admin));
+    expect(card.status).toBe(200);
+    expect(card.body).toMatchObject({
+      studentId: sid,
+      studentName: expect.any(String),
+      admissionNumber: expect.any(String),
+      subjects: expect.any(Array),
+      totalObtained: expect.any(Number),
+      passFail: expect.any(String),
+    });
+
+    const remarks = await request(app)
+      .post(`/api/exams/${id}/report-card/${sid}/remarks`)
+      .set(auth(admin))
+      .send({ teacherRemarks: 'Great improvement', principalRemarks: 'Keep it up' });
+    expect(remarks.status).toBe(200);
+
+    const cardAfter = await request(app).get(`/api/exams/${id}/report-card/${sid}`).set(auth(admin));
+    expect(cardAfter.body).toMatchObject({
+      teacherRemarks: 'Great improvement',
+      principalRemarks: 'Keep it up',
+    });
   });
 
   it('GET /students/:id/exams returns published exam results for the student', async () => {

@@ -114,10 +114,10 @@ export const feeExtrasService = {
     }
     return dto(doc.toObject());
   },
-  async revokeAppliedConcession(schoolId: string, id: string) {
+  async revokeAppliedConcession(schoolId: string, id: string, reason: string) {
     const doc = await AppliedConcessionModel.findOneAndUpdate(
       { _id: id, schoolId },
-      { approvalStatus: 'revoked' },
+      { approvalStatus: 'revoked', revokeReason: reason, revokedAt: nowIso() },
       { new: true },
     );
     if (!doc) throw ApiError.notFound('Applied concession not found');

@@ -8,6 +8,7 @@ import { AppliedFineModel, ConcessionModel, FineRuleModel } from '../modules/fee
 import { BankAccountModel, BankDepositModel, IncomeModel, VendorPaymentModel } from '../modules/finance/finance.models';
 import { BookCopyModel, BookModel, LibraryMemberModel } from '../modules/library/library.models';
 import { BuildingModel, HostelStudentModel, RoomModel } from '../modules/hostel/hostel.models';
+import { TimetableClassModel } from '../modules/timetable/timetable.models';
 import { DriverModel, RouteModel, StudentTransportModel, VehicleModel } from '../modules/transport/transport.models';
 import { AssetModel, InventoryItemModel, VendorModel } from '../modules/inventory/inventory.models';
 import { StaffModel } from '../modules/staff/staff.models';
@@ -73,6 +74,7 @@ interface SeedUser {
   role: UserRole;
   password: string;
   tenant: boolean;
+  assignedClasses?: string[];
 }
 
 /** Mirrors the frontend DEMO_CREDENTIALS + the mobile parent/student/driver. */
@@ -81,7 +83,7 @@ const DEMO_USERS: SeedUser[] = [
   { name: 'Support Engineer', username: 'support', email: 'support@msc.test', role: 'support_engineer', password: DEMO_PASSWORD, tenant: false },
   { name: 'School Admin', username: 'schooladmin', email: 'schooladmin@msc.test', role: 'school_admin', password: DEMO_PASSWORD, tenant: true },
   { name: 'Principal', username: 'principal', email: 'principal@msc.test', role: 'principal', password: DEMO_PASSWORD, tenant: true },
-  { name: 'Coordinator', username: 'coordinator', email: 'coordinator@msc.test', role: 'coordinator', password: DEMO_PASSWORD, tenant: true },
+  { name: 'Coordinator', username: 'coordinator', email: 'coordinator@msc.test', role: 'coordinator', password: DEMO_PASSWORD, tenant: true, assignedClasses: ['Class 1-A', 'Class 2-A'] },
   { name: 'Accountant', username: 'accountant', email: 'accountant@msc.test', role: 'accountant', password: DEMO_PASSWORD, tenant: true },
   { name: 'Teacher', username: 'teacher', email: 'teacher@msc.test', role: 'teacher', password: DEMO_PASSWORD, tenant: true },
   { name: 'Receptionist', username: 'receptionist', email: 'receptionist@msc.test', role: 'receptionist', password: DEMO_PASSWORD, tenant: true },
@@ -203,6 +205,7 @@ export async function seedDemo() {
         schoolId: u.tenant ? school._id : undefined,
         schoolName: u.tenant ? school.name : undefined,
         active: true,
+        assignedClasses: u.assignedClasses ?? [],
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
@@ -270,7 +273,7 @@ export async function seedDemo() {
           className: cls.name,
           sectionId: sec?._id,
           section: sec?.name ?? 'A',
-          classKey: cls.name,
+          classKey: `${cls.name}-${sec?.name ?? 'A'}`,
           admissionType: i % 2 === 0 ? 'new' : 'old',
           admittedAt: new Date('2025-04-05'),
           feeStatus: FEE[n % FEE.length],
@@ -597,7 +600,7 @@ export async function seedDemo() {
     const employeeId = `EMP${String(empN).padStart(4, '0')}`;
     await StaffModel.findOneAndUpdate(
       { schoolId: school._id, employeeId },
-      { schoolId: school._id, ...s, employeeId, employmentType: 'full_time', status: 'active', netSalary: Math.round(s.basic * 1.37) },
+      { schoolId: school._id, ...s, employeeId, employmentType: 'full_time', status: 'active', netSalary: s.basic },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
     empN += 1;
@@ -687,7 +690,7 @@ export async function seedDemo() {
   // Reception: an appointment + a call log.
   await AppointmentModel.findOneAndUpdate(
     { schoolId: school._id, visitorName: 'Mr. Gupta', date: '2025-05-05' },
-    { schoolId: school._id, visitorName: 'Mr. Gupta', visitorMobile: '9876530001', date: '2025-05-05', time: '10:00', durationMinutes: 30, purpose: 'admission', withWhom: 'Principal', status: 'scheduled', sendReminder: true },
+    { schoolId: school._id, visitorName: 'Mr. Gupta', visitorMobile: '9876530001', date: '2025-05-05', time: '10:00', durationMinutes: 30, purpose: 'admission_enquiry', withWhom: 'Principal', status: 'scheduled', sendReminder: true },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   await CallLogModel.findOneAndUpdate(
@@ -829,7 +832,7 @@ export async function seedDemo() {
         studentName: kid.name,
         className: kid.className,
         section: kid.section,
-        monthsCovered: ['Apr 2025', 'May 2025'],
+        monthsCovered: ['April', 'May'],
         feeHeads: [{ name: 'Tuition', amount: 5000 }],
         amount: 5000,
         paymentMode: 'cash',
@@ -900,6 +903,65 @@ export async function seedDemo() {
         { schoolId: school._id, teacherUserId: tid, ...tc },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
+    }
+    // Class incharge: single class the demo teacher manages (roster,
+    // homework/assignment/circular creation, attendance) — matches the
+    // 'Class 1-A' the seeded homework/assignment below target.
+    const inchargeClass = await ClassModel.findOne({ schoolId: school._id, name: 'Class 1' }).lean();
+    if (inchargeClass) {
+      await SectionModel.findOneAndUpdate(
+        { schoolId: school._id, classId: inchargeClass._id, name: 'A' },
+        { $set: { classTeacherId: tid, classTeacherName: teacher.name } },
+      );
+    }
+
+    // Link a Staff record to the demo teacher's login — timetable slots
+    // store `teacherId` as the Staff `_id` (not the login User `_id`, see
+    // `timetableService.getMySchedule`), so without this link the demo
+    // teacher's timetable-derived data (my-classes, my-exams, marks-overview)
+    // would always resolve to empty even with slots seeded below. In real
+    // usage this link is created automatically by the Staff → Login
+    // Credentials flow; the seed does it by hand for the one demo account.
+    const teacherStaff = await StaffModel.findOneAndUpdate(
+      { schoolId: school._id, designation: 'teacher' },
+      { $set: { userId: teacher._id } },
+      { new: true },
+    ).lean();
+
+    // Real timetable slots for those same two classes/subjects, so the
+    // timetable-derived data (`getMyTeachingAssignments`, `getMyClasses`)
+    // matches what `teacherClasses` above describes — the timetable is the
+    // single source of truth these are derived from, not a parallel list.
+    if (teacherStaff) {
+      const staffId = String(teacherStaff._id);
+      const slotsByClass: Record<string, { className: string; section: string; subjects: string[] }> = {
+        'Class 1-A': { className: 'Class 1', section: 'A', subjects: ['Mathematics', 'Science'] },
+        'Class 2-A': { className: 'Class 2', section: 'A', subjects: ['English'] },
+      };
+      const days = ['mon', 'tue', 'wed', 'thu', 'fri'];
+      let dayIdx = 0;
+      for (const { className, section, subjects } of Object.values(slotsByClass)) {
+        const cls = await ClassModel.findOne({ schoolId: school._id, name: className }).lean();
+        if (!cls) continue;
+        const slots = subjects.map((subjectName, i) => ({
+          classId: String(cls._id),
+          section,
+          day: days[dayIdx++ % days.length],
+          periodId: `p${i + 1}`,
+          subjectId: `demo-subject-${subjectName.toLowerCase()}`,
+          subjectName,
+          subjectColor: '#5b8cff',
+          teacherId: staffId,
+          teacherName: teacher.name,
+          roomId: 'demo-room-101',
+          roomName: 'Room 101',
+        }));
+        await TimetableClassModel.findOneAndUpdate(
+          { schoolId: school._id, classId: String(cls._id), section },
+          { $set: { schoolId: school._id, classId: String(cls._id), section, slots, published: true } },
+          { upsert: true },
+        );
+      }
     }
     await TeacherHomeworkModel.findOneAndUpdate(
       { schoolId: school._id, teacherUserId: tid, title: 'Algebra worksheet' },
@@ -1082,14 +1144,31 @@ export async function seedDemo() {
       ticketNumber: 'TKT-2026-004', subject: 'Login OTP not received', title: 'Login OTP not received',
       description: 'Parent app OTP SMS not arriving for some mobile numbers.', category: 'authentication',
       priority: 'critical', status: 'resolved', reporterName: 'Parent Demo', reporterRole: 'parent',
-      assignedTo: 'Support Engineer', resolvedAt: '2026-07-20T10:00:00.000Z',
+      assignedTo: 'Support Engineer',
+      // Pinned relative to each other (createdAt/updatedAt included, since
+      // this ticket disables the timestamps plugin below) so
+      // avgResolutionHours is a sane, stable demo number (~6h) — Mongoose's
+      // auto timestamps would otherwise be "whenever npm run seed last ran,"
+      // which could land before or long after the hardcoded resolvedAt.
+      createdAt: '2026-07-20T04:00:00.000Z',
+      updatedAt: '2026-07-20T10:00:00.000Z',
+      resolvedAt: '2026-07-20T10:00:00.000Z',
     },
   ];
   for (const t of tickets) {
     await TicketModel.findOneAndUpdate(
       { schoolId: school._id, subject: t.subject },
       { schoolId: school._id, schoolName: school.name, ...t },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        // Only disable auto-timestamps for the one ticket that pins its own
+        // createdAt (TKT-2026-004) — Mongoose's timestamps plugin otherwise
+        // always overwrites an explicit createdAt with "whenever npm run
+        // seed last ran." Other tickets keep normal auto createdAt/updatedAt.
+        timestamps: !('createdAt' in t),
+      },
     );
   }
 

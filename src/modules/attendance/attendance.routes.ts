@@ -9,6 +9,7 @@ import {
   markQuerySchema,
   overridePayloadSchema,
   savePayloadSchema,
+  sendAbsenteeAlertsSchema,
 } from './attendance.validation';
 
 /** Mounted at /api/attendance. Academic admins + teachers. */
@@ -23,6 +24,11 @@ attendanceRoutes.patch('/override', validate({ body: overridePayloadSchema }), a
 attendanceRoutes.get('/override-history', asyncHandler(attendanceController.overrideHistory));
 attendanceRoutes.get('/reports/daily', asyncHandler(attendanceController.dailySummary));
 attendanceRoutes.get('/reports/absentees', asyncHandler(attendanceController.absentees));
+attendanceRoutes.post(
+  '/reports/absentees/alert',
+  validate({ body: sendAbsenteeAlertsSchema }),
+  asyncHandler(attendanceController.sendAbsenteeAlerts),
+);
 attendanceRoutes.get('/reports/monthly', asyncHandler(attendanceController.monthlyReport));
 attendanceRoutes.get('/reports/low-attendance', asyncHandler(attendanceController.lowAttendance));
 attendanceRoutes.get('/reports/register', asyncHandler(attendanceController.registerMatrix));

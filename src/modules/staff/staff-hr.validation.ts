@@ -26,6 +26,28 @@ export const reviseSalarySchema = z.object({
   reason: z.string().min(1),
 });
 
+const salaryAdjustment = z.object({
+  id: z.string().optional(),
+  type: z.string(),
+  customLabel: z.string().optional(),
+  amount: z.coerce.number().min(0),
+  taxable: z.boolean().optional(),
+  recurring: z.boolean().optional(),
+});
+
+export const saveSalaryStructureSchema = z
+  .object({
+    basic: z.coerce.number().min(0),
+    paymentMode: z.enum(['cash', 'bank', 'cheque']).optional(),
+    bankAccountNumber: z.string().optional(),
+    bankName: z.string().optional(),
+    branch: z.string().optional(),
+    ifsc: z.string().optional(),
+    allowances: z.array(salaryAdjustment).optional(),
+    deductions: z.array(salaryAdjustment).optional(),
+  })
+  .passthrough();
+
 export const uploadDocSchema = z
   .object({
     category: z.string().min(1),
@@ -68,3 +90,18 @@ export const createAdvanceSchema = z
   .passthrough();
 
 export const advanceReviewSchema = z.object({ action: z.enum(['approve', 'reject']) });
+
+export const submitExitSchema = z
+  .object({
+    exitType: z.enum(['resignation', 'termination', 'retirement', 'contract_end']),
+    lastWorkingDate: z.string().min(1),
+    noticePeriodDays: z.coerce.number().min(0).optional(),
+    reason: z.string().min(1),
+    handoverNotes: z.string().optional(),
+    settlementAmount: z.coerce.number().optional(),
+    clearanceItems: z
+      .array(z.object({ id: z.string(), label: z.string(), checked: z.boolean() }))
+      .optional(),
+    remarks: z.string().optional(),
+  })
+  .passthrough();

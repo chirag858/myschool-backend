@@ -1,7 +1,8 @@
 import { ApiError } from '../../lib/api-error';
 import { AttendanceModel } from '../attendance/attendance.models';
 import { CircularModel } from '../communication/communication.models';
-import { FREQUENCY_MULTIPLIER, FeeStructureModel, ReceiptModel } from '../fee/fee.models';
+import { ReceiptModel } from '../fee/fee.models';
+import { MONTH_ABBR_TO_FULL, annualByClass } from '../fee/fee.service';
 import { StudentModel } from '../students/student.model';
 import { UserModel } from '../user/user.model';
 import { ParentComplaintModel } from './parent.models';
@@ -44,15 +45,6 @@ async function todayStatus(schoolId: string, studentId: string): Promise<string>
   return (rec?.status as string) ?? 'not_marked';
 }
 
-async function feeTotalForClass(schoolId: string, session: string, className: string): Promise<number> {
-  const structures = await FeeStructureModel.find({ schoolId, session }).lean();
-  return structures.reduce((sum, s) => {
-    const amounts = (s.amounts ?? {}) as Record<string, number>;
-    const amount = Number(amounts[className] ?? 0);
-    return sum + amount * (FREQUENCY_MULTIPLIER[s.frequency as string] ?? 1);
-  }, 0);
-}
-
 export const parentService = {
   async getChildren(schoolId: string, userId: string) {
     const kids = await childrenOf(schoolId, userId);
@@ -72,7 +64,8 @@ export const parentService = {
   async getFeeSummary(schoolId: string, userId: string, childId: string) {
     const child = await ownChild(schoolId, userId, childId);
     const session = (child.sessionLabel as string) ?? '';
-    const total = await feeTotalForClass(schoolId, session, (child.className as string) ?? '');
+    const annual = await annualByClass(schoolId, session);
+    const total = annual[(child.className as string) ?? ''] ?? 0;
     const receipts = await ReceiptModel.find({ schoolId, studentId: childId, status: 'active' })
       .sort({ paymentDate: -1 })
       .lean();
@@ -89,18 +82,22 @@ export const parentService = {
   async getFeeMonthly(schoolId: string, userId: string, childId: string) {
     const child = await ownChild(schoolId, userId, childId);
     const session = (child.sessionLabel as string) ?? '';
-    const structures = await FeeStructureModel.find({ schoolId, session }).lean();
-    const monthlyDue = structures
-      .filter((s) => s.frequency === 'monthly')
-      .reduce((sum, s) => sum + Number(((s.amounts ?? {}) as Record<string, number>)[(child.className as string) ?? ''] ?? 0), 0);
+    // Annual total ÷ 12 mirrors the admin Fee Collection screen's per-month
+    // figure (fee.service.ts's `annualByClass`) — a monthly-only filter here
+    // previously dropped quarterly/half-yearly/yearly fee heads entirely.
+    const annual = await annualByClass(schoolId, session);
+    const monthlyDue = Math.round((annual[(child.className as string) ?? ''] ?? 0) / 12);
     const receipts = await ReceiptModel.find({ schoolId, studentId: childId, status: 'active' }).lean();
 
-    // Session months: Apr → Mar. Each receipt spreads its amount over the months it covers.
-    const months = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
+    // Session months: Apr → Mar. Receipts store the FULL month name in
+    // `monthsCovered` — match on that, not the short label used for display.
+    // Reuses the same abbreviation→full-name map fee.service.ts's own
+    // month-scoped ledger uses, so both stay in sync if it ever changes.
+    const shortMonths = Object.keys(MONTH_ABBR_TO_FULL);
     const startYear = Number((session.split('-')[0] || '2025').slice(0, 4)) || 2025;
-    return months.map((m, i) => {
+    return shortMonths.map((m, i) => {
       const label = `${m} ${i < 9 ? startYear : startYear + 1}`;
-      const covering = receipts.filter((r) => ((r.monthsCovered as string[]) ?? []).includes(label));
+      const covering = receipts.filter((r) => ((r.monthsCovered as string[]) ?? []).includes(MONTH_ABBR_TO_FULL[m]!));
       const amountPaid = covering.reduce((s, r) => {
         const spread = ((r.monthsCovered as string[]) ?? []).length || 1;
         return s + Number(r.amount ?? 0) / spread;

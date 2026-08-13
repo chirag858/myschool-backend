@@ -16,7 +16,9 @@ import {
   markPaidSchema,
   reviewLeaveSchema,
   reviseSalarySchema,
+  saveSalaryStructureSchema,
   slipIdParam,
+  submitExitSchema,
   uploadDocSchema,
 } from './staff-hr.validation';
 
@@ -33,7 +35,7 @@ staffHrRoutes.patch('/:id/leave/:leaveId/review', validate({ params: leaveIdPara
 
 // Salary
 staffHrRoutes.post('/:id/salary-revise', validate({ params: idParam, body: reviseSalarySchema }), asyncHandler(staffHrController.reviseSalary));
-staffHrRoutes.put('/:id/salary-structure', validate({ params: idParam }), asyncHandler(staffHrController.saveSalaryStructure));
+staffHrRoutes.put('/:id/salary-structure', validate({ params: idParam, body: saveSalaryStructureSchema }), asyncHandler(staffHrController.saveSalaryStructure));
 staffHrRoutes.get('/:id/payroll-history', validate({ params: idParam }), asyncHandler(staffHrController.payrollHistory));
 
 // Documents
@@ -43,7 +45,7 @@ staffHrRoutes.post('/:id/documents', validate({ params: idParam, body: uploadDoc
 
 // Activity + exit
 staffHrRoutes.get('/:id/activity-log', validate({ params: idParam }), asyncHandler(staffHrController.activityLog));
-staffHrRoutes.post('/:id/exit', validate({ params: idParam }), asyncHandler(staffHrController.submitExit));
+staffHrRoutes.post('/:id/exit', validate({ params: idParam, body: submitExitSchema }), asyncHandler(staffHrController.submitExit));
 staffHrRoutes.get('/:id/exit-record', validate({ params: idParam }), asyncHandler(staffHrController.exitRecord));
 
 /** Payroll router. Mounted at /api/payroll. */

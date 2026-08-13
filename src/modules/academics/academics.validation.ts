@@ -13,7 +13,11 @@ export const classIdParam = z.object({
 
 // Sessions
 export const createSessionSchema = z.object({
-  name: z.string().min(1),
+  // Session names are compared as exact strings everywhere (exam KPIs,
+  // dashboards, filters) — normalize en-dash/em-dash to a plain hyphen so a
+  // pasted "2024–25" doesn't silently become invisible to every "2024-25"
+  // filter in the app.
+  name: z.string().min(1).transform((s) => s.replace(/[‒–—―−]/g, '-')),
   startDate: z.string().min(1),
   endDate: z.string().min(1),
   description: z.string().optional(),
@@ -24,11 +28,11 @@ export const closeSessionSchema = z.object({ confirmation: z.string().optional()
 // Classes
 export const createClassSchema = z.object({
   name: z.string().min(1),
-  order: z.coerce.number(),
+  order: z.coerce.number().int().min(1),
 });
 export const updateClassSchema = z.object({
   name: z.string().min(1).optional(),
-  order: z.coerce.number().optional(),
+  order: z.coerce.number().int().min(1).optional(),
 });
 export const reorderSchema = z.array(z.string()).min(1);
 

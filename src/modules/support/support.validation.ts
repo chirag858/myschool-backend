@@ -14,9 +14,6 @@ export const createTicketSchema = z.object({
   description: z.string().min(1),
   category: z.string().min(1),
   priority: z.enum(['low', 'medium', 'high', 'critical']),
-  reporterName: z.string().min(1),
-  reporterRole: z.string().min(1),
-  schoolName: z.string().optional(),
   stepsToReproduce: z.string().optional(),
 });
 
@@ -28,9 +25,11 @@ export const assignSchema = z.object({
   assignedTo: z.string().min(1),
 });
 
+export const prioritySchema = z.object({
+  priority: z.enum(['low', 'medium', 'high', 'critical']),
+});
+
 export const commentSchema = z.object({
   body: z.string().min(1),
   internal: z.boolean().default(false),
-  authorName: z.string().min(1),
-  authorRole: z.string().min(1),
 });

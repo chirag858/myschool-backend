@@ -49,6 +49,26 @@ const homeworkSchema = new Schema(
   { timestamps: true },
 );
 
+/** One student's submission against a homework. Materialised once per student
+ * when the teacher first opens the homework, then updated in place. */
+const homeworkSubmissionSchema = new Schema(
+  {
+    schoolId: school,
+    homeworkId: { type: String, required: true, index: true },
+    studentId: { type: String, required: true },
+    studentName: { type: String, default: '' },
+    rollNo: { type: Number, default: 0 },
+    status: { type: String, enum: ['pending', 'submitted', 'late', 'graded'], default: 'pending' },
+    submittedAt: String,
+    attachment: String,
+    marks: Number,
+    remark: String,
+    reminderSentAt: String,
+  },
+  { timestamps: true },
+);
+homeworkSubmissionSchema.index({ homeworkId: 1, studentId: 1 }, { unique: true });
+
 /** A graded assignment posted by a teacher. */
 const teacherAssignmentSchema = new Schema(
   {
@@ -113,6 +133,7 @@ const teacherLeaveSchema = new Schema(
 export type AssignmentDoc = InferSchemaType<typeof teacherAssignmentSchema>;
 export const TeacherClassModel = model('TeacherClassAssignment', assignmentSchema);
 export const TeacherHomeworkModel = model('TeacherHomework', homeworkSchema);
+export const HomeworkSubmissionModel = model('HomeworkSubmission', homeworkSubmissionSchema);
 export const TeacherAssignmentModel = model('TeacherAssignment', teacherAssignmentSchema);
 export const SubmissionModel = model('AssignmentSubmission', submissionSchema);
 export const TeacherLeaveModel = model('TeacherLeave', teacherLeaveSchema);

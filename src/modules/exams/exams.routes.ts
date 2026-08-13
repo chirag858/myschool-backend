@@ -8,10 +8,14 @@ import { examController } from './exams.controller';
 import {
   classKeyBody,
   createExamSchema,
+  examStudentParams,
   idParam,
+  logIdCardsSchema,
   marksQuery,
   resultsQuery,
+  saveDateSheetSchema,
   saveMarksSchema,
+  updateRemarksSchema,
 } from './exams.validation';
 
 /** Mounted at /api/exams. Academic admins + teachers (marks entry). */
@@ -26,6 +30,11 @@ examRoutes.get('/:id', validate({ params: idParam }), asyncHandler(examControlle
 examRoutes.patch('/:id/publish', validate({ params: idParam }), asyncHandler(examController.publish));
 examRoutes.patch('/:id/unpublish', validate({ params: idParam }), asyncHandler(examController.unpublish));
 examRoutes.delete('/:id', validate({ params: idParam }), asyncHandler(examController.remove));
+examRoutes.patch(
+  '/:id/datesheet',
+  validate({ params: idParam, body: saveDateSheetSchema }),
+  asyncHandler(examController.saveDateSheet),
+);
 
 examRoutes.get('/:id/marks', validate({ params: idParam, query: marksQuery }), asyncHandler(examController.getMarks));
 examRoutes.post('/:id/marks/save-draft', validate({ params: idParam, body: saveMarksSchema }), asyncHandler(examController.saveDraft));
@@ -35,3 +44,20 @@ examRoutes.post('/:id/results/calculate', validate({ params: idParam, body: clas
 examRoutes.get('/:id/results', validate({ params: idParam, query: resultsQuery }), asyncHandler(examController.results));
 examRoutes.patch('/:id/results/publish', validate({ params: idParam, body: classKeyBody }), asyncHandler(examController.publishResults));
 examRoutes.patch('/:id/results/unpublish', validate({ params: idParam, body: classKeyBody }), asyncHandler(examController.unpublishResults));
+
+examRoutes.get('/:id/analytics', validate({ params: idParam, query: resultsQuery }), asyncHandler(examController.analytics));
+examRoutes.get('/:id/report-card/:studentId', validate({ params: examStudentParams }), asyncHandler(examController.reportCard));
+examRoutes.get(
+  '/:id/report-cards',
+  validate({ params: idParam, query: resultsQuery }),
+  asyncHandler(examController.bulkReportCards),
+);
+examRoutes.post(
+  '/:id/report-card/:studentId/remarks',
+  validate({ params: examStudentParams, body: updateRemarksSchema }),
+  asyncHandler(examController.updateRemarks),
+);
+
+examRoutes.get('/id-cards/students', asyncHandler(examController.studentIdSelections));
+examRoutes.get('/id-cards/staff', asyncHandler(examController.staffIdSelections));
+examRoutes.post('/id-cards/log', validate({ body: logIdCardsSchema }), asyncHandler(examController.logIdCards));

@@ -7,7 +7,12 @@ import { seedDemo } from '../../seed/seed';
 async function token(username: string): Promise<string> {
   const res = await request(app)
     .post('/api/auth/login')
-    .send({ username, password: 'demo1234', captcha: 'x' });
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -55,6 +60,16 @@ describe('Super-Admin Schools API', () => {
     const teacher = await token('teacher');
     const res = await request(app).get('/api/super-admin/schools').set(auth(teacher));
     expect(res.status).toBe(403);
+  });
+
+  it('allows support_engineer to read the school pickers (GPS Devices / School Reports dependency) but not to create/delete/toggle modules', async () => {
+    const eng = await token('support');
+    expect((await request(app).get('/api/super-admin/schools').set(auth(eng))).status).toBe(200);
+    expect((await request(app).get('/api/super-admin/schools/list').set(auth(eng))).status).toBe(200);
+    expect(
+      (await request(app).post('/api/super-admin/schools').set(auth(eng)).send(validPayload)).status,
+    ).toBe(403);
+    expect((await request(app).get('/api/super-admin/dashboard/stats').set(auth(eng))).status).toBe(403);
   });
 
   it('GET /schools returns SchoolsListResponse with SchoolRow shape', async () => {
@@ -110,6 +125,30 @@ describe('Super-Admin Schools API', () => {
       (await request(app).get('/api/super-admin/schools/000000000000000000000000').set(auth(sa))).status,
     ).toBe(404);
     expect((await request(app).get('/api/super-admin/schools/not-an-id').set(auth(sa))).status).toBe(400);
+  });
+
+  it('GET /schools/generate-code derives a memorable code from the name', async () => {
+    const gen = await request(app).get('/api/super-admin/schools/generate-code?name=Vibgyor School').set(auth(sa));
+    expect(gen.status).toBe(200);
+    expect(gen.body.code).toBe('VIBGYOR');
+  });
+
+  it('GET /schools/generate-code falls back to a numbered suffix on collision', async () => {
+    const first = await request(app).get('/api/super-admin/schools/generate-code?name=Sunrise Academy').set(auth(sa));
+    expect(first.body.code).toBe('SUNRISE');
+    await request(app)
+      .post('/api/super-admin/schools')
+      .set(auth(sa))
+      .send({ ...validPayload, identity: { ...validPayload.identity, name: 'Sunrise Academy', code: first.body.code } });
+    const second = await request(app).get('/api/super-admin/schools/generate-code?name=Sunrise Academy').set(auth(sa));
+    expect(second.body.code).toBe('SUNRISE2');
+  });
+
+  it('GET /schools/code-check reports taken vs. free codes', async () => {
+    const taken = await request(app).get('/api/super-admin/schools/code-check?code=MSC').set(auth(sa));
+    expect(taken.body).toEqual({ taken: true });
+    const free = await request(app).get('/api/super-admin/schools/code-check?code=ZZZ999').set(auth(sa));
+    expect(free.body).toEqual({ taken: false });
   });
 
   it('POST /schools creates a tenant and detail reflects it', async () => {

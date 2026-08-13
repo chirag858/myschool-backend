@@ -1,7 +1,7 @@
 import { Schema, model, type InferSchemaType } from 'mongoose';
 
 export const FEE_FREQUENCIES = ['monthly', 'quarterly', 'half_yearly', 'yearly', 'one_time'] as const;
-export const RECEIPT_STATUSES = ['active', 'cancelled', 'duplicate_issued'] as const;
+export const RECEIPT_STATUSES = ['active', 'cancelled', 'duplicate_issued', 'reversed'] as const;
 
 /** Months per year each frequency bills. */
 export const FREQUENCY_MULTIPLIER: Record<string, number> = {

@@ -5,7 +5,14 @@ import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
 
 async function token(username: string): Promise<string> {
-  const res = await request(app).post('/api/auth/login').send({ username, password: 'demo1234', captcha: 'x' });
+  const res = await request(app)
+    .post('/api/auth/login')
+    .send({
+      username,
+      password: 'demo1234',
+      captcha: 'x',
+      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+    });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -64,6 +71,12 @@ describe('Staff HR extras API', () => {
     expect(save.status).toBe(204);
     const profile2 = await request(app).get(`/api/staff/${staffId}`).set(auth(admin));
     expect(profile2.body.salaryStructure).toMatchObject({ basic: 41000, paymentMode: 'bank' });
+
+    const badSave = await request(app)
+      .put(`/api/staff/${staffId}/salary-structure`)
+      .set(auth(admin))
+      .send({ basic: -100 });
+    expect(badSave.status).toBe(400);
   });
 
   it('documents: seeded list, upload, generate HR document', async () => {
@@ -87,6 +100,24 @@ describe('Staff HR extras API', () => {
     expect(np.body).toMatchObject({ noticeDays: 60 });
   });
 
+  it('activity log: real actions (leave, salary revise, salary structure) get logged', async () => {
+    await request(app)
+      .post(`/api/staff/${staffId}/leave-apply`)
+      .set(auth(admin))
+      .send({ type: 'sick', fromDate: '2025-07-01', toDate: '2025-07-02', days: 2, reason: 'Flu' });
+    await request(app).post(`/api/staff/${staffId}/salary-revise`).set(auth(admin)).send({ newBasic: 40000, reason: 'Annual hike' });
+    await request(app)
+      .put(`/api/staff/${staffId}/salary-structure`)
+      .set(auth(admin))
+      .send({ basic: 41000, paymentMode: 'bank', allowances: [], deductions: [] });
+
+    const activity = await request(app).get(`/api/staff/${staffId}/activity-log`).set(auth(admin));
+    const actions = activity.body.map((a: { action: string }) => a.action);
+    expect(actions).toEqual(
+      expect.arrayContaining(['Profile created', 'Leave applied', 'Salary revised', 'Salary structure updated']),
+    );
+  });
+
   it('payroll: generate slips, list, mark paid + hold, per-staff history, kpi', async () => {
     const gen = await request(app).post('/api/payroll/generate').set(auth(admin)).send({ month: 'June', year: 2025 });
     expect(gen.status).toBe(201);
@@ -108,11 +139,39 @@ describe('Staff HR extras API', () => {
     const staffSlip = (list.body.rows as { staffId: string; id: string }[]).find((r) => r.staffId === staffId);
     const hist = await request(app).get(`/api/staff/${staffId}/payroll-history`).set(auth(admin));
     expect(hist.body.length).toBe(1);
-    expect(hist.body[0]).toMatchObject({ month: 'June', year: 2025, netPaid: expect.any(Number) });
+    expect(hist.body[0]).toMatchObject({
+      month: 'June',
+      year: 2025,
+      netPaid: expect.any(Number),
+      allowances: expect.any(Number),
+      absentDeduction: expect.any(Number),
+      otherDeductions: expect.any(Number),
+    });
+    expect(hist.body[0].gross).toBe(hist.body[0].basic + hist.body[0].allowances);
+    expect(hist.body[0].netPaid).toBe(hist.body[0].gross - hist.body[0].absentDeduction - hist.body[0].otherDeductions);
     expect(staffSlip).toBeTruthy();
 
     const kpi = await request(app).get('/api/payroll/stats').set(auth(admin));
     expect(kpi.body).toMatchObject({ totalPayroll: expect.any(Number), paidCount: 1, pendingCount: expect.any(Number) });
+  });
+
+  it('payroll: absences dock pay proportionally', async () => {
+    await request(app)
+      .post('/api/staff/attendance/save')
+      .set(auth(admin))
+      .send({ date: '2025-07-02', attendance: [{ staffId, status: 'absent' }] });
+    await request(app)
+      .post('/api/staff/attendance/save')
+      .set(auth(admin))
+      .send({ date: '2025-07-03', attendance: [{ staffId, status: 'half_day' }] });
+
+    const gen = await request(app).post('/api/payroll/generate').set(auth(admin)).send({ month: 'July', year: 2025 });
+    expect(gen.status).toBe(201);
+    const slip = (gen.body.rows as { staffId: string; gross: number; absentDeduction: number; otherDeductions: number; netPayable: number }[]).find((r) => r.staffId === staffId);
+    expect(slip).toBeTruthy();
+    const expectedDeduction = Math.round((slip!.gross / 31) * 1.5); // July has 31 days; 1 absent + 1 half-day
+    expect(slip!.absentDeduction).toBe(expectedDeduction);
+    expect(slip!.netPayable).toBe(slip!.gross - expectedDeduction - slip!.otherDeductions);
   });
 
   it('advances: seeded requests, create, approve → active advance', async () => {
@@ -133,6 +192,20 @@ describe('Staff HR extras API', () => {
     expect(active.body[0]).toMatchObject({ totalAdvance: 10000, remaining: 10000, status: 'active' });
   });
 
+  it('exit: rejects invalid exitType and missing reason', async () => {
+    const badType = await request(app)
+      .post(`/api/staff/${staffId}/exit`)
+      .set(auth(admin))
+      .send({ exitType: 'quit', lastWorkingDate: '2025-08-31', reason: 'x' });
+    expect(badType.status).toBe(400);
+
+    const missingReason = await request(app)
+      .post(`/api/staff/${staffId}/exit`)
+      .set(auth(admin))
+      .send({ exitType: 'resignation', lastWorkingDate: '2025-08-31' });
+    expect(missingReason.status).toBe(400);
+  });
+
   it('exit: submit relieves the staff, exit-record returns it', async () => {
     const before = await request(app).get(`/api/staff/${staffId}`).set(auth(admin));
     expect(before.body.status).toBe('active');
@@ -147,5 +220,8 @@ describe('Staff HR extras API', () => {
     expect(record.body).toMatchObject({ exitType: 'resignation', lastWorkingDate: '2025-08-31' });
     const after = await request(app).get(`/api/staff/${staffId}`).set(auth(admin));
     expect(after.body.status).toBe('relieved');
+
+    const activity = await request(app).get(`/api/staff/${staffId}/activity-log`).set(auth(admin));
+    expect(activity.body.map((a: { action: string }) => a.action)).toContain('Exit submitted');
   });
 });

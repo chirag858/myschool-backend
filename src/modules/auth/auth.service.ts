@@ -1,6 +1,7 @@
 import { randomInt } from 'node:crypto';
 
 import bcrypt from 'bcryptjs';
+import type { HydratedDocument } from 'mongoose';
 
 import { env } from '../../config/env';
 import { ApiError } from '../../lib/api-error';
@@ -8,7 +9,7 @@ import { signTokens, verifyRefresh, type TokenPair } from '../../lib/jwt';
 import { SessionModel } from '../academics/academics.models';
 import { SchoolModel } from '../school/school.model';
 import { OtpModel } from './otp.model';
-import { UserModel } from '../user/user.model';
+import { UserModel, type UserDoc } from '../user/user.model';
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 
@@ -56,6 +57,60 @@ function maskContact(contact: string): string {
 
 const RESEND_COOLDOWN = 60;
 
+/**
+ * Resolves username/email to a user, scoped by school code. `School.code` is
+ * the tenant boundary: with a code, only that school's users are candidates;
+ * without one, only platform-level accounts (no schoolId at all — super_admin
+ * / support_engineer) are — a school-scoped account can't be found code-less
+ * since usernames are only unique per-school, not globally.
+ */
+async function resolveTenantUser(
+  username: string,
+  schoolCode?: string,
+): Promise<HydratedDocument<UserDoc> | null> {
+  const key = username.toLowerCase();
+  if (schoolCode) {
+    const school = await SchoolModel.findOne({ code: schoolCode.toUpperCase() });
+    if (!school) throw ApiError.unauthorized('Invalid school code');
+    if (school.status !== 'active' && school.status !== 'trial') {
+      throw ApiError.forbidden("This school's account is not active. Contact support.");
+    }
+    return UserModel.findOne({
+      schoolId: school._id,
+      $or: [{ username: key }, { email: key }],
+    }).select('+passwordHash');
+  }
+  const user = await UserModel.findOne({
+    $or: [{ username: key }, { email: key }],
+    schoolId: { $exists: false },
+  }).select('+passwordHash');
+  if (!user) {
+    const scoped = await UserModel.exists({
+      $or: [{ username: key }, { email: key }],
+      schoolId: { $exists: true },
+    });
+    if (scoped) throw ApiError.badRequest('Enter your school code to sign in');
+  }
+  return user;
+}
+
+/** Shared login tail: validate password + active state, record login, issue tokens. */
+async function completeLogin(
+  user: HydratedDocument<UserDoc> | null,
+  password: string,
+  ip: string,
+): Promise<AuthResult> {
+  if (!user || !user.passwordHash) throw ApiError.unauthorized('Invalid credentials');
+  if (!(await bcrypt.compare(password, user.passwordHash))) {
+    throw ApiError.unauthorized('Invalid credentials');
+  }
+  if (!user.active) throw ApiError.forbidden('Account disabled');
+  user.lastLoginAt = new Date();
+  user.lastLoginIp = ip;
+  await user.save();
+  return { user: user.toJSON(), tokens: tokensFor(user) };
+}
+
 export const authService = {
   getConfig() {
     return {
@@ -68,25 +123,29 @@ export const authService = {
     };
   },
 
+  /** Web staff login (school code + username/email + password). Returns { user, tokens }. */
+  async staffLogin(
+    username: string,
+    password: string,
+    ip = '',
+    schoolCode?: string,
+  ): Promise<AuthResult> {
+    const user = await resolveTenantUser(username, schoolCode);
+    return completeLogin(user, password, ip);
+  },
+
   /**
    * Password login by identifier — resolves username, email, OR mobile. Serves
-   * web staff login and mobile (`identifier`, incl. a parent password fallback
-   * by mobile), and records last-login. Returns { user, tokens }.
+   * the mobile app (`identifier`, incl. a parent password fallback by mobile),
+   * which is single-tenant per install so it carries no school code. Records
+   * last-login. Returns { user, tokens }.
    */
   async passwordLogin(identifier: string, password: string, ip = ''): Promise<AuthResult> {
     const key = identifier.toLowerCase();
     const user = await UserModel.findOne({
       $or: [{ username: key }, { email: key }, { mobile: identifier }],
     }).select('+passwordHash');
-    if (!user || !user.passwordHash) throw ApiError.unauthorized('Invalid credentials');
-    if (!(await bcrypt.compare(password, user.passwordHash))) {
-      throw ApiError.unauthorized('Invalid credentials');
-    }
-    if (!user.active) throw ApiError.forbidden('Account disabled');
-    user.lastLoginAt = new Date();
-    user.lastLoginIp = ip;
-    await user.save();
-    return { user: user.toJSON(), tokens: tokensFor(user) };
+    return completeLogin(user, password, ip);
   },
 
   /** Identifier-first detection for mobile: mobile number → OTP, else password. */
@@ -234,26 +293,29 @@ export const authService = {
       return { ok: false, reason: 'wrong_current' };
     }
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.mustChangePassword = false;
     await user.save();
     return { ok: true };
   },
 
-  /** Resolve a user by an explicit username/email, else by the contact (mobile/email). */
-  async _findForForgot(contact: string, username?: string) {
-    if (username) {
-      const key = username.toLowerCase();
-      return UserModel.findOne({ $or: [{ username: key }, { email: key }] }).select('+passwordHash');
-    }
-    return UserModel.findOne({ $or: [{ mobile: contact }, { email: contact.toLowerCase() }] }).select(
-      '+passwordHash',
-    );
+  /**
+   * Resolve a user for the forgot-password flow. Web sends an explicit
+   * username (+ optional school code) → tenant-scoped lookup; mobile sends only
+   * a contact (mobile/email) → resolve by that contact directly.
+   */
+  async _findForForgot(username: string | undefined, contact: string, schoolCode?: string) {
+    if (username) return resolveTenantUser(username, schoolCode);
+    return UserModel.findOne({
+      $or: [{ mobile: contact }, { email: contact.toLowerCase() }],
+    }).select('+passwordHash');
   },
 
   async forgotSendOtp(
+    username: string | undefined,
     contact: string,
-    username?: string,
+    schoolCode?: string,
   ): Promise<{ expiresAt: number; cooldownSeconds: number; maskedContact: string; otp?: string }> {
-    const user = await this._findForForgot(contact, username);
+    const user = await this._findForForgot(username, contact, schoolCode);
     if (!user) throw ApiError.notFound('No account found');
     const code = generateOtp();
     const expires = new Date(Date.now() + OTP_TTL_MS);
@@ -267,10 +329,11 @@ export const authService = {
   },
 
   async forgotReset(
+    username: string | undefined,
     contact: string,
     otp: string,
     password: string,
-    username?: string,
+    schoolCode?: string,
   ): Promise<{ success: true }> {
     const record = await OtpModel.findOne({
       channel: contact,
@@ -280,7 +343,7 @@ export const authService = {
     if (!record || record.code !== otp) throw ApiError.unauthorized('Invalid OTP');
     if (record.expiresAt.getTime() < Date.now()) throw ApiError.unauthorized('OTP expired');
 
-    const user = await this._findForForgot(contact, username);
+    const user = await this._findForForgot(username, contact, schoolCode);
     if (!user) throw ApiError.notFound('No account found');
 
     user.passwordHash = await bcrypt.hash(password, 10);

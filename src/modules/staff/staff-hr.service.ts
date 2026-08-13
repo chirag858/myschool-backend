@@ -1,5 +1,5 @@
 import { ApiError } from '../../lib/api-error';
-import { StaffModel } from './staff.models';
+import { StaffAttendanceModel, StaffModel } from './staff.models';
 import {
   PayrollSlipModel,
   SalaryAdvanceModel,
@@ -12,11 +12,34 @@ import {
 type Doc = Record<string, unknown> & { _id: unknown };
 const nowIso = (): string => new Date().toISOString();
 const LEAVE_ALLOTMENT: Record<string, number> = { casual: 12, sick: 10, earned: 15, maternity: 90, paternity: 15, other: 5 };
+const sumAmounts = (rows?: { amount: number }[]): number => (rows ?? []).reduce((s, r) => s + (Number(r.amount) || 0), 0);
+
+const MONTH_INDEX: Record<string, number> = {
+  Jan: 0, January: 0, Feb: 1, February: 1, Mar: 2, March: 2, Apr: 3, April: 3, May: 4,
+  Jun: 5, June: 5, Jul: 6, July: 6, Aug: 7, August: 7, Sep: 8, September: 8,
+  Oct: 9, October: 9, Nov: 10, November: 10, Dec: 11, December: 11,
+};
+
+/** Calendar date range (as `YYYY-MM-DD`, matching StaffAttendanceModel.date) + day count for a payroll month. */
+function monthRange(month: string, year: number): { start: string; end: string; daysInMonth: number } {
+  const monthIndex = MONTH_INDEX[month] ?? 0;
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return {
+    start: `${year}-${pad(monthIndex + 1)}-01`,
+    end: `${year}-${pad(monthIndex + 1)}-${pad(daysInMonth)}`,
+    daysInMonth,
+  };
+}
 
 async function requireStaff(schoolId: string, staffId: string): Promise<Doc> {
   const s = await StaffModel.findOne({ _id: staffId, schoolId });
   if (!s) throw ApiError.notFound('Staff not found');
   return s as unknown as Doc;
+}
+
+function logActivity(schoolId: string, staffId: string, action: string, module: string, details?: string): Promise<unknown> {
+  return StaffActivityModel.create({ schoolId, staffId, timestamp: nowIso(), action, performedBy: 'Admin', module, details });
 }
 
 export const staffHrService = {
@@ -62,6 +85,7 @@ export const staffHrService = {
       currentLevel: 1,
       history: [],
     });
+    await logActivity(schoolId, staffId, 'Leave applied', 'Leave', `${payload.type} · ${payload.fromDate} to ${payload.toDate}`);
     const r = doc.toObject();
     return {
       id: String(r._id),
@@ -96,6 +120,7 @@ export const staffHrService = {
       leave.set({ currentLevel: level + 1, history });
     }
     await leave.save();
+    await logActivity(schoolId, String(leave.staffId), `Leave ${status}`, 'Leave', remarks);
     return { status };
   },
 
@@ -112,15 +137,26 @@ export const staffHrService = {
       revisedBy: 'Admin',
       reason: payload.reason,
     });
-    (staff as unknown as { basic: number; salaryRevisions: unknown[] }).basic = payload.newBasic;
+    const structure = (staff as { salaryStructure?: { allowances?: { amount: number }[]; deductions?: { amount: number }[] } }).salaryStructure;
+    const netSalary = payload.newBasic + sumAmounts(structure?.allowances) - sumAmounts(structure?.deductions);
+    (staff as unknown as { basic: number; netSalary: number; salaryRevisions: unknown[] }).basic = payload.newBasic;
+    (staff as unknown as { netSalary: number }).netSalary = Math.round(netSalary);
     (staff as unknown as { salaryRevisions: unknown[] }).salaryRevisions = revisions;
     await (staff as unknown as { save: () => Promise<unknown> }).save();
+    await logActivity(schoolId, staffId, 'Salary revised', 'Salary', `${oldBasic} → ${payload.newBasic} (${payload.reason})`);
     return { ok: true as const };
   },
 
   async saveSalaryStructure(schoolId: string, staffId: string, structure: Record<string, unknown>) {
-    const r = await StaffModel.updateOne({ _id: staffId, schoolId }, { $set: { salaryStructure: structure, basic: structure.basic } });
+    const basic = Number(structure.basic) || 0;
+    const netSalary = Math.round(
+      basic +
+        sumAmounts(structure.allowances as { amount: number }[] | undefined) -
+        sumAmounts(structure.deductions as { amount: number }[] | undefined),
+    );
+    const r = await StaffModel.updateOne({ _id: staffId, schoolId }, { $set: { salaryStructure: structure, basic, netSalary } });
     if (!r.matchedCount) throw ApiError.notFound('Staff not found');
+    await logActivity(schoolId, staffId, 'Salary structure updated', 'Salary');
   },
 
   async getStaffPayrollHistory(schoolId: string, staffId: string) {
@@ -130,7 +166,10 @@ export const staffHrService = {
       month: r.month,
       year: r.year,
       basic: r.basic,
+      allowances: r.allowances,
       gross: r.gross,
+      absentDeduction: r.absentDeduction,
+      otherDeductions: r.otherDeductions,
       deductions: Number(r.absentDeduction ?? 0) + Number(r.otherDeductions ?? 0),
       netPaid: r.netPayable,
       paymentDate: r.paymentDate,
@@ -242,12 +281,25 @@ export const staffHrService = {
 
   async generatePayroll(schoolId: string, month: string, year: number) {
     const staff = await StaffModel.find({ schoolId, status: 'active' }).lean();
+    const { start, end, daysInMonth } = monthRange(month, year);
+    const attendanceRows = await StaffAttendanceModel.find({ schoolId, date: { $gte: start, $lte: end } }).lean();
+    const absentDaysByStaff = new Map<string, number>();
+    for (const row of attendanceRows) {
+      if (row.status !== 'absent' && row.status !== 'half_day') continue;
+      const weight = row.status === 'half_day' ? 0.5 : 1;
+      absentDaysByStaff.set(row.staffId, (absentDaysByStaff.get(row.staffId) ?? 0) + weight);
+    }
+
     for (const s of staff) {
       const basic = Number(s.basic ?? 0);
-      const allowances = Math.round(basic * 0.3);
+      const structure = s.salaryStructure as { allowances?: { amount: number }[]; deductions?: { amount: number }[] } | undefined;
+      const hasStructure = !!(structure?.allowances?.length || structure?.deductions?.length);
+      const allowances = hasStructure ? sumAmounts(structure!.allowances) : Math.round(basic * 0.3);
       const gross = basic + allowances;
-      const otherDeductions = Math.round(basic * 0.12);
-      const netPayable = gross - otherDeductions;
+      const otherDeductions = hasStructure ? sumAmounts(structure!.deductions) : Math.round(basic * 0.12);
+      const absentDays = absentDaysByStaff.get(String(s._id)) ?? 0;
+      const absentDeduction = Math.round((gross / daysInMonth) * absentDays);
+      const netPayable = gross - absentDeduction - otherDeductions;
       await PayrollSlipModel.findOneAndUpdate(
         { schoolId, staffId: String(s._id), month, year },
         {
@@ -261,7 +313,7 @@ export const staffHrService = {
           basic,
           allowances,
           gross,
-          absentDeduction: 0,
+          absentDeduction,
           otherDeductions,
           netPayable,
           status: 'pending',
@@ -387,6 +439,7 @@ export const staffHrService = {
       createdBy: 'Admin',
     });
     await StaffModel.updateOne({ _id: staffId, schoolId }, { $set: { status: payload.exitType === 'termination' ? 'terminated' : 'relieved' } });
+    await logActivity(schoolId, staffId, 'Exit submitted', 'Exit', String(payload.exitType));
     return this.exitView(doc.toObject() as Doc);
   },
 
@@ -396,7 +449,12 @@ export const staffHrService = {
   },
 
   calculateNoticePeriod(employmentType: string) {
-    const noticeDays = employmentType === 'permanent' ? 60 : employmentType === 'probation' ? 30 : employmentType === 'contract' ? 15 : 30;
+    // 'full_time' and 'permanent' are the same concept — both get 60 days.
+    const noticeDays =
+      employmentType === 'permanent' || employmentType === 'full_time' ? 60
+      : employmentType === 'probation' ? 30
+      : employmentType === 'contract' ? 15
+      : 30; // part_time + fallback
     return { noticeDays };
   },
 };

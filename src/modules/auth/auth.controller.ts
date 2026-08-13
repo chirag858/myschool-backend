@@ -10,12 +10,20 @@ export const authController = {
   },
 
   async login(req: Request, res: Response) {
-    const { username, identifier, password } = req.body as {
+    const { username, identifier, password, schoolCode } = req.body as {
       username?: string;
       identifier?: string;
       password: string;
+      schoolCode?: string;
     };
-    send(res, await authService.passwordLogin((identifier ?? username) as string, password, req.ip ?? ''));
+    // Mobile sends `identifier` (username/email/mobile, no school code); web
+    // staff send `username` + `schoolCode`. Route by which one is present.
+    send(
+      res,
+      identifier
+        ? await authService.passwordLogin(identifier, password, req.ip ?? '')
+        : await authService.staffLogin(username as string, password, req.ip ?? '', schoolCode),
+    );
   },
 
   async parentLogin(req: Request, res: Response) {
@@ -74,17 +82,22 @@ export const authController = {
   },
 
   async forgotSendOtp(req: Request, res: Response) {
-    const { contact, username } = req.body as { contact: string; username?: string };
-    send(res, await authService.forgotSendOtp(contact, username));
+    const { username, contact, schoolCode } = req.body as {
+      username?: string;
+      contact: string;
+      schoolCode?: string;
+    };
+    send(res, await authService.forgotSendOtp(username, contact, schoolCode));
   },
 
   async forgotReset(req: Request, res: Response) {
-    const { contact, username, otp, password } = req.body as {
-      contact: string;
+    const { username, contact, otp, password, schoolCode } = req.body as {
       username?: string;
+      contact: string;
       otp: string;
       password: string;
+      schoolCode?: string;
     };
-    send(res, await authService.forgotReset(contact, otp, password, username));
+    send(res, await authService.forgotReset(username, contact, otp, password, schoolCode));
   },
 };

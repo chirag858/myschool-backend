@@ -1,5 +1,39 @@
+import { randomUUID } from 'node:crypto';
+
+import bcrypt from 'bcryptjs';
+
+import { clearInchargeSection, getInchargeSection, setInchargeSection } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
+import { UserModel } from '../user/user.model';
 import { StaffAttendanceLockModel, StaffAttendanceModel, StaffModel } from './staff.models';
+
+interface CredentialsDoc {
+  _id: unknown;
+  username?: string;
+  email?: string;
+  role: string;
+  active?: boolean;
+  assignedClasses?: string[];
+  coordinatorTitle?: string;
+}
+async function credentialsDto(schoolId: string, user: CredentialsDoc): Promise<Record<string, unknown>> {
+  const inchargeSection = user.role === 'teacher' ? await getInchargeSection(schoolId, String(user._id)) : null;
+  return {
+    hasLogin: true,
+    userId: String(user._id),
+    username: user.username ?? '',
+    email: user.email ?? '',
+    role: user.role,
+    active: user.active ?? true,
+    // Class/section supervision scope is a capability any staff login can hold,
+    // not something tied to the literal 'coordinator' role string.
+    ...(user.role !== 'teacher' ? { assignedClasses: user.assignedClasses ?? [] } : {}),
+    // Schools invent their own coordinator titles (Wing/Sports/Academic/...); this is
+    // a free-text label, not a fixed enum — permissions still gate on role==='coordinator'.
+    ...(user.role === 'coordinator' ? { coordinatorTitle: user.coordinatorTitle ?? '' } : {}),
+    ...(user.role === 'teacher' ? { inchargeClassKey: inchargeSection?.classKey ?? null } : {}),
+  };
+}
 
 type Doc = Record<string, unknown> & { _id: unknown };
 const round = (n: number): number => Math.round(n);
@@ -41,6 +75,7 @@ function toProfile(d: Doc) {
     currentAddress: d.currentAddress ?? {},
     permanentSameAsCurrent: d.permanentSameAsCurrent ?? true,
     permanentAddress: d.permanentAddress ?? {},
+    probationEndDate: d.probationEndDate,
     reportingToName: d.reportingToName,
     reportingToId: d.reportingToId,
     workingHoursPerDay: d.workingHoursPerDay ?? 8,
@@ -50,7 +85,18 @@ function toProfile(d: Doc) {
     teachingSubjects: d.teachingSubjects ?? [],
     teachingClasses: d.teachingClasses ?? [],
     teachingExperienceYears: d.teachingExperienceYears,
-    salaryStructure: d.salaryStructure ?? {},
+    // `basic`/`netSalary` on the staff doc are the source of truth (kept in
+    // sync by reviseSalary/saveSalaryStructure) — mirror `basic` into the
+    // nested structure too, since staff created before a structure was ever
+    // saved only have it at the top level and `salaryStructure` is otherwise
+    // `{}`, which breaks anything reading `salaryStructure.basic` directly.
+    salaryStructure: {
+      paymentMode: 'bank',
+      ...(d.salaryStructure as Record<string, unknown> | undefined ?? {}),
+      basic: d.basic ?? 0,
+      allowances: (d.salaryStructure as { allowances?: unknown[] } | undefined)?.allowances ?? [],
+      deductions: (d.salaryStructure as { deductions?: unknown[] } | undefined)?.deductions ?? [],
+    },
     salaryRevisions: d.salaryRevisions ?? [],
   };
 }
@@ -85,8 +131,10 @@ export const staffService = {
     const onLeave = await StaffAttendanceModel.countDocuments({ schoolId, date: today(), status: 'leave' });
     return {
       totalStaff: all.length,
-      teachingCount: all.filter((s) => s.category === 'teaching').length,
-      nonTeachingCount: all.filter((s) => s.category !== 'teaching').length,
+      // Derive from `department` (the field the UI edits) rather than the
+      // separately-stored `category`, which can drift out of sync with it.
+      teachingCount: all.filter((s) => s.department === 'teaching').length,
+      nonTeachingCount: all.filter((s) => s.department !== 'teaching').length,
       onLeaveToday: onLeave,
       newJoiningsThisMonth: all.filter((s) => (s.joiningDate ?? '').startsWith(month)).length,
     };
@@ -109,12 +157,29 @@ export const staffService = {
   async createStaff(schoolId: string, payload: Record<string, unknown>) {
     const employeeId = await nextEmployeeId(schoolId);
     const basic = Number(payload.basic) || 0;
+    // Derive category from department so stats() always returns correct
+    // teachingCount / nonTeachingCount regardless of what the frontend sends.
+    const category = payload.department === 'teaching' ? 'teaching' : 'non_teaching';
+    const { allowances, deductions, paymentMode, bankAccountNumber, bankName, branch, ifsc, ...rest } = payload as {
+      allowances?: { amount: number }[];
+      deductions?: { amount: number }[];
+      paymentMode?: string;
+      bankAccountNumber?: string;
+      bankName?: string;
+      branch?: string;
+      ifsc?: string;
+      [key: string]: unknown;
+    };
+    const allowanceTotal = (allowances ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+    const deductionTotal = (deductions ?? []).reduce((s, d) => s + (Number(d.amount) || 0), 0);
     const doc = await StaffModel.create({
       schoolId,
-      ...payload,
+      ...rest,
       employeeId,
+      category,
       status: 'active',
-      netSalary: round(basic * 1.37),
+      netSalary: round(basic + allowanceTotal - deductionTotal),
+      salaryStructure: { allowances: allowances ?? [], deductions: deductions ?? [], paymentMode, bankAccountNumber, bankName, branch, ifsc },
     });
     return toRow(doc.toObject());
   },
@@ -123,6 +188,99 @@ export const staffService = {
     const doc = await StaffModel.findOneAndUpdate({ _id: id, schoolId }, { status }, { new: true });
     if (!doc) throw ApiError.notFound('Staff not found');
     return toRow(doc.toObject());
+  },
+
+  // ── Login credentials (links this Staff record to a User login) ──
+  async getCredentials(schoolId: string, staffId: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff) throw ApiError.notFound('Staff not found');
+    if (!staff.userId) return { hasLogin: false };
+    const user = await UserModel.findOne({ _id: staff.userId, schoolId }).lean();
+    if (!user) return { hasLogin: false };
+    return credentialsDto(schoolId, user as unknown as CredentialsDoc);
+  },
+
+  async createCredentials(
+    schoolId: string,
+    staffId: string,
+    payload: { role: string; email: string; username?: string; password?: string },
+  ) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId });
+    if (!staff) throw ApiError.notFound('Staff not found');
+    if (staff.userId) throw ApiError.conflict('This staff member already has a login');
+
+    const email = payload.email.toLowerCase();
+    const username = (payload.username ?? email).toLowerCase();
+    const existing = await UserModel.findOne({ schoolId, $or: [{ email }, { username }] }).lean();
+    if (existing) throw ApiError.conflict('A login with this email or username already exists');
+
+    const generated = !payload.password;
+    const tempPassword = payload.password ?? randomUUID().slice(0, 10);
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const user = await UserModel.create({
+      name: staff.name,
+      username,
+      email,
+      mobile: staff.mobile,
+      role: payload.role,
+      passwordHash,
+      schoolId,
+      active: true,
+    });
+    staff.userId = user._id;
+    await staff.save();
+
+    return {
+      ...(await credentialsDto(schoolId, user.toObject() as unknown as CredentialsDoc)),
+      ...(generated ? { tempPassword } : {}),
+    };
+  },
+
+  async updateCredentials(schoolId: string, staffId: string, patch: { role?: string; active?: boolean; coordinatorTitle?: string }) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
+    const user = await UserModel.findOneAndUpdate(
+      { _id: staff.userId, schoolId },
+      { $set: patch },
+      { new: true },
+    ).lean();
+    if (!user) throw ApiError.notFound('No login found for this staff member');
+    return credentialsDto(schoolId, user as unknown as CredentialsDoc);
+  },
+
+  // ── Class incharge (single class per teacher, mirrors Section.classTeacherId) ──
+  async getIncharge(schoolId: string, staffId: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff) throw ApiError.notFound('Staff not found');
+    if (!staff.userId) return null;
+    return getInchargeSection(schoolId, String(staff.userId));
+  },
+
+  async setIncharge(schoolId: string, staffId: string, sectionId: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
+    const user = await UserModel.findOne({ _id: staff.userId, schoolId }).lean();
+    if (!user) throw ApiError.notFound('No login found for this staff member');
+    if (user.role !== 'teacher') throw ApiError.badRequest('Only a teacher can be a class incharge');
+    return setInchargeSection(schoolId, sectionId, String(staff.userId), user.name ?? staff.name);
+  },
+
+  async clearIncharge(schoolId: string, staffId: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
+    await clearInchargeSection(schoolId, String(staff.userId));
+    return { success: true };
+  },
+
+  async resetPassword(schoolId: string, staffId: string, password?: string) {
+    const staff = await StaffModel.findOne({ _id: staffId, schoolId }).lean();
+    if (!staff?.userId) throw ApiError.notFound('No login found for this staff member');
+    const generated = !password;
+    const tempPassword = password ?? randomUUID().slice(0, 10);
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const user = await UserModel.findOneAndUpdate({ _id: staff.userId, schoolId }, { $set: { passwordHash } }, { new: true }).lean();
+    if (!user) throw ApiError.notFound('No login found for this staff member');
+    return generated ? { tempPassword } : { ok: true };
   },
 
   // ── Attendance ──
@@ -202,5 +360,46 @@ export const staffService = {
         percentage: workingDays ? round((present / workingDays) * 100) : 0,
       };
     });
+  },
+
+  async getAttendanceMonth(schoolId: string, staffId: string, month: number, year: number) {
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const start = `${year}-${pad(month)}-01`;
+    const end = `${year}-${pad(month)}-${pad(daysInMonth)}`;
+    const records = await StaffAttendanceModel.find({ schoolId, staffId, date: { $gte: start, $lte: end } }).lean();
+    const byDate = new Map(records.map((r) => [r.date, r.status]));
+
+    let present = 0;
+    let absent = 0;
+    let leave = 0;
+    let halfDay = 0;
+    let workingDays = 0;
+    const days = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = `${year}-${pad(month)}-${pad(day)}`;
+      const recorded = byDate.get(date);
+      const isWeekend = new Date(year, month - 1, day).getDay() % 6 === 0;
+      const status = recorded ?? (isWeekend ? 'weekend' : 'holiday');
+      if (recorded) {
+        workingDays += 1;
+        if (recorded === 'present') present += 1;
+        else if (recorded === 'absent') absent += 1;
+        else if (recorded === 'leave') leave += 1;
+        else if (recorded === 'half_day') halfDay += 1;
+      }
+      days.push({ date, status });
+    }
+    return {
+      year,
+      month,
+      workingDays,
+      present,
+      absent,
+      leave,
+      halfDay,
+      percentage: workingDays ? round((present / workingDays) * 100) : 0,
+      days,
+    };
   },
 };

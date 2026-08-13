@@ -1,5 +1,27 @@
 import { Schema, model, type InferSchemaType } from 'mongoose';
 
+export const VISITOR_PURPOSES = [
+  'parent_meeting',
+  'admission_enquiry',
+  'complaint',
+  'delivery',
+  'official_work',
+  'interview',
+  'other',
+] as const;
+
+export const APPOINTMENT_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'] as const;
+
+export const CALL_PURPOSES = [
+  'fee_inquiry',
+  'admission',
+  'complaint',
+  'attendance',
+  'transport',
+  'general',
+  'other',
+] as const;
+
 const appointmentSchema = new Schema(
   {
     schoolId: { type: Schema.Types.ObjectId, ref: 'School', required: true, index: true },
@@ -8,10 +30,10 @@ const appointmentSchema = new Schema(
     date: { type: String, default: '' },
     time: { type: String, default: '' },
     durationMinutes: { type: Number, default: 30 },
-    purpose: { type: String, default: 'other' },
+    purpose: { type: String, enum: VISITOR_PURPOSES, default: 'other' },
     withWhom: { type: String, default: '' },
     notes: String,
-    status: { type: String, default: 'scheduled' },
+    status: { type: String, enum: APPOINTMENT_STATUSES, default: 'scheduled' },
     sendReminder: { type: Boolean, default: false },
   },
   { timestamps: true },
@@ -23,10 +45,10 @@ const callLogSchema = new Schema(
   {
     schoolId: { type: Schema.Types.ObjectId, ref: 'School', required: true, index: true },
     loggedAt: { type: String, default: '' },
-    direction: { type: String, default: 'incoming' },
+    direction: { type: String, enum: ['incoming', 'outgoing'], default: 'incoming' },
     callerName: { type: String, default: '' },
     mobile: { type: String, default: '' },
-    purpose: { type: String, default: 'other' },
+    purpose: { type: String, enum: CALL_PURPOSES, default: 'other' },
     relatedStudentName: String,
     notes: String,
     followUpRequired: { type: Boolean, default: false },

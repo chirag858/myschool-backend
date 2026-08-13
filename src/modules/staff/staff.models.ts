@@ -3,6 +3,7 @@ import { Schema, model, type InferSchemaType } from 'mongoose';
 const staffSchema = new Schema(
   {
     schoolId: { type: Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     employeeId: { type: String, required: true },
     name: { type: String, required: true },
     designation: { type: String, default: '' },
@@ -34,6 +35,9 @@ const staffSchema = new Schema(
     currentAddress: { type: Schema.Types.Mixed, default: () => ({}) },
     permanentAddress: { type: Schema.Types.Mixed, default: () => ({}) },
     permanentSameAsCurrent: { type: Boolean, default: true },
+    reportingToId: String,
+    reportingToName: String,
+    probationEndDate: String,
     workingHoursPerDay: { type: Number, default: 8 },
     weeklyOffDays: { type: [String], default: ['sun'] },
     qualifications: { type: [Schema.Types.Mixed], default: [] },
