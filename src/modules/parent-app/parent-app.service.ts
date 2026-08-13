@@ -10,6 +10,8 @@ import { TeacherClassModel } from '../teacher/teacher.models';
 import { TeacherContentModel } from '../teacher-app/teacher-app.models';
 import { OtpModel } from '../auth/otp.model';
 import { UserModel } from '../user/user.model';
+import { RouteModel, StudentTransportModel, VehicleModel } from '../transport/transport.models';
+import { DriverLocationModel, DriverTripModel } from '../driver-app/driver-app.models';
 import {
   ConversationModel,
   MessageModel,
@@ -20,6 +22,17 @@ import {
 } from './parent-app.models';
 
 type Doc = Record<string, unknown> & { _id: unknown };
+
+/** Demo stop coordinates (Patiala) — mirrors driver-app until stops carry real lat/lng. */
+const TRANSPORT_BASE = { lat: 30.3398, lng: 76.3869 };
+function routeStopsFor(route: Doc, childStopName?: string) {
+  return ((route.stops as Array<Record<string, unknown>>) ?? []).map((s, i) => ({
+    id: `${String(route._id)}:stop:${i}`,
+    name: (s.stopName as string) ?? `Stop ${i + 1}`,
+    position: { lat: TRANSPORT_BASE.lat + i * 0.006, lng: TRANSPORT_BASE.lng + i * 0.006 },
+    isChildStop: childStopName ? (s.stopName as string) === childStopName : undefined,
+  }));
+}
 const nowIso = (): string => new Date().toISOString();
 const ATT_OUT: Record<string, string> = { present: 'present', absent: 'absent', leave: 'leave', half_day: 'halfDay', late: 'late', holiday: 'holiday' };
 
@@ -440,13 +453,58 @@ export const parentAppService = {
   // ── Transport ──
   async transportAssignment(schoolId: string, userId: string, childId: string) {
     await ownChild(schoolId, userId, childId);
-    // No student↔route link modelled yet → null (the contract allows null).
-    return null;
+    const link = await StudentTransportModel.findOne({ schoolId, studentId: childId }).lean();
+    if (!link?.routeId) return null;
+    const vehicle = (await VehicleModel.findOne({ schoolId }).lean()) as Doc | null;
+    const route = (await RouteModel.findOne({ _id: link.routeId, schoolId }).lean()) as Doc | null;
+    return {
+      route: (link.routeName as string) || (route?.routeName as string) || 'Route',
+      stopName: (link.stopName as string) || (link.pickupPoint as string) || '',
+      vehicle: (vehicle?.registrationNumber as string) ?? '',
+      // ponytail: driver name/contact aren't on the vehicle/route model yet — pull
+      // from the route's assigned driver here once that link exists.
+      driverName: (route?.driverName as string) ?? '',
+      driverContact: (route?.driverContact as string) ?? '',
+    };
   },
   async transportLive(schoolId: string, userId: string, childId: string) {
     await ownChild(schoolId, userId, childId);
-    // ponytail: STUB — a live vehicle feed needs a GPS provider streaming positions.
-    return { tripStatus: 'no_trip', position: null, etaMinutes: null, boarding: 'unknown', updatedAt: Date.now(), stops: [] };
+    const idle = (stops: ReturnType<typeof routeStopsFor>) => ({
+      tripStatus: 'no_trip' as const,
+      position: null,
+      etaMinutes: null,
+      boarding: 'unknown' as const,
+      updatedAt: Date.now(),
+      stops,
+    });
+
+    const link = await StudentTransportModel.findOne({ schoolId, studentId: childId }).lean();
+    const routeId = link?.routeId ? String(link.routeId) : null;
+    if (!routeId) return idle([]);
+
+    const route = await RouteModel.findOne({ _id: routeId, schoolId }).lean();
+    const stops = route ? routeStopsFor(route as Doc, link?.stopName as string | undefined) : [];
+
+    // The real producer→consumer join: an active driver trip on the child's route,
+    // and the latest GPS position the driver emitted for it.
+    const active = await DriverTripModel.findOne({ schoolId, routeId, status: 'active' }).lean();
+    if (!active) return idle(stops);
+
+    const loc = await DriverLocationModel.findOne({ schoolId, tripId: active.tripId }).lean();
+    const mark = ((active.boarding as Array<{ studentId: string; mark: string }>) ?? []).find(
+      (b) => b.studentId === childId,
+    )?.mark;
+    const boarding = mark === 'boarded' ? 'boarded' : mark === 'deboarded' ? 'dropped' : 'not_yet';
+
+    return {
+      tripStatus: 'active' as const,
+      position: loc && loc.lat != null && loc.lng != null ? { lat: loc.lat, lng: loc.lng } : null,
+      bearing: (loc?.bearing as number | undefined) ?? undefined,
+      etaMinutes: loc ? 8 : null,
+      boarding,
+      updatedAt: (loc?.updatedAt as number) || Date.now(),
+      stops,
+    };
   },
 
   // ── Payments (STUB — needs a payment gateway) ──

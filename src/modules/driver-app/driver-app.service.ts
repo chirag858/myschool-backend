@@ -78,6 +78,8 @@ export const driverAppService = {
       { $set: { schoolId, routeId, tripId, routeName: route.routeName ?? route.routeCode, type, status: 'active', date: today(), startedAt: nowIso() } },
       { upsert: true },
     );
+    // Auto lifecycle alert (delivery to parents needs a messaging provider — see triggerAlert).
+    await DriverAlertModel.create({ schoolId, routeId, tripId, type: 'started', at: nowIso(), auto: true, recipients: 'Route parents' });
     return { tripId, status: 'active' };
   },
 
@@ -89,6 +91,7 @@ export const driverAppService = {
     );
     if (!run) throw ApiError.notFound('Trip not found');
     await DriverLocationModel.deleteOne({ schoolId, tripId });
+    await DriverAlertModel.create({ schoolId, routeId: String(run.routeId), tripId, type: 'reached', at: nowIso(), auto: true, recipients: 'Route parents' });
     return { tripId, status: 'completed' };
   },
 

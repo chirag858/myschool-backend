@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
+import { driverAppService } from '../driver-app/driver-app.service';
+import { SchoolModel } from '../school/school.model';
+import { RouteModel, StudentTransportModel } from '../transport/transport.models';
 
 async function token(username: string): Promise<string> {
-  const res = await request(app).post('/api/auth/login').send({ username, password: 'demo1234', captcha: 'x' });
+  const res = await request(app).post('/api/auth/login').send({ identifier: username, password: 'demo1234', captcha: 'x' });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -129,5 +132,36 @@ describe('Parent App API (mobile)', () => {
     expect((await request(app).get(`/api/parent/transport/live?childId=${childId}`).set(auth(parent))).body).toMatchObject({ tripStatus: expect.any(String), stops: expect.any(Array) });
     const order = await request(app).post('/api/parent/fees/payment/order').set(auth(parent)).send({ childId, amount: 5000, selectedDueIds: ['tuition'] });
     expect(order.body).toMatchObject({ orderId: expect.any(String), amount: 5000 });
+  });
+
+  it('transport live: a driver GPS emit reaches the parent (real producer→consumer join)', async () => {
+    const schoolId = String((await SchoolModel.findOne({}).lean())!._id);
+    const route = await RouteModel.create({ schoolId, routeName: 'Parity Route', stops: [{ stopName: 'Gate', stopOrder: 1 }, { stopName: 'Market', stopOrder: 2 }] });
+    const routeId = String(route._id);
+    // The seed may already link this child to a route — replace it with our known one.
+    await StudentTransportModel.deleteMany({ schoolId, studentId: childId });
+    await StudentTransportModel.create({ schoolId, studentId: childId, studentName: 'Kid', routeId, routeName: 'Parity Route', stopName: 'Market' });
+
+    // No trip yet → no_trip, but the child's route stops are returned.
+    const before = await request(app).get(`/api/parent/transport/live?childId=${childId}`).set(auth(parent));
+    expect(before.body.tripStatus).toBe('no_trip');
+    expect(before.body.stops.length).toBe(2);
+    expect(before.body.stops.some((s: { isChildStop?: boolean }) => s.isChildStop)).toBe(true);
+
+    // Driver starts a trip and emits a live position on the child's route.
+    const tripId = `${routeId}:pickup`;
+    await driverAppService.startTrip(schoolId, routeId, tripId);
+    await driverAppService.emit(schoolId, tripId, { position: { lat: 30.35, lng: 76.4 }, bearing: 90, updatedAt: 1234 });
+
+    // The parent now sees the driver's REAL emitted position — not a fabricated one.
+    const live = await request(app).get(`/api/parent/transport/live?childId=${childId}`).set(auth(parent));
+    expect(live.body.tripStatus).toBe('active');
+    expect(live.body.position).toEqual({ lat: 30.35, lng: 76.4 });
+    expect(live.body.updatedAt).toBe(1234);
+
+    // The trip start also logged an auto lifecycle alert for the driver's alert feed.
+    const driver = await token('driver');
+    const alerts = await request(app).get('/api/driver/alerts').set(auth(driver));
+    expect(alerts.body.some((a: { type: string; auto: boolean }) => a.type === 'started' && a.auto)).toBe(true);
   });
 });
