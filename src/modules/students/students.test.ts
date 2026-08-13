@@ -27,8 +27,10 @@ describe('Students API', () => {
 
   it('requires auth (401) and forbids non-academic roles (403)', async () => {
     expect((await request(app).get('/api/students')).status).toBe(401);
-    const acc = await token('accountant');
-    expect((await request(app).get('/api/students').set(auth(acc))).status).toBe(403);
+    // Accountant + receptionist are deliberately granted the roster (fees/admissions);
+    // use a genuinely non-academic role (driver) to assert the gate still rejects.
+    const driver = await token('driver');
+    expect((await request(app).get('/api/students').set(auth(driver))).status).toBe(403);
   });
 
   it('teacher can read a real student\'s attendance calendar/summary, but not the full student list', async () => {
