@@ -6,7 +6,7 @@ const approvalSchema = new Schema(
     schoolId: { type: Schema.Types.ObjectId, ref: 'School', required: true, index: true },
     type: {
       type: String,
-      enum: ['admission', 'concession', 'refund', 'leave', 'salarySlip', 'resignation'],
+      enum: ['admission', 'concession', 'refund', 'leave', 'salarySlip', 'resignation', 'outpass', 'expense'],
       required: true,
     },
     title: { type: String, default: '' },

@@ -28,7 +28,7 @@ describe('Admin App API', () => {
     expect(res.status).toBe(200);
     expect(res.body.collections).toMatchObject({ cash: expect.any(Number), online: expect.any(Number), bank: expect.any(Number), total: expect.any(Number) });
     expect(res.body.vitals).toMatchObject({ enrollmentTotal: expect.any(Number), studentAttendancePct: expect.any(Number) });
-    expect(res.body.badges.approvals).toBe(3);
+    expect(res.body.badges.approvals).toBe(5);
   });
 
   it('fee-summary + attendance-summary aggregate by class', async () => {
@@ -44,13 +44,26 @@ describe('Admin App API', () => {
     expect(res.body[0]).toMatchObject({ id: expect.any(String), title: expect.any(String), rows: expect.any(Array) });
   });
 
-  it('approvals: list, filter by type, detail', async () => {
+  it('approvals: list, filter by type (incl. outpass + expense), detail', async () => {
     const all = await request(app).get('/api/admin/approvals').set(auth(admin));
-    expect(all.body.length).toBe(3);
+    expect(all.body.length).toBe(5);
     const concessions = await request(app).get('/api/admin/approvals?type=concession').set(auth(admin));
     expect(concessions.body.length).toBe(1);
+    // outpass + expense are now first-class approval types on the admin hub
+    const outpass = await request(app).get('/api/admin/approvals?type=outpass').set(auth(admin));
+    expect(outpass.body.length).toBe(1);
+    const expense = await request(app).get('/api/admin/approvals?type=expense').set(auth(admin));
+    expect(expense.body.length).toBe(1);
     const detail = await request(app).get(`/api/admin/approvals/detail?id=${all.body[0].id}`).set(auth(admin));
     expect(detail.body).toMatchObject({ id: all.body[0].id, trail: expect.any(Array) });
+  });
+
+  it('act: an outpass approval (single level) authorizes to approved', async () => {
+    const list = await request(app).get('/api/admin/approvals?type=outpass').set(auth(admin));
+    const item = list.body[0];
+    const done = await request(app).post('/api/admin/approvals/act').set(auth(admin))
+      .send({ id: item.id, action: 'authorize', reason: 'Approved', expectedLevel: item.currentLevel });
+    expect(done.body.status).toBe('approved');
   });
 
   it('act: endorse advances level, authorize approves, stale expectedLevel → 409', async () => {

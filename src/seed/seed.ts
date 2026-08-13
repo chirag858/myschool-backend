@@ -1089,6 +1089,8 @@ export async function seedDemo() {
     { type: 'concession', title: 'Merit concession — Aarav', subtitle: 'Class 5 · ₹6,000', currentLevel: 1, maxLevel: 2, amount: 6000, fields: [{ label: 'Reason', value: 'Merit scholarship' }], trail: [{ level: 0, roleLabel: 'Accountant', actorName: 'Accountant', at: '2025-05-01T09:00:00.000Z', decision: 'submitted' }] },
     { type: 'refund', title: 'Fee refund — Priya', subtitle: 'Class 3 · ₹1,200', currentLevel: 2, maxLevel: 2, amount: 1200, fields: [{ label: 'Mode', value: 'Bank' }], trail: [{ level: 1, roleLabel: 'Accountant', actorName: 'Accountant', at: '2025-05-02T09:00:00.000Z', decision: 'endorsed' }] },
     { type: 'leave', title: 'Staff leave — Teacher', subtitle: '2 days · casual', currentLevel: 1, maxLevel: 1, fields: [{ label: 'Dates', value: '10–11 Apr' }], trail: [] },
+    { type: 'outpass', title: 'Early leave — Kabir', subtitle: 'Class 4 · 12:30 PM', currentLevel: 1, maxLevel: 1, fields: [{ label: 'Reason', value: 'Doctor appointment' }, { label: 'Guardian', value: 'Father' }], trail: [] },
+    { type: 'expense', title: 'Purchase voucher — Lab supplies', subtitle: '₹8,500 · Science dept', currentLevel: 1, maxLevel: 2, amount: 8500, fields: [{ label: 'Vendor', value: 'Scientific Traders' }, { label: 'Category', value: 'Consumables' }], trail: [{ level: 0, roleLabel: 'Coordinator', actorName: 'Coordinator', at: '2025-05-03T09:00:00.000Z', decision: 'submitted' }] },
   ];
   for (const a of approvals) {
     await ApprovalModel.findOneAndUpdate(
