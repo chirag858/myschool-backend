@@ -45,9 +45,9 @@ export const createSchoolSchema = z.object({
     establishedYear: z.coerce.number(),
   }),
   branding: z.object({
-    logoFileName: z.string().optional(),
-    signatureFileName: z.string().optional(),
-    stampFileName: z.string().optional(),
+    logoUrl: z.string().optional(),
+    signatureUrl: z.string().optional(),
+    stampUrl: z.string().optional(),
     headerText: z.string().optional(),
     footerText: z.string().optional(),
     primaryColor: z.string().optional(),

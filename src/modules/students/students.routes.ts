@@ -7,6 +7,7 @@ import { examController } from '../exams/exams.controller';
 import { hostelController } from '../hostel/hostel.controller';
 import { transportController } from '../transport/transport.controller';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { upload } from '../../middleware/upload';
 import { validate } from '../../middleware/validate';
 import { ACADEMIC_ADMIN_ROLES } from '../user/roles';
 import { studentsController } from './students.controller';
@@ -74,6 +75,20 @@ studentsRoutes.post(
   validate({ body: createStudentSchema }),
   asyncHandler(studentsController.create),
 );
+// Admission wizard's webcam-captured photo — same roles as create.
+studentsRoutes.post(
+  '/upload-photo',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  upload.single('photo'),
+  asyncHandler(studentsController.uploadPhoto),
+);
+// Admission wizard's Documents step — same roles as create.
+studentsRoutes.post(
+  '/upload-document',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  upload.single('document'),
+  asyncHandler(studentsController.uploadDocument),
+);
 studentsRoutes.get(
   '/class-summary',
   requireRole(...ACADEMIC_ADMIN_ROLES, 'accountant'),
@@ -128,7 +143,13 @@ studentsRoutes.get(
 // Student documents (embedded). Also allow receptionist (Document Collection screen).
 const documentsGate = requireRole('school_admin', 'principal', 'coordinator', 'receptionist');
 studentsRoutes.get('/:id/documents', documentsGate, validate({ params: idParam }), asyncHandler(studentsController.getDocuments));
-studentsRoutes.post('/:id/documents', documentsGate, validate({ params: idParam, body: documentSchema }), asyncHandler(studentsController.addDocument));
+studentsRoutes.post(
+  '/:id/documents',
+  documentsGate,
+  upload.single('document'),
+  validate({ params: idParam, body: documentSchema }),
+  asyncHandler(studentsController.addDocument),
+);
 studentsRoutes.delete('/:id/documents/:docId', documentsGate, validate({ params: docIdParam }), asyncHandler(studentsController.deleteDocument));
 // Also allow accountant (Fee Ledger's Profile action) and receptionist (Student Search profile link).
 studentsRoutes.get(

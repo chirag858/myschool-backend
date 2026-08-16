@@ -51,6 +51,7 @@ const documentSchema = new Schema({
   customLabel: String,
   fileName: String,
   sizeBytes: { type: Number, default: 0 },
+  url: { type: String, default: '' },
   uploadedAt: { type: String },
   verification: { type: String, enum: ['pending', 'verified'], default: 'pending' },
 });

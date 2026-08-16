@@ -109,6 +109,7 @@ function toProfile(d: Doc) {
       customLabel: doc.customLabel,
       fileName: doc.fileName,
       sizeBytes: doc.sizeBytes,
+      url: doc.url,
       uploadedAt: doc.uploadedAt,
       verification: doc.verification,
     })),
@@ -494,6 +495,7 @@ export const studentsService = {
       customLabel: d.customLabel,
       fileName: d.fileName,
       sizeBytes: d.sizeBytes,
+      url: d.url,
       uploadedAt: d.uploadedAt,
       verification: d.verification ?? 'pending',
     }));
@@ -507,6 +509,7 @@ export const studentsService = {
       customLabel: payload.customLabel,
       fileName: payload.fileName,
       sizeBytes: Number(payload.sizeBytes ?? 0),
+      url: payload.url ?? '',
       uploadedAt: new Date().toISOString(),
       verification: 'pending' as const,
     };
@@ -519,6 +522,7 @@ export const studentsService = {
       customLabel: created.customLabel,
       fileName: created.fileName,
       sizeBytes: created.sizeBytes,
+      url: created.url,
       uploadedAt: created.uploadedAt,
       verification: created.verification,
     };

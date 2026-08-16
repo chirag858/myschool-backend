@@ -87,6 +87,7 @@ export const createStudentSchema = z.object({
         customLabel: z.string().max(50).optional(),
         fileName: z.string().min(1),
         sizeBytes: z.number().nonnegative(),
+        url: z.string().optional(),
       }),
     )
     .optional(),
@@ -132,8 +133,6 @@ export const docIdParam = z.object({
 export const documentSchema = z
   .object({
     type: z.string().min(1),
-    fileName: z.string().min(1),
-    sizeBytes: z.number().nonnegative(),
     customLabel: z.string().optional(),
   })
   .passthrough();

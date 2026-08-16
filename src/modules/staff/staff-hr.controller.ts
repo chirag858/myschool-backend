@@ -2,7 +2,12 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { uploadToR2 } from '../../lib/storage';
 import { staffHrService } from './staff-hr.service';
+
+interface MulterRequest extends Request {
+  file?: Express.Multer.File;
+}
 
 function schoolId(req: Request): string {
   const id = req.user?.schoolId;
@@ -44,8 +49,25 @@ export const staffHrController = {
   async getDocuments(req: Request, res: Response) {
     send(res, await staffHrService.getStaffDocuments(schoolId(req), p(req, 'id')));
   },
-  async uploadDocument(req: Request, res: Response) {
-    created(res, await staffHrService.uploadDocument(schoolId(req), p(req, 'id'), req.body));
+  async uploadDocument(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded (expected field "document")');
+    const { category } = req.body as { category: string };
+    const { url } = await uploadToR2({
+      schoolId: schoolId(req),
+      folder: 'staff-documents',
+      fileName: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+    created(
+      res,
+      await staffHrService.uploadDocument(schoolId(req), p(req, 'id'), {
+        category,
+        fileName: req.file.originalname,
+        sizeBytes: req.file.size,
+        url,
+      }),
+    );
   },
   async generateDocument(req: Request, res: Response) {
     created(res, await staffHrService.generateHRDocument(schoolId(req), req.body));

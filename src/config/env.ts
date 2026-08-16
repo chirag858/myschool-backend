@@ -11,6 +11,15 @@ const schema = z.object({
   JWT_ACCESS_TTL: z.coerce.number().default(3600),
   JWT_REFRESH_TTL: z.coerce.number().default(2592000),
   CORS_ORIGIN: z.string().default('*'),
+  // Cloudflare R2 (S3-compatible object storage) for real file uploads —
+  // optional so dev/test can run without them; upload routes check for
+  // their presence and error clearly if a school tries to upload without
+  // storage configured.
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_PUBLIC_URL: z.string().optional(),
 });
 
 export const env = schema.parse(process.env);

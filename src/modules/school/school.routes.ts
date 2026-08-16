@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { upload } from '../../middleware/upload';
 import { validate } from '../../middleware/validate';
 import { schoolController } from './school.controller';
 import {
@@ -29,6 +30,13 @@ const writeOnly = requireRole('super_admin');
 schoolRoutes.use(authenticate);
 
 schoolRoutes.get('/dashboard/stats', writeOnly, asyncHandler(schoolController.dashboardStats));
+
+schoolRoutes.post(
+  '/schools/upload-asset',
+  writeOnly,
+  upload.single('asset'),
+  asyncHandler(schoolController.uploadAsset),
+);
 
 schoolRoutes.get(
   '/schools',

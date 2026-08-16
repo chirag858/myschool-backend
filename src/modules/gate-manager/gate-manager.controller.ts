@@ -2,7 +2,12 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { uploadToR2 } from '../../lib/storage';
 import { gateManagerService } from './gate-manager.service';
+
+interface MulterRequest extends Request {
+  file?: Express.Multer.File;
+}
 
 function schoolId(req: Request): string {
   const id = req.user?.schoolId;
@@ -13,6 +18,17 @@ const userId = (req: Request): string => String(req.user?._id);
 const p = (req: Request, key: string): string => String(req.params[key]);
 
 export const gateManagerController = {
+  async uploadPhoto(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded (expected field "photo")');
+    const { url } = await uploadToR2({
+      schoolId: schoolId(req),
+      folder: 'gate-photos',
+      fileName: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+    send(res, { url });
+  },
   async dashboard(req: Request, res: Response) {
     send(res, await gateManagerService.dashboard(schoolId(req)));
   },

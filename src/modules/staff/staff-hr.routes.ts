@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { upload } from '../../middleware/upload';
 import { validate } from '../../middleware/validate';
 import { staffHrController } from './staff-hr.controller';
 import {
@@ -41,7 +42,12 @@ staffHrRoutes.get('/:id/payroll-history', validate({ params: idParam }), asyncHa
 // Documents
 staffHrRoutes.post('/documents/generate', validate({ body: generateDocSchema }), asyncHandler(staffHrController.generateDocument));
 staffHrRoutes.get('/:id/documents', validate({ params: idParam }), asyncHandler(staffHrController.getDocuments));
-staffHrRoutes.post('/:id/documents', validate({ params: idParam, body: uploadDocSchema }), asyncHandler(staffHrController.uploadDocument));
+staffHrRoutes.post(
+  '/:id/documents',
+  upload.single('document'),
+  validate({ params: idParam, body: uploadDocSchema }),
+  asyncHandler(staffHrController.uploadDocument),
+);
 
 // Activity + exit
 staffHrRoutes.get('/:id/activity-log', validate({ params: idParam }), asyncHandler(staffHrController.activityLog));

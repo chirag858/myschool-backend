@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { upload } from '../../middleware/upload';
 import { validate } from '../../middleware/validate';
 import { teacherController } from './teacher.controller';
 import {
@@ -39,6 +40,7 @@ teacherRoutes.patch(
   asyncHandler(teacherController.setHomeworkSubmission),
 );
 teacherRoutes.post('/homework/:id/remind', validate({ params: idParam }), asyncHandler(teacherController.remindHomework));
+teacherRoutes.post('/homework/upload-attachment', upload.single('file'), asyncHandler(teacherController.uploadHomeworkAttachment));
 teacherRoutes.get('/homework/:id', validate({ params: idParam }), asyncHandler(teacherController.homeworkById));
 teacherRoutes.delete('/homework/:id', validate({ params: idParam }), asyncHandler(teacherController.deleteHomework));
 
@@ -52,6 +54,11 @@ teacherRoutes.patch(
 );
 teacherRoutes.delete('/assignments/:id', validate({ params: idParam }), asyncHandler(teacherController.deleteAssignment));
 teacherRoutes.get('/assignments/:id/submissions', validate({ params: idParam }), asyncHandler(teacherController.getSubmissions));
+teacherRoutes.post(
+  '/assignments/upload-attachment',
+  upload.single('file'),
+  asyncHandler(teacherController.uploadAssignmentAttachment),
+);
 teacherRoutes.patch(
   '/assignments/:id/submissions/:studentId/grade',
   validate({ params: gradeParams, body: gradeSchema }),

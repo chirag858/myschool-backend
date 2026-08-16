@@ -2,7 +2,12 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { uploadToR2 } from '../../lib/storage';
 import { studentsService } from './students.service';
+
+interface MulterRequest extends Request {
+  file?: Express.Multer.File;
+}
 
 function schoolId(req: Request): string {
   const id = req.user?.schoolId;
@@ -30,6 +35,31 @@ export const studentsController = {
   async checkDuplicate(req: Request, res: Response) {
     const payload = req.body as { name: string; dateOfBirth: string; fatherName?: string };
     send(res, await studentsService.checkDuplicate(schoolId(req), payload));
+  },
+  async uploadPhoto(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded (expected field "photo")');
+    const { url } = await uploadToR2({
+      schoolId: schoolId(req),
+      folder: 'student-photos',
+      fileName: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+    send(res, { url });
+  },
+  /** Admission wizard's Documents step — uploads a document ahead of student
+   * creation, so the create payload can carry a real url alongside its
+   * fileName/sizeBytes metadata. */
+  async uploadDocument(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded (expected field "document")');
+    const { url } = await uploadToR2({
+      schoolId: schoolId(req),
+      folder: 'student-documents',
+      fileName: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+    send(res, { url });
   },
   async checkMobile(req: Request, res: Response) {
     const { mobile } = req.body as { mobile: string };
@@ -68,8 +98,26 @@ export const studentsController = {
   async getDocuments(req: Request, res: Response) {
     send(res, await studentsService.getDocuments(schoolId(req), String(req.params.id)));
   },
-  async addDocument(req: Request, res: Response) {
-    created(res, await studentsService.addDocument(schoolId(req), String(req.params.id), req.body));
+  async addDocument(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded (expected field "document")');
+    const { type, customLabel } = req.body as { type: string; customLabel?: string };
+    const { url } = await uploadToR2({
+      schoolId: schoolId(req),
+      folder: 'student-documents',
+      fileName: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+    created(
+      res,
+      await studentsService.addDocument(schoolId(req), String(req.params.id), {
+        type,
+        customLabel,
+        fileName: req.file.originalname,
+        sizeBytes: req.file.size,
+        url,
+      }),
+    );
   },
   async deleteDocument(req: Request, res: Response) {
     await studentsService.deleteDocument(schoolId(req), String(req.params.id), String(req.params.docId));
