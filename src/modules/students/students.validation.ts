@@ -66,6 +66,7 @@ export const createStudentSchema = z.object({
   category: category.optional(),
   nationality: z.string().min(2).max(50).optional(),
   aadhaar,
+  aparId: z.string().max(20).optional(),
   parents: parentsInput.optional(),
   currentAddress: addressInput.optional(),
   permanentAddress: addressInput.optional(),
