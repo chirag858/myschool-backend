@@ -165,10 +165,12 @@ describe('Auth API', () => {
     expect(res.body.message).toMatch(/Invalid school code/);
   });
 
-  it('school code: tenant account without a code hints at needing one (400)', async () => {
+  it('school code: a unique tenant account signs in code-less (backward-compatible)', async () => {
+    // School code is optional when the username resolves to exactly one tenant —
+    // only a username duplicated across schools still requires the code.
     const res = await login('accountant', 'demo1234', null);
-    expect(res.status).toBe(400);
-    expect(res.body.message).toMatch(/school code/i);
+    expect(res.status).toBe(200);
+    expect(res.body.user.role).toBe('accountant');
   });
 
   it('school code: right code, right school scopes users to that tenant', async () => {

@@ -80,18 +80,23 @@ async function resolveTenantUser(
       $or: [{ username: key }, { email: key }],
     }).select('+passwordHash');
   }
-  const user = await UserModel.findOne({
+  // No school code: a platform account first; else fall back to a UNIQUE tenant
+  // match so single-tenant / globally-unique usernames sign in code-less
+  // (backward-compatible with clients that don't send a code). Only a username
+  // that exists in MORE than one school still requires a code to disambiguate.
+  const platform = await UserModel.findOne({
     $or: [{ username: key }, { email: key }],
     schoolId: { $exists: false },
   }).select('+passwordHash');
-  if (!user) {
-    const scoped = await UserModel.exists({
-      $or: [{ username: key }, { email: key }],
-      schoolId: { $exists: true },
-    });
-    if (scoped) throw ApiError.badRequest('Enter your school code to sign in');
-  }
-  return user;
+  if (platform) return platform;
+  const scoped = await UserModel.find({
+    $or: [{ username: key }, { email: key }],
+    schoolId: { $exists: true },
+  })
+    .select('+passwordHash')
+    .limit(2);
+  if (scoped.length > 1) throw ApiError.badRequest('Enter your school code to sign in');
+  return scoped[0] ?? null;
 }
 
 /** Shared login tail: validate password + active state, record login, issue tokens. */
