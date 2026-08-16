@@ -1,12 +1,33 @@
 import type { Request, Response } from 'express';
 
+import { ApiError } from '../../lib/api-error';
 import { noContent, send } from '../../lib/api-response';
+import { uploadToR2 } from '../../lib/storage';
 import { MODULE_KEYS } from './school.model';
 import { schoolService } from './school.service';
+
+interface MulterRequest extends Request {
+  file?: Express.Multer.File;
+}
 
 export const schoolController = {
   async dashboardStats(_req: Request, res: Response) {
     send(res, await schoolService.getDashboardStats());
+  },
+
+  /** Branding asset (logo/signature/stamp) upload during school creation —
+   * runs before the school document exists, so objects are keyed under a
+   * flat `platform` prefix rather than a schoolId. */
+  async uploadAsset(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded (expected field "asset")');
+    const { url } = await uploadToR2({
+      schoolId: 'platform',
+      folder: 'school-branding',
+      fileName: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+    send(res, { url });
   },
 
   async list(req: Request, res: Response) {

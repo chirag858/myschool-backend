@@ -400,7 +400,7 @@ export const teacherService = {
     schoolId: string,
     id: string,
     studentId: string,
-    patch: { status: string; marks?: number; remark?: string; attachment?: string },
+    patch: { status: string; marks?: number; remark?: string; attachment?: string; attachmentUrl?: string },
   ) {
     const hw = await TeacherHomeworkModel.findOne({ _id: id, schoolId }).lean();
     if (!hw) throw ApiError.notFound('Homework not found');
@@ -409,6 +409,7 @@ export const teacherService = {
     if (patch.marks !== undefined) set.marks = patch.marks;
     if (patch.remark !== undefined) set.remark = patch.remark;
     if (patch.attachment !== undefined) set.attachment = patch.attachment;
+    if (patch.attachmentUrl !== undefined) set.attachmentUrl = patch.attachmentUrl;
     // Stamp the hand-in time when moving into a submitted-like state, clear it
     // when moving back to pending. Mongoose drops `undefined` from `$set`, so
     // clearing has to go through `$unset`.
@@ -561,6 +562,7 @@ export const teacherService = {
       status: r.status,
       textContent: r.textContent,
       fileName: r.fileName,
+      fileUrl: r.fileUrl,
       marks: r.marks ?? undefined,
       feedback: r.feedback ?? undefined,
     }));
@@ -572,7 +574,7 @@ export const teacherService = {
     schoolId: string,
     id: string,
     studentId: string,
-    payload: { status: string; textContent?: string; fileName?: string },
+    payload: { status: string; textContent?: string; fileName?: string; fileUrl?: string },
   ) {
     const a = await TeacherAssignmentModel.findOne({ _id: id, schoolId }).lean();
     if (!a) throw ApiError.notFound('Assignment not found');
@@ -580,6 +582,7 @@ export const teacherService = {
     const set: Record<string, unknown> = {};
     if (payload.textContent !== undefined) set.textContent = payload.textContent;
     if (payload.fileName !== undefined) set.fileName = payload.fileName;
+    if (payload.fileUrl !== undefined) set.fileUrl = payload.fileUrl;
     const update: Record<string, unknown> = { $set: set };
     if (payload.status === 'pending') {
       set.status = 'pending';
@@ -604,6 +607,7 @@ export const teacherService = {
       status: r.status,
       textContent: r.textContent,
       fileName: r.fileName,
+      fileUrl: r.fileUrl,
       marks: r.marks ?? undefined,
       feedback: r.feedback ?? undefined,
     };
@@ -804,6 +808,7 @@ function homeworkSubmissionView(r: Record<string, unknown>): Record<string, unkn
     status: r.status,
     submittedAt: r.submittedAt ?? undefined,
     attachment: r.attachment ?? undefined,
+    attachmentUrl: r.attachmentUrl ?? undefined,
     marks: r.marks ?? undefined,
     remark: r.remark ?? undefined,
     reminderSentAt: r.reminderSentAt ?? undefined,

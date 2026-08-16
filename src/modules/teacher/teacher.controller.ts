@@ -2,8 +2,13 @@ import type { Request, Response } from 'express';
 
 import { ApiError } from '../../lib/api-error';
 import { created, send } from '../../lib/api-response';
+import { uploadToR2 } from '../../lib/storage';
 import { assignedClassesOf } from '../coordinator/coordinator.service';
 import { teacherService } from './teacher.service';
+
+interface MulterRequest extends Request {
+  file?: Express.Multer.File;
+}
 
 function schoolId(req: Request): string {
   const id = req.user?.schoolId;
@@ -74,12 +79,23 @@ export const teacherController = {
         schoolId(req),
         p(req, 'id'),
         p(req, 'studentId'),
-        req.body as { status: string; marks?: number; remark?: string; attachment?: string },
+        req.body as { status: string; marks?: number; remark?: string; attachment?: string; attachmentUrl?: string },
       ),
     );
   },
   async remindHomework(req: Request, res: Response) {
     send(res, await teacherService.remindPendingHomework(schoolId(req), p(req, 'id')));
+  },
+  async uploadHomeworkAttachment(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded');
+    const { url } = await uploadToR2({
+      schoolId: schoolId(req),
+      folder: 'homework-attachments',
+      fileName: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+    send(res, { url });
   },
 
   // Assignments
@@ -109,9 +125,20 @@ export const teacherController = {
         schoolId(req),
         p(req, 'id'),
         p(req, 'studentId'),
-        req.body as { status: string; textContent?: string; fileName?: string },
+        req.body as { status: string; textContent?: string; fileName?: string; fileUrl?: string },
       ),
     );
+  },
+  async uploadAssignmentAttachment(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded');
+    const { url } = await uploadToR2({
+      schoolId: schoolId(req),
+      folder: 'assignment-submissions',
+      fileName: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+    send(res, { url });
   },
   async gradeSubmission(req: Request, res: Response) {
     const { marks, feedback } = req.body as { marks: number; feedback: string };

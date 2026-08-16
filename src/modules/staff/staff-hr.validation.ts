@@ -51,8 +51,6 @@ export const saveSalaryStructureSchema = z
 export const uploadDocSchema = z
   .object({
     category: z.string().min(1),
-    fileName: z.string().min(1),
-    sizeBytes: z.number(),
   })
   .passthrough();
 

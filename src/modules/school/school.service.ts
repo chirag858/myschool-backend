@@ -193,7 +193,11 @@ export const schoolService = {
       status: 'active',
       plan: p.subscription.plan,
       expiryDate: p.subscription.endDate,
+      logoUrl: p.branding.logoUrl,
       branding: {
+        logoUrl: p.branding.logoUrl,
+        signatureUrl: p.branding.signatureUrl,
+        stampUrl: p.branding.stampUrl,
         headerText: p.branding.headerText,
         footerText: p.branding.footerText,
         primaryColor: p.branding.primaryColor,

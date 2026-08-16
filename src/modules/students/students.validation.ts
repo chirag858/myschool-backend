@@ -66,6 +66,7 @@ export const createStudentSchema = z.object({
   category: category.optional(),
   nationality: z.string().min(2).max(50).optional(),
   aadhaar,
+  aparId: z.string().max(20).optional(),
   parents: parentsInput.optional(),
   currentAddress: addressInput.optional(),
   permanentAddress: addressInput.optional(),
@@ -86,6 +87,7 @@ export const createStudentSchema = z.object({
         customLabel: z.string().max(50).optional(),
         fileName: z.string().min(1),
         sizeBytes: z.number().nonnegative(),
+        url: z.string().optional(),
       }),
     )
     .optional(),
@@ -131,8 +133,6 @@ export const docIdParam = z.object({
 export const documentSchema = z
   .object({
     type: z.string().min(1),
-    fileName: z.string().min(1),
-    sizeBytes: z.number().nonnegative(),
     customLabel: z.string().optional(),
   })
   .passthrough();

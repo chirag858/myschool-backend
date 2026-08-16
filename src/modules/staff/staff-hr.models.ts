@@ -32,6 +32,7 @@ const documentSchema = new Schema(
     category: { type: String, default: 'other' },
     fileName: { type: String, default: '' },
     sizeBytes: { type: Number, default: 0 },
+    url: { type: String, default: '' },
     referenceNumber: String,
     uploadedAt: { type: String, default: '' },
     uploadedBy: { type: String, default: 'Admin' },

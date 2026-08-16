@@ -60,6 +60,7 @@ export const receiveSubmissionSchema = z.object({
   status: z.enum(['pending', 'submitted']),
   textContent: z.string().optional(),
   fileName: z.string().optional(),
+  fileUrl: z.string().optional(),
 });
 
 export const homeworkSubmissionSchema = z.object({
@@ -67,6 +68,7 @@ export const homeworkSubmissionSchema = z.object({
   marks: z.number().optional(),
   remark: z.string().optional(),
   attachment: z.string().optional(),
+  attachmentUrl: z.string().optional(),
 });
 
 export const circularSchema = z

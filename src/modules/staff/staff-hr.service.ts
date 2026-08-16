@@ -186,12 +186,17 @@ export const staffHrService = {
       category: d.category,
       fileName: d.fileName,
       sizeBytes: d.sizeBytes,
+      url: d.url,
       uploadedAt: d.uploadedAt,
       uploadedBy: d.uploadedBy,
     }));
   },
 
-  async uploadDocument(schoolId: string, staffId: string, payload: { category: string; fileName: string; sizeBytes: number }) {
+  async uploadDocument(
+    schoolId: string,
+    staffId: string,
+    payload: { category: string; fileName: string; sizeBytes: number; url: string },
+  ) {
     await requireStaff(schoolId, staffId);
     const doc = await StaffDocumentModel.create({
       schoolId,
@@ -199,11 +204,12 @@ export const staffHrService = {
       category: payload.category,
       fileName: payload.fileName,
       sizeBytes: payload.sizeBytes,
+      url: payload.url,
       uploadedAt: nowIso(),
       uploadedBy: 'Admin',
     });
     const d = doc.toObject();
-    return { id: String(d._id), category: d.category, fileName: d.fileName, sizeBytes: d.sizeBytes, uploadedAt: d.uploadedAt, uploadedBy: d.uploadedBy };
+    return { id: String(d._id), category: d.category, fileName: d.fileName, sizeBytes: d.sizeBytes, url: d.url, uploadedAt: d.uploadedAt, uploadedBy: d.uploadedBy };
   },
 
   async generateHRDocument(schoolId: string, payload: { staffId: string; documentType: string }) {

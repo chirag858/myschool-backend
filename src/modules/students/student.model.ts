@@ -51,6 +51,7 @@ const documentSchema = new Schema({
   customLabel: String,
   fileName: String,
   sizeBytes: { type: Number, default: 0 },
+  url: { type: String, default: '' },
   uploadedAt: { type: String },
   verification: { type: String, enum: ['pending', 'verified'], default: 'pending' },
 });
@@ -83,6 +84,9 @@ const studentSchema = new Schema(
     category: { type: String, default: 'general' },
     nationality: { type: String, default: 'Indian' },
     aadhaar: String,
+    // APAAR ID (Automated Permanent Academic Registry) — govt-issued academic
+    // ID number, distinct from Aadhaar. Optional, captured at admission.
+    aparId: String,
     parents: { type: parentsSchema, default: () => ({}) },
     currentAddress: { type: addressSchema, default: () => ({}) },
     permanentAddress: { type: addressSchema, default: () => ({}) },
