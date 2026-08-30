@@ -1,9 +1,15 @@
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
 import { StudentModel } from './student.model';
+
+// Document/photo uploads go to Cloudflare R2 in real life; stub the transport
+// so the multipart endpoints are testable without network/credentials.
+vi.mock('../../lib/storage', () => ({
+  uploadToR2: vi.fn().mockResolvedValue({ url: 'https://r2.test/upload.bin', key: 'test-key' }),
+}));
 
 async function token(username: string): Promise<string> {
   const res = await request(app)
@@ -25,10 +31,14 @@ describe('Students API', () => {
     admin = await token('schooladmin');
   });
 
-  it('requires auth (401) and forbids non-academic roles (403)', async () => {
+  it('requires auth (401), allows accountant, forbids roles with no student access (403)', async () => {
     expect((await request(app).get('/api/students')).status).toBe(401);
+    // Accountant has read access to the student list (Fee Ledger lookups).
     const acc = await token('accountant');
-    expect((await request(app).get('/api/students').set(auth(acc))).status).toBe(403);
+    expect((await request(app).get('/api/students').set(auth(acc))).status).toBe(200);
+    // Teacher does not — they only reach a single student's own sub-resources.
+    const teacher = await token('teacher');
+    expect((await request(app).get('/api/students').set(auth(teacher))).status).toBe(403);
   });
 
   it('teacher can read a real student\'s attendance calendar/summary, but not the full student list', async () => {
@@ -174,7 +184,9 @@ describe('Students API', () => {
     const add = await request(app)
       .post(`/api/students/${id}/documents`)
       .set(auth(admin))
-      .send({ type: 'birth_certificate', fileName: 'birth.pdf', sizeBytes: 45000, customLabel: 'Birth cert' });
+      .field('type', 'birth_certificate')
+      .field('customLabel', 'Birth cert')
+      .attach('document', Buffer.from('%PDF-1.4 test'), 'birth.pdf');
     expect(add.status).toBe(201);
     expect(add.body).toMatchObject({ id: expect.any(String), type: 'birth_certificate', fileName: 'birth.pdf', verification: 'pending' });
 
