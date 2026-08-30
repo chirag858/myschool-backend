@@ -22,7 +22,7 @@ Longer-form rules live in [RULES.md](RULES.md) — still the reference for defin
 | `src/routes/index.ts` | The only mount table. Every domain router is registered here. |
 | `src/modules/<domain>/` | One folder per domain (36 of them: academics, attendance, auth, certificates, exams, fee, finance, hostel, inventory, library, outpass, parent, students, staff, teacher, timetable, transport, utilize, …). |
 | `src/middleware/` | `auth.ts` (`authenticate`, `requireRole`, `tenantFilter`), `validate.ts`, `error.ts`, `not-found.ts`. |
-| `src/lib/` | Shared helpers: `api-error.ts`, `api-response.ts`, `async-handler.ts`, `jwt.ts`, `logger.ts`, `paginate.ts`, `messaging-provider.ts`. |
+| `src/lib/` | Shared helpers: `api-error.ts`, `api-response.ts`, `async-handler.ts`, `jwt.ts`, `logger.ts`, `paginate.ts`, `messaging-provider.ts` (fake SMS/WhatsApp), `mailer.ts` (real SMTP — optional, gated on `SMTP_*` env), `storage.ts` (Cloudflare R2). |
 | `src/config/` | `env.ts` (Zod-parsed `process.env`), `db.ts` (Mongoose connect). |
 | `src/seed/seed.ts` | Demo school + demo accounts the frontend logs in with. |
 | `src/scripts/` | One-off data backfills (`backfill-fee-status.ts`, `backfill-missing-classes.ts`, `backfill-class-incharge.ts`, `backfill-parent-accounts.ts`). |

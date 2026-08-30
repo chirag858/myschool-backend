@@ -5,6 +5,8 @@ import bcrypt from 'bcryptjs';
 import { env } from '../../config/env';
 import { ApiError } from '../../lib/api-error';
 import { signTokens, verifyRefresh, type TokenPair } from '../../lib/jwt';
+import { logger } from '../../lib/logger';
+import { isMailConfigured, sendMail } from '../../lib/mailer';
 import { OtpModel } from './otp.model';
 import { UserModel, type UserDoc } from '../user/user.model';
 import { SchoolModel } from '../school/school.model';
@@ -33,6 +35,30 @@ function tokensFor(user: UserLike): TokenPair {
 
 function generateOtp(): string {
   return String(randomInt(100000, 1000000));
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Emails a password-reset OTP when `contact` is an email address and SMTP is
+ * configured. A send failure surfaces as a 502 in production (the user has no
+ * other way to receive the code); in dev it's logged and swallowed, since the
+ * OTP is also returned in the response there.
+ */
+async function deliverForgotOtp(contact: string, code: string): Promise<void> {
+  if (!EMAIL_RE.test(contact) || !isMailConfigured()) return;
+  try {
+    await sendMail({
+      to: contact,
+      subject: 'Your MySmartCampus password reset code',
+      text: `Your password reset code is ${code}. It expires in 5 minutes. If you did not request this, ignore this email.`,
+    });
+  } catch (err) {
+    logger.error('forgot-otp email failed', err);
+    if (env.NODE_ENV === 'production') {
+      throw new ApiError(502, 'EMAIL_FAILED', 'Could not send the reset code email. Try again shortly.');
+    }
+  }
 }
 
 /**
@@ -203,6 +229,7 @@ export const authService = {
     const code = generateOtp();
     const expires = new Date(Date.now() + OTP_TTL_MS);
     await OtpModel.create({ channel: contact, purpose: 'forgot', code, expiresAt: expires });
+    await deliverForgotOtp(contact, code);
     return {
       expiresAt: expires.getTime(),
       ...(env.NODE_ENV !== 'production' ? { otp: code } : {}),

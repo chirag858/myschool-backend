@@ -4,8 +4,53 @@ import bcrypt from 'bcryptjs';
 
 import { clearInchargeSection, getInchargeSection, setInchargeSection } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
+import { logger } from '../../lib/logger';
+import { isMailConfigured, sendMail } from '../../lib/mailer';
+import { SchoolModel } from '../school/school.model';
 import { UserModel } from '../user/user.model';
 import { StaffAttendanceLockModel, StaffAttendanceModel, StaffModel } from './staff.models';
+
+/**
+ * Emails a staff member their portal login. Fire-and-forget: a send failure is
+ * logged but never fails the request — the temp password is also returned to
+ * the admin's screen, so email is a convenience channel, not the only one.
+ * No-op when SMTP is unconfigured (dev/test) or no email is on file.
+ */
+async function emailStaffCredentials(
+  schoolId: string,
+  to: string,
+  fields: { name: string; username: string; tempPassword: string; kind: 'created' | 'reset' },
+): Promise<void> {
+  if (!to || !isMailConfigured()) return;
+  try {
+    const school = await SchoolModel.findById(schoolId).lean();
+    const schoolName = (school?.name as string | undefined) ?? 'your school';
+    const schoolCode = (school?.code as string | undefined) ?? '';
+    const lead =
+      fields.kind === 'created'
+        ? `A staff login has been created for you on the ${schoolName} MySmartCampus portal.`
+        : `Your password for the ${schoolName} MySmartCampus portal has been reset.`;
+    await sendMail({
+      to,
+      subject: fields.kind === 'created' ? `Your ${schoolName} staff login` : `Your ${schoolName} password was reset`,
+      text: [
+        `Hello ${fields.name},`,
+        '',
+        lead,
+        '',
+        schoolCode ? `School code: ${schoolCode}` : '',
+        `Username: ${fields.username}`,
+        `Temporary password: ${fields.tempPassword}`,
+        '',
+        'Sign in and change your password from Profile → Change Password.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    });
+  } catch (err) {
+    logger.error('staff-credentials email failed', err);
+  }
+}
 
 interface CredentialsDoc {
   _id: unknown;
@@ -230,6 +275,10 @@ export const staffService = {
     staff.userId = user._id;
     await staff.save();
 
+    if (generated) {
+      await emailStaffCredentials(schoolId, email, { name: staff.name, username, tempPassword, kind: 'created' });
+    }
+
     return {
       ...(await credentialsDto(schoolId, user.toObject() as unknown as CredentialsDoc)),
       ...(generated ? { tempPassword } : {}),
@@ -280,6 +329,16 @@ export const staffService = {
     const passwordHash = await bcrypt.hash(tempPassword, 10);
     const user = await UserModel.findOneAndUpdate({ _id: staff.userId, schoolId }, { $set: { passwordHash } }, { new: true }).lean();
     if (!user) throw ApiError.notFound('No login found for this staff member');
+
+    if (generated && user.email) {
+      await emailStaffCredentials(schoolId, user.email, {
+        name: staff.name,
+        username: user.username ?? user.email,
+        tempPassword,
+        kind: 'reset',
+      });
+    }
+
     return generated ? { tempPassword } : { ok: true };
   },
 
