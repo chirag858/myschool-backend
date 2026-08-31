@@ -6,7 +6,8 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./tests/setup.ts'],
     // Keep the suite hermetic: never let a local `.env` point tests at real
-    // external services (R2 bucket writes, live SMTP sends). Blank them here.
+    // external services (R2 bucket writes, live SMTP sends, Fast2SMS). Blank
+    // them here.
     env: {
       R2_ACCOUNT_ID: '',
       R2_ACCESS_KEY_ID: '',
@@ -17,6 +18,7 @@ export default defineConfig({
       SMTP_USER: '',
       SMTP_PASS: '',
       SMTP_FROM: '',
+      FAST2SMS_API_KEY: '',
     },
     testTimeout: 30000,
     hookTimeout: 120000,

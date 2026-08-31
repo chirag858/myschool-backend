@@ -34,6 +34,11 @@ const schema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().optional(),
+  // Fast2SMS transactional SMS — currently used only for OTP delivery (login
+  // and phone-based password reset), which needs no DLT registration. Optional
+  // so dev/test run without it; `lib/sms-provider.ts` no-ops when the key is
+  // absent and the OTP is still returned in the response outside production.
+  FAST2SMS_API_KEY: z.string().optional(),
 });
 
 export const env = schema.parse(process.env);

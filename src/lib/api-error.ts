@@ -5,6 +5,7 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'CONFLICT'
   | 'EMAIL_FAILED'
+  | 'SMS_FAILED'
   | 'INTERNAL';
 
 /**
