@@ -1,8 +1,14 @@
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
+
+// HR document uploads go to Cloudflare R2; stub the transport so the multipart
+// endpoint is testable without network/credentials.
+vi.mock('../../lib/storage', () => ({
+  uploadToR2: vi.fn().mockResolvedValue({ url: 'https://r2.test/staff-doc.pdf', key: 'test-key' }),
+}));
 
 async function token(username: string): Promise<string> {
   const res = await request(app)
@@ -82,7 +88,11 @@ describe('Staff HR extras API', () => {
   it('documents: seeded list, upload, generate HR document', async () => {
     const docs = await request(app).get(`/api/staff/${staffId}/documents`).set(auth(admin));
     expect(docs.body.length).toBe(1);
-    const upload = await request(app).post(`/api/staff/${staffId}/documents`).set(auth(admin)).send({ category: 'pan', fileName: 'pan.pdf', sizeBytes: 50000 });
+    const upload = await request(app)
+      .post(`/api/staff/${staffId}/documents`)
+      .set(auth(admin))
+      .field('category', 'pan')
+      .attach('document', Buffer.from('%PDF-1.4 test'), 'pan.pdf');
     expect(upload.status).toBe(201);
     expect((await request(app).get(`/api/staff/${staffId}/documents`).set(auth(admin))).body.length).toBe(2);
 

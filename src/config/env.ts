@@ -20,6 +20,25 @@ const schema = z.object({
   R2_SECRET_ACCESS_KEY: z.string().optional(),
   R2_BUCKET: z.string().optional(),
   R2_PUBLIC_URL: z.string().optional(),
+  // SMTP (transactional email — password-reset OTP, etc.) — optional so
+  // dev/test run without it; `lib/mailer.ts` throws a clear error if a
+  // send is attempted while unconfigured. For Gmail use an App Password
+  // (Google Account → Security → 2-Step Verification → App passwords),
+  // not the account password.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().optional(),
+  // Fast2SMS transactional SMS — currently used only for OTP delivery (login
+  // and phone-based password reset), which needs no DLT registration. Optional
+  // so dev/test run without it; `lib/sms-provider.ts` no-ops when the key is
+  // absent and the OTP is still returned in the response outside production.
+  FAST2SMS_API_KEY: z.string().optional(),
 });
 
 export const env = schema.parse(process.env);
