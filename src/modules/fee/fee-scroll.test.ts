@@ -40,23 +40,42 @@ describe('Fee Scroll API (daily collection scroll)', () => {
     const res = await request(app).get('/api/students?classKey=Class 1').set(auth(admin));
     return res.body.rows[0].id;
   }
-  async function headId(): Promise<string> {
-    const res = await request(app).get('/api/fee/heads').set(auth(acc));
-    return res.body[0].id;
-  }
-
   it('scroll aggregates a real fee collection under the collecting user, not mock data', async () => {
     const sid = await class1StudentId();
-    const hid = await headId();
+    // collect() recomputes the total server-side and rejects a mismatched
+    // netPayable (see fee.service.ts's recomputeCollectionTotals) — fetch the
+    // real due amount for the month instead of inventing one.
+    const context = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
+    const entry = context.body.months.find((m: { month: string }) => m.month === 'April');
+    // April is the session's first month, so it never carries arrears from an
+    // earlier month — but the seed data can still carry a real pending fine
+    // or concession for this student, and collect() rejects a netPayable that
+    // doesn't account for those (see fee.service.ts recompute), so pull them
+    // from the same context rather than assuming they're 0. context.previousDues
+    // is fetched before any month is picked, so (like makeReceipt in
+    // utilize.test.ts) subtract April's own unpaid share — collect() excludes
+    // exactly the month(s) being paid from its own previousDues recompute.
+    const ownUnpaid = Math.max(0, entry.amount - entry.paid);
+    const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+    const netPayable = Math.max(
+      0,
+      Math.round(
+        entry.amount -
+          (context.body.concessionAmount ?? 0) -
+          (context.body.advanceBalance ?? 0) +
+          previousDues +
+          (context.body.fineAmount ?? 0),
+      ),
+    );
+    const amount = netPayable;
     const collect = await request(app)
       .post('/api/fee/collect')
       .set(auth(acc))
       .send({
         studentId: sid,
         months: ['April'],
-        feeHeads: [{ id: hid, amount: 1500 }],
-        netPayable: 1500,
-        payments: [{ mode: 'cash', amount: 1500 }],
+        netPayable,
+        payments: [{ mode: 'cash', amount: netPayable }],
         paymentDate: TODAY,
       });
     expect(collect.status).toBe(201);
@@ -67,7 +86,7 @@ describe('Fee Scroll API (daily collection scroll)', () => {
       .query({ date: TODAY, collectorId: 'x', collector: collect.body.generatedBy })
       .set(auth(acc));
     expect(scroll.status).toBe(200);
-    expect(scroll.body.totalCollected).toBeGreaterThanOrEqual(1500);
+    expect(scroll.body.totalCollected).toBeGreaterThanOrEqual(amount);
     expect(scroll.body.entries.some((e: { reference: string }) => e.reference === collect.body.receiptNumber)).toBe(true);
   });
 

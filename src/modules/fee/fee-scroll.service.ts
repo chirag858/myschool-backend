@@ -264,7 +264,10 @@ export const feeScrollService = {
       cashExpenses: data.cashExpenses,
       expectedCash: data.expectedCash,
       countedCash: input.countedCash,
-      variance: input.variance,
+      // Never trust the client's variance — a collector could hide a cash
+      // shortfall by posting variance: 0. Server always computes it from the
+      // server-derived expectedCash against the counted cash the collector reports.
+      variance: data.expectedCash - input.countedCash,
       varianceReason: input.varianceReason,
       denominations: input.denominations as never,
       modeTotals: data.modeTotals as never,
