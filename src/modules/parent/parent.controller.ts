@@ -22,6 +22,12 @@ export const parentController = {
   async getFeeMonthly(req: Request, res: Response) {
     send(res, await parentService.getFeeMonthly(schoolId(req), userId(req), childId(req)));
   },
+  async listReceipts(req: Request, res: Response) {
+    send(res, await parentService.listReceipts(schoolId(req), userId(req), childId(req)));
+  },
+  async getReceipt(req: Request, res: Response) {
+    send(res, await parentService.getReceipt(schoolId(req), userId(req), String(req.params.id)));
+  },
   async getAttendance(req: Request, res: Response) {
     send(res, await parentService.getAttendance(schoolId(req), userId(req), childId(req)));
   },

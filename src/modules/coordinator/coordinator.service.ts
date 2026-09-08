@@ -154,6 +154,24 @@ async function decide(schoolId: string, userId: string, id: string, patch: Recor
   return dto(doc.toObject());
 }
 
+/**
+ * Apply the staff `department` filter.
+ *
+ * Both staff endpoints return `departmentLabel` ("Teaching") in their
+ * `department` field, and both clients build the filter dropdown from that
+ * response — so the value that comes back here is the LABEL, while the stored
+ * field is the key ("teaching"). Filtering on the raw value therefore matched
+ * nothing and the list emptied out on every selection.
+ *
+ * Matching either form keeps both clients working without either having to
+ * carry a key/label pair through the picker, and keeps any existing caller that
+ * already sends the stored key working unchanged.
+ */
+function applyDepartmentFilter(filter: Record<string, unknown>, department?: string): void {
+  if (!department || department === 'all') return;
+  filter.$or = [{ department }, { departmentLabel: department }];
+}
+
 export const coordinatorService = {
   async searchCoordinators(schoolId: string, q: string) {
     return searchCoordinators(schoolId, q);
@@ -505,7 +523,7 @@ export const coordinatorService = {
   // ─── Staff overview + attendance (today) ───
   async getStaffOverview(schoolId: string, department?: string) {
     const filter: Record<string, unknown> = { schoolId };
-    if (department && department !== 'all') filter.department = department;
+    applyDepartmentFilter(filter, department);
     const [staff, todays] = await Promise.all([
       StaffModel.find(filter).lean(),
       StaffAttendanceModel.find({ schoolId, date: today() }).lean(),
@@ -526,7 +544,7 @@ export const coordinatorService = {
 
   async getStaffAttendance(schoolId: string, department?: string, date?: string) {
     const filter: Record<string, unknown> = { schoolId };
-    if (department && department !== 'all') filter.department = department;
+    applyDepartmentFilter(filter, department);
     const [staff, todays] = await Promise.all([
       StaffModel.find(filter).lean(),
       StaffAttendanceModel.find({ schoolId, date: date ?? today() }).lean(),

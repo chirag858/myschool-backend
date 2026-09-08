@@ -1,6 +1,7 @@
 import { ApiError } from '../../lib/api-error';
 import { STAFF_ROLES } from '../user/roles';
 import { UserModel } from '../user/user.model';
+import { StudentModel } from '../students/student.model';
 import { ClassModel, HolidayModel, SectionModel, SessionModel } from './academics.models';
 
 type Doc = Record<string, unknown> & { _id: unknown };
@@ -212,12 +213,19 @@ export const classService = {
       { $group: { _id: '$classId', count: { $sum: 1 } } },
     ]);
     const secMap = new Map(counts.map((c) => [String(c._id), c.count]));
+    // Enrolled strength, counted per class rather than reported as 0 — the
+    // class list, the delete guard and web's class cards all read this.
+    const studentCounts = await StudentModel.aggregate<{ _id: string; count: number }>([
+      { $match: { schoolId: classes[0]?.schoolId, profileStatus: 'active' } },
+      { $group: { _id: '$className', count: { $sum: 1 } } },
+    ]);
+    const studMap = new Map(studentCounts.map((c) => [c._id, c.count]));
     return classes.map((c) => ({
       id: String(c._id),
       name: c.name,
       order: c.order,
       totalSections: secMap.get(String(c._id)) ?? 0,
-      totalStudents: 0,
+      totalStudents: studMap.get(c.name) ?? 0,
     }));
   },
 
@@ -239,7 +247,16 @@ export const classService = {
   async remove(schoolId: string, id: string): Promise<{ ok: boolean; reason?: string }> {
     const doc = await ClassModel.findOne({ _id: id, schoolId });
     if (!doc) return { ok: false, reason: 'Not found.' };
-    // Students domain not built yet → enrolled count is 0.
+    // Deleting a class takes its sections with it, so a class that still has
+    // children enrolled must not go: their className would point at nothing.
+    const enrolled = await StudentModel.countDocuments({
+      schoolId,
+      className: doc.name,
+      profileStatus: 'active',
+    });
+    if (enrolled > 0) {
+      return { ok: false, reason: `${String(enrolled)} student(s) are still enrolled in this class.` };
+    }
     await SectionModel.deleteMany({ classId: doc._id });
     await doc.deleteOne();
     return { ok: true };
@@ -254,7 +271,12 @@ export const classService = {
     const cls = await ClassModel.findOne({ _id: classId, schoolId }).lean();
     if (!cls) throw ApiError.notFound('Class not found');
     const secs = await SectionModel.find({ schoolId, classId }).sort({ name: 1 }).lean();
-    return secs.map(toSection);
+    const counts = await StudentModel.aggregate<{ _id: string; count: number }>([
+      { $match: { schoolId: cls.schoolId, className: cls.name, profileStatus: 'active' } },
+      { $group: { _id: '$section', count: { $sum: 1 } } },
+    ]);
+    const byName = new Map(counts.map((c) => [c._id, c.count]));
+    return secs.map((sec) => ({ ...toSection(sec), totalStudents: byName.get(String(sec.name)) ?? 0 }));
   },
 
   async createSection(

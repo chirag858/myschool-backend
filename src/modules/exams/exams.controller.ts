@@ -14,13 +14,26 @@ const p = (req: Request, key: string): string => String(req.params[key]);
 const actor = (req: Request): string => String(req.user?.role ?? 'System');
 
 /** A coordinator with a non-empty assignedClasses may only schedule exams
- * for their own supervised classes — empty means unscoped (whole school). */
+ * for their own supervised classes — empty means unscoped (whole school).
+ *
+ * `assignedClasses` holds classKeys WITH a section ("Class 1-A"), but an exam's
+ * `classes` are bare class names ("Class 1") — an exam is scheduled for a whole
+ * class, not one section. A plain `includes` therefore never matched and every
+ * create was rejected with this error, even for the coordinator's own classes.
+ *
+ * A class is in scope when a supervised key names it exactly, or names one of
+ * its sections — the same rule the clients already use to decide which classes
+ * to offer (`classNameWithinScope` in the app, the equivalent web filter), so
+ * the form can no longer offer a class the server then refuses.
+ */
 async function assertCoordinatorExamClasses(req: Request, classes: unknown): Promise<void> {
   if (req.user?.role !== 'coordinator') return;
   const allowed = await assignedClassesOf(String(req.user._id));
   if (!allowed.length) return;
+  const inScope = (name: string): boolean =>
+    allowed.some((key) => key === name || key.startsWith(`${name}-`));
   const requested = Array.isArray(classes) ? (classes as string[]) : [];
-  if (requested.some((c) => !allowed.includes(c))) {
+  if (requested.some((c) => !inScope(c))) {
     throw ApiError.forbidden('You can only schedule exams for your assigned classes');
   }
 }

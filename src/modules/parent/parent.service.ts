@@ -45,6 +45,29 @@ async function todayStatus(schoolId: string, studentId: string): Promise<string>
   return (rec?.status as string) ?? 'not_marked';
 }
 
+/**
+ * A receipt as a PARENT may see it. Deliberately narrower than the staff
+ * `toReceipt` in fee.service.ts: the internal `generatedBy` (a staff username)
+ * and the `cancelled*` audit fields are dropped, since neither belongs in a
+ * parent-facing document.
+ */
+function toParentReceipt(d: Record<string, unknown>) {
+  return {
+    id: String(d._id),
+    receiptNumber: (d.receiptNumber as string) ?? '',
+    studentName: (d.studentName as string) ?? '',
+    className: (d.className as string) ?? '',
+    section: (d.section as string) ?? '',
+    monthsCovered: (d.monthsCovered as string[]) ?? [],
+    feeHeads: (d.feeHeads as { name: string; amount: number }[]) ?? [],
+    amount: Number(d.amount ?? 0),
+    paymentMode: (d.paymentMode as string) ?? '',
+    paymentDate: (d.paymentDate as string) ?? '',
+    status: (d.status as string) ?? 'active',
+    remarks: (d.remarks as string) ?? undefined,
+  };
+}
+
 export const parentService = {
   async getChildren(schoolId: string, userId: string) {
     const kids = await childrenOf(schoolId, userId);
@@ -109,10 +132,47 @@ export const parentService = {
         amountDue: monthlyDue,
         amountPaid: Math.round(amountPaid),
         status,
+        // The receipt's id as well as its number: the number is for display,
+        // the id is what `GET /parent/receipts/:id` needs to open it.
+        receiptId: receipt ? String(receipt._id) : undefined,
         receiptNumber: receipt ? (receipt.receiptNumber as string) : undefined,
         paidOn: receipt ? (receipt.paymentDate as string) : undefined,
       };
     });
+  },
+
+  /**
+   * A child's fee receipts, newest first. `status: 'active'` ONLY — the same
+   * filter `getFeeSummary`/`getFeeMonthly` already use, so the receipt list can
+   * never disagree with the totals shown beside it. The other three statuses
+   * are all wrong to show a parent: `cancelled` is void, `reversed` is a
+   * refund, and `duplicate_issued` means a `-DUP` copy superseded this one.
+   *
+   * The staff receipt routes (`/fee/receipts*`) are `requireRole('school_admin',
+   * 'principal', 'accountant', 'super_admin')`, so a parent token 403s on every
+   * one of them — hence these parent-scoped reads rather than widening that
+   * role list, which would expose the whole school's receipts (and the cancel/
+   * duplicate writes) to parents.
+   */
+  async listReceipts(schoolId: string, userId: string, childId: string) {
+    await ownChild(schoolId, userId, childId);
+    const receipts = await ReceiptModel.find({ schoolId, studentId: childId, status: 'active' })
+      .sort({ paymentDate: -1 })
+      .lean();
+    return receipts.map(toParentReceipt);
+  },
+
+  /**
+   * One receipt in full (fee heads, payment mode, remarks) for the printable
+   * view. Ownership is enforced by resolving the receipt's OWN student through
+   * `ownChild` — never by trusting a childId from the query — so a parent
+   * cannot read another family's receipt by guessing an id.
+   */
+  async getReceipt(schoolId: string, userId: string, receiptId: string) {
+    const receipt = await ReceiptModel.findOne({ _id: receiptId, schoolId }).lean();
+    if (!receipt || receipt.status !== 'active') throw ApiError.notFound('Receipt not found');
+    await ownChild(schoolId, userId, String(receipt.studentId ?? ''));
+    return toParentReceipt(receipt);
   },
 
   async getAttendance(schoolId: string, userId: string, childId: string) {
