@@ -3,7 +3,7 @@ import { ApiError } from '../../lib/api-error';
 import { AttendanceModel } from '../attendance/attendance.models';
 import { CircularModel } from '../communication/communication.models';
 import { assignedClassesOf } from '../coordinator/coordinator.service';
-import { ExamModel } from '../exams/exams.models';
+import { ExamMarkModel, ExamModel } from '../exams/exams.models';
 import { StudentModel } from '../students/student.model';
 import { timetableService } from '../timetable/timetable.service';
 import { UserModel } from '../user/user.model';
@@ -243,6 +243,43 @@ export const teacherService = {
     const exams = (await ExamModel.find({ schoolId }).lean()).filter((e) =>
       (e.classes ?? []).some((c) => myTokens.has(c)),
     );
+    // Whether a teacher has SUBMITTED a sheet is per (exam, subject) and lives
+    // on the mark rows `saveMarks` writes — it is not the exam's own lifecycle.
+    // Deriving it from `e.status` (as this did) meant a submitted sheet still
+    // read "in_progress" forever, while an admin publishing an exam marked
+    // every sheet "submitted" even where no mark was ever entered.
+    //
+    // Matched on examId + subjectId only, exactly as `examService.getMarks`
+    // does: `classKey` on a mark row is whatever form was current when it was
+    // saved ("Class 1" on older rows, "Class 1-A" on newer), so including it
+    // here would silently match nothing.
+    const markRows = await ExamMarkModel.find(
+      { schoolId, examId: { $in: exams.map((e) => e._id) } },
+      { examId: 1, subjectId: 1, submitted: 1, theory: 1, practical: 1, internal: 1, isAbsent: 1 },
+    ).lean();
+
+    interface SheetState { total: number; submitted: number; touched: number }
+    const sheetState = new Map<string, SheetState>();
+    for (const m of markRows) {
+      const k = `${String(m.examId)}:${String(m.subjectId)}`;
+      const cur = sheetState.get(k) ?? { total: 0, submitted: 0, touched: 0 };
+      cur.total += 1;
+      if (m.submitted === true) cur.submitted += 1;
+      if (m.isAbsent === true || m.theory != null || m.practical != null || m.internal != null) {
+        cur.touched += 1;
+      }
+      sheetState.set(k, cur);
+    }
+
+    /** A published exam is closed to edits regardless of who submitted what. */
+    const statusFor = (examId: unknown, examStatus: unknown, subject: string): string => {
+      if (examStatus === 'published') return 'submitted';
+      const st = sheetState.get(`${String(examId)}:${subject}`);
+      if (!st || st.total === 0) return 'not_started';
+      if (st.submitted === st.total) return 'submitted';
+      return st.touched > 0 ? 'in_progress' : 'not_started';
+    };
+
     const rows: Array<Record<string, unknown>> = [];
     for (const e of exams) {
       for (const a of assignments) {
@@ -257,7 +294,7 @@ export const teacherService = {
             name: e.name,
             classKey: keyOf(a.className, a.section),
             subject,
-            marksEntryStatus: e.status === 'published' ? 'submitted' : e.status === 'marks_entry' ? 'in_progress' : 'not_started',
+            marksEntryStatus: statusFor(e._id, e.status, subject),
           });
         }
       }

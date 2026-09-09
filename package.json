@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -16,7 +16,10 @@
     "backfill:fee-status": "tsx src/scripts/backfill-fee-status.ts",
     "backfill:missing-classes": "tsx src/scripts/backfill-missing-classes.ts",
     "backfill:class-incharge": "tsx src/scripts/backfill-class-incharge.ts",
-    "backfill:parent-accounts": "tsx src/scripts/backfill-parent-accounts.ts"
+    "backfill:parent-accounts": "tsx src/scripts/backfill-parent-accounts.ts",
+    "seed:demo": "tsx src/seed/demo-data.ts",
+    "seed:roster": "tsx src/seed/demo-roster.ts",
+    "seed:timetable": "tsx src/seed/demo-timetable.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1111.0",

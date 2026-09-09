@@ -36,6 +36,42 @@ describe('Fee API', () => {
     const res = await request(app).get('/api/fee/heads').set(auth(acc));
     return res.body[0].id;
   }
+  /**
+   * collect() now recomputes the total server-side from the real fee
+   * structure and rejects a mismatched netPayable (money can no longer be
+   * taken from the client — see fee.service.ts's recomputeCollectionTotals).
+   * For a single unpaid month on a fresh student, the due amount is just
+   * that month's `amount` from GET /fee/pending — fetch it instead of
+   * inventing a number.
+   */
+  async function collectOneMonth(studentId: string, month: string) {
+    const context = await request(app).get(`/api/fee/pending/${studentId}`).set(auth(acc));
+    const entry = context.body.months.find((m: { month: string }) => m.month === month);
+    // See utilize.test.ts's makeReceipt for why previousDues excludes this
+    // month's own unpaid share — collect() does the same exclusion.
+    const ownUnpaid = Math.max(0, entry.amount - entry.paid);
+    const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+    const netPayable = Math.max(
+      0,
+      Math.round(
+        entry.amount -
+          (context.body.concessionAmount ?? 0) -
+          (context.body.advanceBalance ?? 0) +
+          previousDues +
+          (context.body.fineAmount ?? 0),
+      ),
+    );
+    return request(app)
+      .post('/api/fee/collect')
+      .set(auth(acc))
+      .send({
+        studentId,
+        months: [month],
+        netPayable,
+        payments: [{ mode: 'cash', amount: netPayable }],
+        paymentDate: TODAY,
+      });
+  }
 
   it('requires auth (401) and forbids non-finance roles (403)', async () => {
     expect((await request(app).get('/api/fee/heads')).status).toBe(401);
@@ -138,23 +174,14 @@ describe('Fee API', () => {
 
   it('collect → receipt → list/get/duplicate/cancel, and stats reflect today', async () => {
     const sid = await class1StudentId();
-    const hid = await headId();
-    const collect = await request(app)
-      .post('/api/fee/collect')
-      .set(auth(acc))
-      .send({
-        studentId: sid,
-        months: ['April'],
-        feeHeads: [{ id: hid, amount: 1300 }],
-        netPayable: 1300,
-        payments: [{ mode: 'cash', amount: 1300 }],
-        paymentDate: TODAY,
-      });
+    const collect = await collectOneMonth(sid, 'April');
     expect(collect.status).toBe(201);
+    const amount = collect.body.amount;
+    expect(amount).toBeGreaterThan(0);
     expect(collect.body).toMatchObject({
       id: expect.any(String),
       receiptNumber: expect.stringMatching(/^RCP-/),
-      amount: 1300,
+      amount,
       status: 'active',
       paymentMode: 'cash',
     });
@@ -174,34 +201,32 @@ describe('Fee API', () => {
     expect(cancel.body).toMatchObject({ status: 'cancelled', cancelledReason: 'Wrong entry' });
 
     const stats = await request(app).get('/api/fee/stats/today').set(auth(acc));
-    // The active duplicate (1300) counts for today; the cancelled original does not.
+    // The active duplicate counts for today; the cancelled original does not.
     expect(stats.body.todayCount).toBe(1);
-    expect(stats.body.todayCollection).toBe(1300);
+    expect(stats.body.todayCollection).toBe(amount);
   });
 
   it('GET /fee/ledger computes per-student totals from structure + receipts', async () => {
     const sid = await class1StudentId();
-    const hid = await headId();
-    await request(app)
-      .post('/api/fee/collect')
-      .set(auth(acc))
-      .send({ studentId: sid, months: ['April'], feeHeads: [{ id: hid, amount: 5000 }], netPayable: 5000, payments: [{ mode: 'cash', amount: 5000 }], paymentDate: TODAY });
+    const collect = await collectOneMonth(sid, 'April');
+    expect(collect.status).toBe(201);
+    const amount = collect.body.amount as number;
 
     const res = await request(app).get('/api/fee/ledger').set(auth(acc));
     expect(res.status).toBe(200);
     expect(res.body.length).toBe(15);
     const row = res.body.find((r: { studentId: string }) => r.studentId === sid);
-    expect(row).toMatchObject({ totalFee: expect.any(Number), paid: 5000, status: expect.any(String) });
+    expect(row).toMatchObject({ totalFee: expect.any(Number), paid: amount, status: expect.any(String) });
     expect(row.totalFee).toBeGreaterThan(0);
-    expect(row.balance).toBe(Math.max(0, row.totalFee - 5000));
+    expect(row.balance).toBe(Math.max(0, row.totalFee - amount));
 
     // Month filter: April (the paid month) shows a small monthly due with
-    // paid=5000; a different month shows the same monthly due but paid=0 —
+    // paid=amount; a different month shows the same monthly due but paid=0 —
     // proving `month` actually changes the numbers, not just annual totals.
     const april = await request(app).get('/api/fee/ledger?month=Apr').set(auth(acc));
     const aprilRow = april.body.find((r: { studentId: string }) => r.studentId === sid);
     expect(aprilRow.totalFee).toBe(Math.round(row.totalFee / 12));
-    expect(aprilRow.paid).toBe(5000);
+    expect(aprilRow.paid).toBe(amount);
     expect(aprilRow.status).toBe(aprilRow.balance <= 0 ? 'paid' : 'partial');
 
     const july = await request(app).get('/api/fee/ledger?month=Jul').set(auth(acc));

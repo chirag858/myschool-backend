@@ -46,8 +46,14 @@ const designation = z.enum([
   'librarian', 'accountant', 'clerk', 'receptionist', 'hr_manager', 'storekeeper', 'driver',
   'conductor', 'helper', 'peon', 'security_guard', 'custom',
 ]);
-const ifsc = z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC code').optional();
-const bankAccountNumber = z.string().regex(/^\d{9,18}$/, 'Bank account number must be 9-18 digits').optional();
+const ifsc = z
+  .string()
+  .optional()
+  .refine((v) => !v || /^[A-Z]{4}0[A-Z0-9]{6}$/.test(v), 'Invalid IFSC code');
+const bankAccountNumber = z
+  .string()
+  .optional()
+  .refine((v) => !v || /^\d{9,18}$/.test(v), 'Bank account number must be 9-18 digits');
 const allowanceType = z.enum(['hra', 'da', 'ta', 'medical', 'special', 'lab_supervision', 'exam_duty', 'performance', 'custom']);
 const deductionType = z.enum(['pf', 'esi', 'professional_tax', 'tds', 'salary_advance', 'loan', 'penalty', 'custom']);
 

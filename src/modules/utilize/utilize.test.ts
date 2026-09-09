@@ -41,24 +41,55 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
     const row = res.body.rows.find((r: { id: string }) => r.id !== excludeId);
     return { id: row.id, name: row.name };
   }
-  async function headId(): Promise<string> {
-    const res = await request(app).get('/api/fee/heads').set(auth(acc));
-    return res.body[0].id;
-  }
-  async function makeReceipt(studentId: string, amount = 1000): Promise<{ id: string; receiptNumber: string }> {
-    const hid = await headId();
+  /**
+   * collect() recomputes the total server-side from the real fee structure
+   * and rejects a mismatched netPayable (see fee.service.ts's
+   * recomputeCollectionTotals) — a test can no longer hand it an arbitrary
+   * amount. `correction.amount` in the tests below is a separate, unchecked
+   * field the utilize service uses only to decide direct-apply vs
+   * approval-queue (`canApplyDirectly`); it's never compared against the
+   * receipt's real stored amount, so those literals stay meaningful on
+   * their own. Every month reports the same monthlyTotal (no concessions in
+   * the seed), so two receipts for the same student on different months
+   * still land on the same amount — that's what the duplicate-finder test
+   * below relies on.
+   */
+  async function makeReceipt(
+    studentId: string,
+    month = 'April',
+  ): Promise<{ id: string; receiptNumber: string; amount: number }> {
+    const context = await request(app).get(`/api/fee/pending/${studentId}`).set(auth(acc));
+    const entry = context.body.months.find((m: { month: string }) => m.month === month);
+    const amount = entry.amount;
+    // context.previousDues (fetched before any month is picked) counts every
+    // overdue-and-unpaid month, including `month` itself if it qualifies —
+    // collect() excludes exactly the month(s) being paid from its own
+    // previousDues recompute, so subtract this month's own unpaid share
+    // before sending, or the strict server-side recompute in collect()
+    // rejects a mismatched netPayable (see fee.service.ts recompute).
+    const ownUnpaid = Math.max(0, entry.amount - entry.paid);
+    const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+    const netPayable = Math.max(
+      0,
+      Math.round(
+        amount -
+          (context.body.concessionAmount ?? 0) -
+          (context.body.advanceBalance ?? 0) +
+          previousDues +
+          (context.body.fineAmount ?? 0),
+      ),
+    );
     const res = await request(app)
       .post('/api/fee/collect')
       .set(auth(acc))
       .send({
         studentId,
-        months: ['April'],
-        feeHeads: [{ id: hid, amount }],
-        netPayable: amount,
-        payments: [{ mode: 'cash', amount }],
+        months: [month],
+        netPayable,
+        payments: [{ mode: 'cash', amount: netPayable }],
         paymentDate: TODAY,
       });
-    return { id: res.body.id, receiptNumber: res.body.receiptNumber };
+    return { id: res.body.id, receiptNumber: res.body.receiptNumber, amount: netPayable };
   }
 
   it('requires auth (401) and forbids non-utilize roles (403)', async () => {
@@ -89,7 +120,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('cancel: submitCorrection actually cancels the real receipt (small amount → direct)', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 500);
+    const receipt = await makeReceipt(sid);
     const res = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -114,7 +145,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('edit: updates the real receipt remarks field', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 500);
+    const receipt = await makeReceipt(sid);
     const res = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -139,7 +170,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('reverse: creates a real offsetting negative receipt and marks the original reversed', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 800);
+    const receipt = await makeReceipt(sid);
     const res = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -150,11 +181,16 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
         targetId: receipt.id,
         studentId: sid,
         studentName: 'x',
-        oldValue: { amount: 800, status: 'active' },
-        newValue: { amount: -800, status: 'reversed' },
+        oldValue: { amount: receipt.amount, status: 'active' },
+        newValue: { amount: -receipt.amount, status: 'reversed' },
         reasonCode: 'wrong_amount',
         reason: 'Payment amount was entered incorrectly, reversing entry',
-        amount: 800,
+        // `amount` only drives canApplyDirectly's threshold check (see the
+        // makeReceipt doc comment) — it's never cross-checked against the
+        // receipt's real stored amount, which can now include real arrears
+        // and so exceed the approval threshold on its own. Keep this small
+        // so the test exercises the direct-apply path it's named for.
+        amount: 500,
       });
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('applied');
@@ -162,12 +198,12 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
     expect(original.body.status).toBe('reversed');
     const list = await request(app).get('/api/fee/receipts').set(auth(acc)).query({ search: `${receipt.receiptNumber}-REV` });
     expect(list.body.rows.length).toBe(1);
-    expect(list.body.rows[0].amount).toBe(-800);
+    expect(list.body.rows[0].amount).toBe(-receipt.amount);
   });
 
   it('reverse: a second reversal is refused with a clear message, not a raw duplicate-key conflict', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 800);
+    const receipt = await makeReceipt(sid);
     const body = {
       category: 'receipt',
       action: 'reverse',
@@ -175,11 +211,12 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
       targetId: receipt.id,
       studentId: sid,
       studentName: 'x',
-      oldValue: { amount: 800, status: 'active' },
-      newValue: { amount: -800, status: 'reversed' },
+      oldValue: { amount: receipt.amount, status: 'active' },
+      newValue: { amount: -receipt.amount, status: 'reversed' },
       reasonCode: 'wrong_amount',
       reason: 'Payment amount was entered incorrectly, reversing entry',
-      amount: 800,
+      // See the reverse test above — keep small so this stays a direct apply.
+      amount: 500,
     };
     expect((await request(app).post('/api/utilize/corrections').set(auth(admin)).send(body)).status).toBe(201);
     const second = await request(app).post('/api/utilize/corrections').set(auth(admin)).send(body);
@@ -192,8 +229,39 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('a reversed receipt drops out of the duplicate finder so it cannot be reversed again from the UI', async () => {
     const { id: sid } = await class1StudentId();
-    const first = await makeReceipt(sid, 900);
-    await makeReceipt(sid, 900);
+    // Same amount + same day is what the duplicate finder keys on (not
+    // month). With real previousDues now in play, April's and May's natural
+    // totals no longer match on their own (paying April first settles one
+    // fewer month of arrears than paying May second sees) — so waive each
+    // one down to the same fixed check amount instead of relying on the
+    // months' raw totals lining up.
+    const CHECK_AMOUNT = 500;
+    async function makeCheckReceipt(month: string) {
+      const context = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
+      const entry = context.body.months.find((m: { month: string }) => m.month === month);
+      const ownUnpaid = Math.max(0, entry.amount - entry.paid);
+      const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+      const preWaive =
+        entry.amount - (context.body.concessionAmount ?? 0) - (context.body.advanceBalance ?? 0) + previousDues + (context.body.fineAmount ?? 0);
+      const waiveOffAmount = Math.max(0, Math.round(preWaive) - CHECK_AMOUNT);
+      const res = await request(app)
+        .post('/api/fee/collect')
+        .set(auth(acc))
+        .send({
+          studentId: sid,
+          months: [month],
+          netPayable: CHECK_AMOUNT,
+          payments: [{ mode: 'cash', amount: CHECK_AMOUNT }],
+          paymentDate: TODAY,
+          waiveOffAmount,
+          waiveOffReason: 'Test fixture — normalized to a fixed check amount',
+        });
+      return { id: res.body.id as string, receiptNumber: res.body.receiptNumber as string, amount: res.body.amount as number };
+    }
+    const first = await makeCheckReceipt('April');
+    const second = await makeCheckReceipt('May');
+    expect(first.amount).toBe(CHECK_AMOUNT);
+    expect(second.amount).toBe(CHECK_AMOUNT);
     const before = await request(app).get('/api/utilize/duplicates').set(auth(admin));
     expect(before.body.length).toBe(1);
     await request(app)
@@ -206,11 +274,11 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
         targetId: first.id,
         studentId: sid,
         studentName: 'x',
-        oldValue: { amount: 900, status: 'active' },
-        newValue: { amount: -900, status: 'reversed' },
+        oldValue: { amount: first.amount, status: 'active' },
+        newValue: { amount: -first.amount, status: 'reversed' },
         reasonCode: 'duplicate',
         reason: 'Duplicate entry captured twice on the same day, reversing',
-        amount: 900,
+        amount: first.amount,
       });
     const after = await request(app).get('/api/utilize/duplicates').set(auth(admin));
     expect(after.body.length).toBe(0);
@@ -218,7 +286,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('regenerate: reuses duplicateReceipt — original marked duplicate_issued, new active receipt created', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 600);
+    const receipt = await makeReceipt(sid);
     const res = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -243,7 +311,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
   it('transfer: moves the real receipt to another student', async () => {
     const first = await class1StudentId();
     const second = await anotherStudentId(first.id);
-    const receipt = await makeReceipt(first.id, 400);
+    const receipt = await makeReceipt(first.id);
     const res = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -267,7 +335,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('sensitive/over-threshold corrections queue for approval instead of applying immediately', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 9000);
+    const receipt = await makeReceipt(sid);
     const res = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -293,7 +361,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('only super_admin can approve/reject — school_admin and support_engineer are forbidden even though they can submit', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 9000);
+    const receipt = await makeReceipt(sid);
     const submit = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -333,7 +401,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('rejecting a queued correction never applies the underlying mutation', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 9000);
+    const receipt = await makeReceipt(sid);
     const submit = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -365,7 +433,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('cannot approve/reject an already-decided correction twice', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 9000);
+    const receipt = await makeReceipt(sid);
     const submit = await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -456,7 +524,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('audit log lists submitted corrections', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 300);
+    const receipt = await makeReceipt(sid);
     await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
@@ -480,7 +548,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   it('audit log Excel/PDF export produces real downloadable files, not a stub', async () => {
     const { id: sid } = await class1StudentId();
-    const receipt = await makeReceipt(sid, 300);
+    const receipt = await makeReceipt(sid);
     await request(app)
       .post('/api/utilize/corrections')
       .set(auth(admin))
