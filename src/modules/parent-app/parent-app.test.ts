@@ -4,8 +4,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
 import { driverAppService } from '../driver-app/driver-app.service';
+import { ExamMarkModel, ExamModel } from '../exams/exams.models';
 import { SchoolModel } from '../school/school.model';
+import { TeacherClassModel } from '../teacher/teacher.models';
+import { ClassModel } from '../academics/academics.models';
+import { PeriodModel, SubjectModel, TimetableClassModel } from '../timetable/timetable.models';
 import { RouteModel, StudentTransportModel } from '../transport/transport.models';
+import { UserModel } from '../user/user.model';
 
 async function token(username: string): Promise<string> {
   const res = await request(app).post('/api/auth/login').send({ identifier: username, password: 'demo1234', captcha: 'x' });
@@ -49,6 +54,21 @@ describe('Parent App API (mobile)', () => {
     expect((await request(app).get(`/api/parent/exam/schedules?childId=${childId}`).set(auth(parent))).body).toMatchObject({ exams: expect.any(Array), schedules: expect.any(Array) });
     expect((await request(app).get(`/api/parent/exam/marks?childId=${childId}`).set(auth(parent))).body).toMatchObject({ assessments: expect.any(Array), results: expect.any(Array) });
     expect((await request(app).get(`/api/parent/exam/timetable?childId=${childId}`).set(auth(parent))).body).toMatchObject({ days: expect.any(Array), today: null });
+  });
+
+  it('exam marks resolve the real subject NAME, not the raw id', async () => {
+    const schoolId = String((await SchoolModel.findOne({}).lean())!._id);
+    // `childId` above is `body[0].id` from `beforeEach` — re-fetching index 0 stays consistent.
+    const child = (await request(app).get('/api/parent/app-children').set(auth(parent))).body[0];
+    const classKey = `${child.className}-${child.section}`;
+    const subject = await SubjectModel.create({ schoolId, name: 'English', code: 'ENG' });
+    const exam = await ExamModel.create({ schoolId, name: 'Unit Test 1', classes: [child.className], status: 'published', publishedResults: [classKey] });
+    await ExamMarkModel.create({ schoolId, examId: exam._id, classKey, subjectId: String(subject._id), studentId: childId, theory: 70, practical: 17, internal: 0 });
+
+    const marks = (await request(app).get(`/api/parent/exam/marks?childId=${childId}`).set(auth(parent))).body;
+    const result = marks.results.find((r: { assessmentId: string }) => r.assessmentId === String(exam._id));
+    expect(result.published).toBe(true);
+    expect(result.subjects).toEqual([{ subject: 'English', subjectId: String(subject._id), obtained: 87, max: 100, status: 'pass' }]);
   });
 
   it('fees: dues + receipts + ledger', async () => {
@@ -112,6 +132,62 @@ describe('Parent App API (mobile)', () => {
     expect(rewards.body.entries.length).toBeGreaterThanOrEqual(1);
     expect((await request(app).get(`/api/parent/class-incharge?childId=${childId}`).set(auth(parent))).body).toMatchObject({ name: expect.any(String), role: expect.any(String) });
     expect(Array.isArray((await request(app).get(`/api/parent/online-classes?childId=${childId}`).set(auth(parent))).body)).toBe(true);
+  });
+
+  it('subject-teachers: flattens every TeacherClassAssignment for the child\'s section, sorted by subject', async () => {
+    const schoolId = String((await SchoolModel.findOne({}).lean())!._id);
+    const child = (await request(app).get('/api/parent/app-children').set(auth(parent))).body[0];
+    const teacherA = await UserModel.create({ name: 'Mrs. Gupta', role: 'teacher', schoolId, username: 'mrs-gupta-test', email: 'gupta.test@msc.test' });
+    const teacherB = await UserModel.create({ name: 'Mr. Rao', role: 'teacher', schoolId, username: 'mr-rao-test', email: 'rao.test@msc.test' });
+    await TeacherClassModel.create({ schoolId, teacherUserId: String(teacherA._id), className: child.className, section: child.section, subjects: ['Science', 'Maths'], isClassTeacher: true });
+    await TeacherClassModel.create({ schoolId, teacherUserId: String(teacherB._id), className: child.className, section: child.section, subjects: ['English'], isClassTeacher: false });
+
+    const res = await request(app).get(`/api/parent/subject-teachers?childId=${childId}`).set(auth(parent));
+    expect(res.body).toEqual([
+      { subject: 'English', teacherName: 'Mr. Rao', isClassTeacher: false },
+      { subject: 'Maths', teacherName: 'Mrs. Gupta', isClassTeacher: true },
+      { subject: 'Science', teacherName: 'Mrs. Gupta', isClassTeacher: true },
+    ]);
+  });
+
+  it('class timetable: unpublished stays empty, published returns real day/period/subject/teacher/room rows', async () => {
+    const schoolId = String((await SchoolModel.findOne({}).lean())!._id);
+    const child = (await request(app).get('/api/parent/app-children').set(auth(parent))).body[0];
+    const cls = await ClassModel.findOneAndUpdate(
+      { schoolId, name: child.className },
+      { schoolId, name: child.className },
+      { upsert: true, new: true },
+    );
+    const period = await PeriodModel.create({ schoolId, order: 1, name: 'P1', startTime: '09:00', endTime: '09:40' });
+
+    const unpublished = await request(app).get(`/api/parent/timetable?childId=${childId}`).set(auth(parent));
+    expect(unpublished.body).toEqual({ published: false, days: [], today: null });
+
+    await TimetableClassModel.create({
+      schoolId,
+      classId: String(cls._id),
+      section: child.section,
+      published: true,
+      slots: [
+        {
+          classId: String(cls._id), section: child.section, day: 'mon', periodId: String(period._id),
+          subjectId: 'sub1', subjectName: 'Mathematics', subjectColor: '#000', teacherId: 't1',
+          teacherName: 'Mrs. Gupta', roomId: 'r1', roomName: 'Room 101',
+        },
+      ],
+    });
+
+    const published = await request(app).get(`/api/parent/timetable?childId=${childId}`).set(auth(parent));
+    expect(published.body.published).toBe(true);
+    expect(published.body.days).toHaveLength(6);
+    const monday = published.body.days.find((d: { day: string }) => d.day === 'monday');
+    expect(monday.periods).toEqual([
+      { id: String(period._id), order: 1, startTime: '09:00', endTime: '09:40', subject: 'Mathematics', teacher: 'Mrs. Gupta', room: 'Room 101', isBreak: false },
+    ]);
+    const tuesday = published.body.days.find((d: { day: string }) => d.day === 'tuesday');
+    expect(tuesday.periods).toEqual([
+      { id: String(period._id), order: 1, startTime: '09:00', endTime: '09:40', subject: undefined, teacher: undefined, room: undefined, isBreak: false },
+    ]);
   });
 
   it('merged app: a STUDENT drives the parent app scoped to their own record', async () => {
