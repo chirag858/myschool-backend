@@ -12,6 +12,8 @@ const assignmentSchema = new Schema(
     section: { type: String, default: '' },
     subjects: { type: [String], default: [] },
     periodsPerWeek: { type: Number, default: 6 },
+    // Whether this teacher is the class-teacher of the section (attendance-eligible).
+    isClassTeacher: { type: Boolean, default: false },
   },
   { timestamps: true },
 );
@@ -99,6 +101,8 @@ const submissionSchema = new Schema(
     status: { type: String, enum: ['pending', 'submitted', 'late', 'graded'], default: 'pending' },
     textContent: String,
     fileName: String,
+    files: { type: [Schema.Types.Mixed], default: [] },
+    late: { type: Boolean, default: false },
     fileUrl: String,
     marks: Number,
     feedback: String,
