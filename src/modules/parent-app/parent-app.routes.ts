@@ -22,6 +22,7 @@ parentAppRoutes.get('/profile', asyncHandler(C.profile));
 parentAppRoutes.get('/app-attendance', asyncHandler(C.attendance));
 
 parentAppRoutes.get('/exam/timetable', asyncHandler(C.examTimetable));
+parentAppRoutes.get('/timetable', asyncHandler(C.classTimetable));
 parentAppRoutes.get('/exam/schedules', asyncHandler(C.examSchedules));
 parentAppRoutes.get('/exam/marks', asyncHandler(C.examMarks));
 
@@ -58,4 +59,5 @@ parentAppRoutes.get('/transport/live', asyncHandler(C.transportLive));
 parentAppRoutes.get('/bag', asyncHandler(C.bag));
 parentAppRoutes.get('/rewards', asyncHandler(C.rewards));
 parentAppRoutes.get('/class-incharge', asyncHandler(C.classIncharge));
+parentAppRoutes.get('/subject-teachers', asyncHandler(C.subjectTeachers));
 parentAppRoutes.get('/online-classes', asyncHandler(C.onlineClasses));

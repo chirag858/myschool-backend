@@ -133,18 +133,17 @@ async function resolveTenantUser(
       $or: [{ username: key }, { email: key }],
     }).select('+passwordHash');
   }
-  // No school code: a platform account first; else fall back to a UNIQUE tenant
-  // match so single-tenant / globally-unique usernames sign in code-less
-  // (backward-compatible with clients that don't send a code). Only a username
-  // that exists in MORE than one school still requires a code to disambiguate.
+  // No school code: platform account first (schoolId absent OR null — `{schoolId:
+  // null}` matches both), else a UNIQUE tenant match so globally-unique usernames
+  // sign in code-less. A username in MORE than one school still needs the code.
   const platform = await UserModel.findOne({
     $or: [{ username: key }, { email: key }],
-    schoolId: { $exists: false },
+    schoolId: null,
   }).select('+passwordHash');
   if (platform) return platform;
   const scoped = await UserModel.find({
     $or: [{ username: key }, { email: key }],
-    schoolId: { $exists: true },
+    schoolId: { $ne: null },
   })
     .select('+passwordHash')
     .limit(2);

@@ -32,6 +32,9 @@ export const parentAppController = {
   async examTimetable(req: Request, res: Response) {
     send(res, await S.examTimetable(schoolId(req), uid(req), childG(req)));
   },
+  async classTimetable(req: Request, res: Response) {
+    send(res, await S.classTimetable(schoolId(req), uid(req), childG(req)));
+  },
   async examSchedules(req: Request, res: Response) {
     send(res, await S.examSchedules(schoolId(req), uid(req), childG(req)));
   },
@@ -126,6 +129,9 @@ export const parentAppController = {
   },
   async classIncharge(req: Request, res: Response) {
     send(res, await S.classIncharge(schoolId(req), uid(req), childG(req)));
+  },
+  async subjectTeachers(req: Request, res: Response) {
+    send(res, await S.subjectTeachers(schoolId(req), uid(req), childG(req)));
   },
   async onlineClasses(req: Request, res: Response) {
     send(res, await S.onlineClasses(schoolId(req), uid(req), childG(req)));

@@ -3,6 +3,8 @@ import { AttendanceModel } from '../attendance/attendance.models';
 import { NotificationModel } from '../communication/communication.models';
 import { ExamMarkModel, ExamModel } from '../exams/exams.models';
 import { ReceiptModel } from '../fee/fee.models';
+import { ClassModel } from '../academics/academics.models';
+import { PeriodModel, SubjectModel, TimetableClassModel } from '../timetable/timetable.models';
 import { feeService } from '../fee/fee.service';
 import { ParentComplaintModel } from '../parent/parent.models';
 import { StudentModel } from '../students/student.model';
@@ -150,39 +152,120 @@ export const parentAppService = {
   // ── Exams ──
   async examTimetable(schoolId: string, userId: string, childId: string) {
     await ownChild(schoolId, userId, childId);
-    // ponytail: no timetable model yet — return an empty week; build a Timetable model to populate.
+    // The exam date sheet lives under `examSchedules` below (real, DB-backed).
+    // This path is the ONLINE-EXAM day-of window (a separate concept from both
+    // the exam date sheet and the weekly class timetable); no model backs it
+    // yet, so it stays an empty week rather than fabricating one.
     return { days: [], today: null };
+  },
+  /**
+   * The child's weekly class schedule — day/period/subject/teacher/room —
+   * from the same `TimetableClass` model the coordinator/admin timetable
+   * builder writes to. Mobile-only: web has no parent-facing timetable page,
+   * but the data is real, so it's surfaced here rather than left unbuilt.
+   *
+   * `TimetableClass.classId` stores the academics `Class._id`, not the plain
+   * class-name string every other parent-app query uses — resolved via
+   * `ClassModel` before the timetable lookup.
+   */
+  async classTimetable(schoolId: string, userId: string, childId: string) {
+    const c = await ownChild(schoolId, userId, childId);
+    const cls = await ClassModel.findOne({ schoolId, name: c.className }).lean();
+    if (!cls) return { published: false, days: [], today: null };
+
+    const tt = await TimetableClassModel.findOne({ schoolId, classId: String(cls._id), section: c.section }).lean();
+    if (!tt || !tt.published) return { published: false, days: [], today: null };
+
+    const periods = await PeriodModel.find({ schoolId }).sort({ order: 1 }).lean();
+    const slotsByDay = new Map<string, Array<Record<string, unknown>>>();
+    for (const s of (tt.slots as unknown as Array<Record<string, unknown>>) ?? []) {
+      const day = s.day as string;
+      if (!slotsByDay.has(day)) slotsByDay.set(day, []);
+      slotsByDay.get(day)!.push(s);
+    }
+
+    const DAY_KEYS: Record<string, string> = { mon: 'monday', tue: 'tuesday', wed: 'wednesday', thu: 'thursday', fri: 'friday', sat: 'saturday' };
+    const days = Object.entries(DAY_KEYS).map(([short, day]) => {
+      const slots = slotsByDay.get(short) ?? [];
+      return {
+        day,
+        periods: periods.map((p) => {
+          const slot = slots.find((s) => s.periodId === String(p._id));
+          return {
+            id: String(p._id),
+            order: p.order,
+            startTime: p.startTime,
+            endTime: p.endTime,
+            subject: (slot?.subjectName as string) ?? undefined,
+            teacher: (slot?.teacherName as string) ?? undefined,
+            room: (slot?.roomName as string) ?? undefined,
+            isBreak: p.type !== 'class',
+          };
+        }),
+      };
+    });
+
+    const TODAY_KEYS: Record<number, string | null> = { 0: null, 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday', 6: 'saturday' };
+    return { published: true, days, today: TODAY_KEYS[new Date().getDay()] ?? null };
   },
   async examSchedules(schoolId: string, userId: string, childId: string) {
     const c = await ownChild(schoolId, userId, childId);
+    const key = classKeyOf(c);
     const exams = (await ExamModel.find({ schoolId }).lean()).filter((e) => (e.classes as string[])?.includes(c.className as string));
     return {
       exams: exams.map((e) => ({ id: String(e._id), name: e.name as string })),
-      schedules: exams.map((e) => ({
-        examId: String(e._id),
-        examName: e.name as string,
-        papers: ((e.dateSheet as Array<Record<string, unknown>>) ?? []).map((p, i) => ({
-          id: `${String(e._id)}:${i}`,
-          date: (p.date as string) ?? (e.startDate as string) ?? '',
-          subject: (p.subject as string) ?? '',
-          startTime: p.startTime as string | undefined,
-          endTime: p.endTime as string | undefined,
-          maxMarks: p.maxMarks as number | undefined,
-        })),
-      })),
+      schedules: exams.map((e) => {
+        // `dateSheet` entries are per (exam, classKey) — a mixed-class exam's
+        // date sheet holds every class's papers in one array, so filter to
+        // the child's own `className-section` the same way exams-progress
+        // does, rather than showing every class's schedule.
+        const rows = ((e.dateSheet as Array<Record<string, unknown>>) ?? []).filter((p) => p.classKey === key);
+        return {
+          examId: String(e._id),
+          examName: e.name as string,
+          papers: rows.map((p) => ({
+            id: (p.id as string) ?? `${String(e._id)}:${String(p.subjectId)}`,
+            date: (p.date as string) ?? (e.startDate as string) ?? '',
+            subject: (p.subjectName as string) ?? '',
+            startTime: p.startTime as string | undefined,
+            endTime: p.endTime as string | undefined,
+            room: (p.roomName as string) || undefined,
+          })),
+        };
+      }),
     };
   },
   async examMarks(schoolId: string, userId: string, childId: string) {
     const c = await ownChild(schoolId, userId, childId);
     const key = classKeyOf(c);
     const exams = (await ExamModel.find({ schoolId }).lean()).filter((e) => (e.classes as string[])?.includes(c.className as string));
+    const allMarks = await ExamMarkModel.find({ schoolId, examId: { $in: exams.map((e) => e._id) }, studentId: childId }).lean();
+    // `subjectId` is stored as a plain string (TimetableSubject._id) with no
+    // populate-able ref, so resolve names in one batch lookup rather than a
+    // per-mark query — a parent screen otherwise has nothing but a raw id to
+    // show for "subject".
+    //
+    // That string is NOT guaranteed to be an id: marks written by older flows
+    // (and the demo seed) hold a subject NAME there instead ('Mathematics',
+    // 'math'). Feeding one of those to `_id: { $in: [...] }` makes Mongoose
+    // throw a CastError, which the global error handler turns into a blanket
+    // 400 "Invalid identifier" — so ONE such row took down the whole Result
+    // screen for the child. Look up only the values that really are ObjectIds;
+    // anything else falls through to the `?? subjectId` fallback below, which
+    // displays the stored name as-is (already human-readable).
+    const subjectIds = [...new Set(allMarks.map((m) => String(m.subjectId)))];
+    const objectIdLike = subjectIds.filter((id) => /^[0-9a-fA-F]{24}$/.test(id));
+    const subjectNames = new Map(
+      (await SubjectModel.find({ schoolId, _id: { $in: objectIdLike } }).lean()).map((s) => [String(s._id), s.name as string]),
+    );
     const results = await Promise.all(
       exams.map(async (e) => {
         const published = ((e.publishedResults as string[]) ?? []).includes(key) || e.status === 'published';
-        const marks = published ? await ExamMarkModel.find({ schoolId, examId: e._id, studentId: childId }).lean() : [];
+        const marks = published ? allMarks.filter((m) => String(m.examId) === String(e._id)) : [];
         const subjects = marks.map((m) => {
           const obtained = Number(m.theory ?? 0) + Number(m.practical ?? 0) + Number(m.internal ?? 0);
-          return { subject: String(m.subjectId), obtained, max: 100, status: obtained >= 33 ? ('pass' as const) : ('fail' as const) };
+          const subjectId = String(m.subjectId);
+          return { subject: subjectNames.get(subjectId) ?? subjectId, subjectId, obtained, max: 100, status: obtained >= 33 ? ('pass' as const) : ('fail' as const) };
         });
         const total = subjects.reduce((s, x) => s + x.obtained, 0);
         const maxTotal = subjects.length * 100;
@@ -443,6 +526,29 @@ export const parentAppService = {
       contact: (teacher?.mobile as string) ?? undefined,
       email: (teacher?.email as string) ?? undefined,
     };
+  },
+  /**
+   * Every subject taught to the child's class+section this year, each with its
+   * teacher — a flattened view of `TeacherClassAssignment` (one doc per
+   * teacher, each covering N subjects) rather than the single class-teacher
+   * `classIncharge` returns. A subject with no assignment doc at all is
+   * omitted, not fabricated with a placeholder teacher.
+   */
+  async subjectTeachers(schoolId: string, userId: string, childId: string) {
+    const c = await ownChild(schoolId, userId, childId);
+    const assignments = await TeacherClassModel.find({ schoolId, className: c.className, section: c.section }).lean();
+    const teachers = new Map(
+      (await UserModel.find({ _id: { $in: assignments.map((a) => a.teacherUserId) } }).lean()).map((u) => [String(u._id), u.name as string]),
+    );
+    const rows = assignments.flatMap((a) =>
+      ((a.subjects as string[]) ?? []).map((subject) => ({
+        subject,
+        teacherName: teachers.get(String(a.teacherUserId)) ?? 'Unassigned',
+        isClassTeacher: Boolean(a.isClassTeacher),
+      })),
+    );
+    rows.sort((a, b) => a.subject.localeCompare(b.subject));
+    return rows;
   },
   async onlineClasses(schoolId: string, userId: string, childId: string) {
     await ownChild(schoolId, userId, childId);
