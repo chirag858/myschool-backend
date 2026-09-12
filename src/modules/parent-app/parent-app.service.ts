@@ -244,9 +244,19 @@ export const parentAppService = {
     // populate-able ref, so resolve names in one batch lookup rather than a
     // per-mark query — a parent screen otherwise has nothing but a raw id to
     // show for "subject".
+    //
+    // That string is NOT guaranteed to be an id: marks written by older flows
+    // (and the demo seed) hold a subject NAME there instead ('Mathematics',
+    // 'math'). Feeding one of those to `_id: { $in: [...] }` makes Mongoose
+    // throw a CastError, which the global error handler turns into a blanket
+    // 400 "Invalid identifier" — so ONE such row took down the whole Result
+    // screen for the child. Look up only the values that really are ObjectIds;
+    // anything else falls through to the `?? subjectId` fallback below, which
+    // displays the stored name as-is (already human-readable).
     const subjectIds = [...new Set(allMarks.map((m) => String(m.subjectId)))];
+    const objectIdLike = subjectIds.filter((id) => /^[0-9a-fA-F]{24}$/.test(id));
     const subjectNames = new Map(
-      (await SubjectModel.find({ schoolId, _id: { $in: subjectIds } }).lean()).map((s) => [String(s._id), s.name as string]),
+      (await SubjectModel.find({ schoolId, _id: { $in: objectIdLike } }).lean()).map((s) => [String(s._id), s.name as string]),
     );
     const results = await Promise.all(
       exams.map(async (e) => {
