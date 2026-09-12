@@ -111,14 +111,18 @@ async function resolveTenantUser(
       $or: [{ username: key }, { email: key }],
     }).select('+passwordHash');
   }
+  // Platform accounts carry no tenant: the field may be absent or explicitly
+  // null depending on how the document was written. `{schoolId: null}` matches
+  // both; `$exists` would miss the null case and mistake the account for a
+  // school-scoped one.
   const user = await UserModel.findOne({
     $or: [{ username: key }, { email: key }],
-    schoolId: { $exists: false },
+    schoolId: null,
   }).select('+passwordHash');
   if (!user) {
     const scoped = await UserModel.exists({
       $or: [{ username: key }, { email: key }],
-      schoolId: { $exists: true },
+      schoolId: { $ne: null },
     });
     if (scoped) throw ApiError.badRequest('Enter your school code to sign in');
   }

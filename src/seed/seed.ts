@@ -184,19 +184,27 @@ export async function seedDemo() {
   const users = [];
   for (const u of DEMO_USERS) {
     const passwordHash = await bcrypt.hash(u.password, 10);
+    // Platform accounts (super_admin/support_engineer) must carry NO tenant at
+    // all. Assigning `undefined` is not enough — depending on the driver path
+    // it can persist as an explicit null, which reads as "has a tenant" and
+    // locks the account out of code-less login. `$unset` guarantees absence.
+    const tenancy = u.tenant
+      ? { $set: { schoolId: school._id, schoolName: school.name } }
+      : { $unset: { schoolId: '', schoolName: '' } };
     const doc = await UserModel.findOneAndUpdate(
       { username: u.username },
       {
-        name: u.name,
-        username: u.username,
-        email: u.email,
-        mobile: u.mobile,
-        role: u.role,
-        passwordHash,
-        schoolId: u.tenant ? school._id : undefined,
-        schoolName: u.tenant ? school.name : undefined,
-        active: true,
-        assignedClasses: u.assignedClasses ?? [],
+        $set: {
+          name: u.name,
+          username: u.username,
+          email: u.email,
+          mobile: u.mobile,
+          role: u.role,
+          passwordHash,
+          active: true,
+          assignedClasses: u.assignedClasses ?? [],
+        },
+        ...tenancy,
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
