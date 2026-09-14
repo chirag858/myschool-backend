@@ -479,4 +479,32 @@ describe('Teacher Portal API', () => {
     expect((await request(app).delete(`/api/teacher/meet-links/${create.body.id}`).set(auth(teacher))).status).toBe(204);
     expect((await request(app).get('/api/teacher/meet-links').set(auth(teacher))).body).toEqual([]);
   });
+
+  it('meet links: PATCH cannot move a link to another class/school or spoof its owner', async () => {
+    const create = await request(app)
+      .post('/api/teacher/meet-links')
+      .set(auth(teacher))
+      .send({ classKey: 'Class 1-A', title: 'Morning class', meetLink: 'https://meet.google.com/abc-defg-hij' });
+    expect(create.status).toBe(201);
+
+    const patch = await request(app)
+      .patch(`/api/teacher/meet-links/${create.body.id}`)
+      .set(auth(teacher))
+      .send({
+        title: 'Renamed',
+        classKey: 'Class 2-A',
+        className: 'Class 2',
+        section: 'B',
+        createdBy: 'Principal',
+        teacherUserId: '000000000000000000000000',
+        schoolId: '000000000000000000000000',
+      });
+    expect(patch.status).toBe(200);
+    expect(patch.body).toMatchObject({ title: 'Renamed', classKey: 'Class 1-A', className: 'Class 1', section: 'A', createdBy: 'Teacher' });
+
+    // Still in the teacher's own list and still deletable by them — i.e. ownership and tenant unchanged.
+    const list = await request(app).get('/api/teacher/meet-links').set(auth(teacher));
+    expect(list.body.map((l: { id: string }) => l.id)).toContain(create.body.id);
+    expect((await request(app).delete(`/api/teacher/meet-links/${create.body.id}`).set(auth(teacher))).status).toBe(204);
+  });
 });

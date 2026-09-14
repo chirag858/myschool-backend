@@ -42,6 +42,8 @@ const keyOf = (className: string, section: string): string => `${className}-${se
  * distinct from `timetableService.getMyTeachingAssignments`, the real
  * timetable-derived multi-row subject-teaching set used only by marks entry
  * (`getMyExams`), unaffected by this. */
+const MEET_LINK_EDITABLE = ['title', 'meetLink', 'description', 'scheduledAt', 'isActive'] as const;
+
 async function myInchargeClass(schoolId: string, userId: string) {
   return getInchargeSection(schoolId, userId);
 }
@@ -435,7 +437,10 @@ export const teacherService = {
     if (String(link.teacherUserId) !== userId) {
       throw ApiError.forbidden('You can only edit a meet link you created');
     }
-    Object.assign(link, patch);
+    // Only the teacher-editable fields — ownership/scope fields are never patchable.
+    for (const key of MEET_LINK_EDITABLE) {
+      if (patch[key] !== undefined) link.set(key, patch[key]);
+    }
     await link.save();
     return dto(link.toObject());
   },

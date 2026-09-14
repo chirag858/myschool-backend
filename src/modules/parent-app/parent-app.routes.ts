@@ -54,7 +54,8 @@ parentAppRoutes.post('/messenger/send', asyncHandler(C.sendMessage));
 parentAppRoutes.post('/messenger/read', asyncHandler(C.markConvRead));
 
 parentAppRoutes.get('/transport/assignment', asyncHandler(C.transportAssignment));
-parentAppRoutes.get('/transport/live', asyncHandler(C.transportLive));
+// On-demand: asks the driver's phone for a position at this instant. Nothing stored.
+parentAppRoutes.get('/transport/locate', asyncHandler(C.locateBus));
 
 parentAppRoutes.get('/bag', asyncHandler(C.bag));
 parentAppRoutes.get('/rewards', asyncHandler(C.rewards));

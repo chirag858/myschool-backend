@@ -16,6 +16,9 @@ const childG = (req: Request): string => gq(req, 'childId');
 const childB = (req: Request): string => bq(req, 'childId');
 
 export const parentAppController = {
+  async locateBus(req: Request, res: Response) {
+    send(res, await S.locateBus(schoolId(req), uid(req), childG(req)));
+  },
   async children(req: Request, res: Response) {
     send(res, await S.children(schoolId(req), uid(req)));
   },
@@ -116,9 +119,6 @@ export const parentAppController = {
 
   async transportAssignment(req: Request, res: Response) {
     send(res, await S.transportAssignment(schoolId(req), uid(req), childG(req)));
-  },
-  async transportLive(req: Request, res: Response) {
-    send(res, await S.transportLive(schoolId(req), uid(req), childG(req)));
   },
 
   async bag(req: Request, res: Response) {

@@ -10,12 +10,25 @@ export const authController = {
   },
 
   async login(req: Request, res: Response) {
-    const { username, password, schoolCode } = req.body as {
-      username: string;
+    const { username, identifier, password, schoolCode } = req.body as {
+      username?: string;
+      identifier?: string;
       password: string;
       schoolCode?: string;
     };
-    send(res, await authService.staffLogin(username, password, req.ip ?? '', schoolCode));
+    // Mobile sends `identifier` (username/email/mobile, no school code); web
+    // staff send `username` + `schoolCode`. Route by which one is present.
+    send(
+      res,
+      identifier
+        ? await authService.passwordLogin(identifier, password, req.ip ?? '')
+        : await authService.staffLogin(username as string, password, req.ip ?? '', schoolCode),
+    );
+  },
+
+  async parentLogin(req: Request, res: Response) {
+    const { identifier, password } = req.body as { identifier: string; password: string };
+    send(res, await authService.passwordLogin(identifier, password, req.ip ?? ''));
   },
 
   async detect(req: Request, res: Response) {
@@ -24,13 +37,17 @@ export const authController = {
   },
 
   async sendOtp(req: Request, res: Response) {
-    const { mobile } = req.body as { mobile: string };
-    send(res, await authService.sendLoginOtp(mobile));
+    const { identifier, mobile } = req.body as { identifier?: string; mobile?: string };
+    send(res, await authService.sendLoginOtp((identifier ?? mobile) as string));
   },
 
   async verifyOtp(req: Request, res: Response) {
-    const { mobile, otp } = req.body as { mobile: string; otp: string };
-    send(res, await authService.verifyLoginOtp(mobile, otp));
+    const { identifier, mobile, otp } = req.body as {
+      identifier?: string;
+      mobile?: string;
+      otp: string;
+    };
+    send(res, await authService.verifyLoginOtp((identifier ?? mobile) as string, otp));
   },
 
   async refresh(req: Request, res: Response) {
@@ -41,6 +58,11 @@ export const authController = {
   async profile(req: Request, res: Response) {
     if (!req.user) throw ApiError.unauthorized();
     send(res, await authService.getProfile(req.user._id));
+  },
+
+  async context(req: Request, res: Response) {
+    if (!req.user) throw ApiError.unauthorized();
+    send(res, await authService.getContext(req.user._id));
   },
 
   async updateProfile(req: Request, res: Response) {
@@ -61,7 +83,7 @@ export const authController = {
 
   async forgotSendOtp(req: Request, res: Response) {
     const { username, contact, schoolCode } = req.body as {
-      username: string;
+      username?: string;
       contact: string;
       schoolCode?: string;
     };
@@ -70,7 +92,7 @@ export const authController = {
 
   async forgotReset(req: Request, res: Response) {
     const { username, contact, otp, password, schoolCode } = req.body as {
-      username: string;
+      username?: string;
       contact: string;
       otp: string;
       password: string;

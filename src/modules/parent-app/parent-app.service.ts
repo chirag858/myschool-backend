@@ -13,7 +13,8 @@ import { TeacherContentModel } from '../teacher-app/teacher-app.models';
 import { OtpModel } from '../auth/otp.model';
 import { UserModel } from '../user/user.model';
 import { RouteModel, StudentTransportModel, VehicleModel } from '../transport/transport.models';
-import { DriverLocationModel, DriverTripModel } from '../driver-app/driver-app.models';
+import { DriverTripModel } from '../driver-app/driver-app.models';
+import { requestPosition } from '../driver-app/duty-registry';
 import {
   ConversationModel,
   MessageModel,
@@ -25,16 +26,10 @@ import {
 
 type Doc = Record<string, unknown> & { _id: unknown };
 
-/** Demo stop coordinates (Patiala) — mirrors driver-app until stops carry real lat/lng. */
-const TRANSPORT_BASE = { lat: 30.3398, lng: 76.3869 };
-function routeStopsFor(route: Doc, childStopName?: string) {
-  return ((route.stops as Array<Record<string, unknown>>) ?? []).map((s, i) => ({
-    id: `${String(route._id)}:stop:${i}`,
-    name: (s.stopName as string) ?? `Stop ${i + 1}`,
-    position: { lat: TRANSPORT_BASE.lat + i * 0.006, lng: TRANSPORT_BASE.lng + i * 0.006 },
-    isChildStop: childStopName ? (s.stopName as string) === childStopName : undefined,
-  }));
-}
+// Stop coordinates used to be FABRICATED here (a fixed Patiala origin, each
+// stop nudged 0.006° along) because route stops carry no lat/lng. They were
+// removed with `transportLive`: the only real position in this system is the one
+// the driver's phone reports when a parent asks (`locateBus`).
 const nowIso = (): string => new Date().toISOString();
 const ATT_OUT: Record<string, string> = { present: 'present', absent: 'absent', leave: 'leave', half_day: 'halfDay', late: 'late', holiday: 'holiday' };
 
@@ -561,57 +556,75 @@ export const parentAppService = {
     await ownChild(schoolId, userId, childId);
     const link = await StudentTransportModel.findOne({ schoolId, studentId: childId }).lean();
     if (!link?.routeId) return null;
-    const vehicle = (await VehicleModel.findOne({ schoolId }).lean()) as Doc | null;
     const route = (await RouteModel.findOne({ _id: link.routeId, schoolId }).lean()) as Doc | null;
+    // The child's ACTUAL bus — the one assigned to their route. This used to
+    // take whichever vehicle the school happened to have first, and read
+    // `driverName`/`driverContact` off the route, where neither field exists —
+    // so every parent saw a blank driver and possibly the wrong bus.
+    const bus = route?.assignedVehicleId
+      ? ((await VehicleModel.findOne({ _id: String(route.assignedVehicleId), schoolId }).lean()) as Doc | null)
+      : null;
     return {
       route: (link.routeName as string) || (route?.routeName as string) || 'Route',
       stopName: (link.stopName as string) || (link.pickupPoint as string) || '',
-      vehicle: (vehicle?.registrationNumber as string) ?? '',
-      // ponytail: driver name/contact aren't on the vehicle/route model yet — pull
-      // from the route's assigned driver here once that link exists.
-      driverName: (route?.driverName as string) ?? '',
-      driverContact: (route?.driverContact as string) ?? '',
+      vehicle: (bus?.registrationNumber as string) ?? '',
+      pickupTime: ((route?.stops as Array<Record<string, unknown>>) ?? [])[0]?.pickupTime ?? '',
+      dropTime: ((route?.stops as Array<Record<string, unknown>>) ?? [])[0]?.dropTime ?? '',
+      driverName: (bus?.driverName as string) ?? (route?.assignedDriverName as string) ?? '',
+      driverContact: (bus?.driverMobile as string) ?? '',
     };
   },
-  async transportLive(schoolId: string, userId: string, childId: string) {
-    await ownChild(schoolId, userId, childId);
-    const idle = (stops: ReturnType<typeof routeStopsFor>) => ({
-      tripStatus: 'no_trip' as const,
-      position: null,
-      etaMinutes: null,
-      boarding: 'unknown' as const,
-      updatedAt: Date.now(),
-      stops,
-    });
-
+  /**
+   * "Where is the bus, right now?" — asked only when the parent taps Track.
+   *
+   * Resolves the child's route → its bus → the driver's parked request, waits
+   * for the phone to answer, and returns that position ONCE. Nothing is stored:
+   * there is no position to read back a second later, by design.
+   */
+  async locateBus(schoolId: string, userId: string, childId: string) {
+    const child = await ownChild(schoolId, userId, childId);
     const link = await StudentTransportModel.findOne({ schoolId, studentId: childId }).lean();
     const routeId = link?.routeId ? String(link.routeId) : null;
-    if (!routeId) return idle([]);
+    const stopName = (link?.stopName as string) || (link?.pickupPoint as string) || '';
 
-    const route = await RouteModel.findOne({ _id: routeId, schoolId }).lean();
-    const stops = route ? routeStopsFor(route as Doc, link?.stopName as string | undefined) : [];
+    const route = routeId ? ((await RouteModel.findOne({ _id: routeId, schoolId }).lean()) as Doc | null) : null;
+    const bus = route?.assignedVehicleId
+      ? ((await VehicleModel.findOne({ _id: String(route.assignedVehicleId), schoolId }).lean()) as Doc | null)
+      : null;
 
-    // The real producer→consumer join: an active driver trip on the child's route,
-    // and the latest GPS position the driver emitted for it.
-    const active = await DriverTripModel.findOne({ schoolId, routeId, status: 'active' }).lean();
-    if (!active) return idle(stops);
+    const details = {
+      childName: (child.name as string) ?? '',
+      routeName: (link?.routeName as string) || (route?.routeName as string) || '',
+      stopName,
+      bus: bus ? { registrationNumber: (bus.registrationNumber as string) ?? '' } : null,
+      driver: bus ? { name: (bus.driverName as string) ?? '', contact: (bus.driverMobile as string) ?? '' } : null,
+    };
 
-    const loc = await DriverLocationModel.findOne({ schoolId, tripId: active.tripId }).lean();
-    const mark = ((active.boarding as Array<{ studentId: string; mark: string }>) ?? []).find(
-      (b) => b.studentId === childId,
-    )?.mark;
-    const boarding = mark === 'boarded' ? 'boarded' : mark === 'deboarded' ? 'dropped' : 'not_yet';
+    if (!bus) return { state: 'no_bus' as const, ...details, position: null };
 
+    const busId = String(bus._id);
+    const active = await DriverTripModel.findOne({ schoolId, busId, status: 'active' }).lean();
+    if (!active) return { state: 'not_started' as const, ...details, position: null };
+
+    const outcome = await requestPosition(busId);
+    if (outcome.state !== 'located') {
+      // 'not_on_duty' (app not holding a request) and 'unreachable' (no answer
+      // in time) are both "we could not reach the bus" to a parent.
+      return { state: outcome.state, ...details, position: null, tripType: (active.type as string) ?? 'pickup' };
+    }
     return {
-      tripStatus: 'active' as const,
-      position: loc && loc.lat != null && loc.lng != null ? { lat: loc.lat, lng: loc.lng } : null,
-      bearing: (loc?.bearing as number | undefined) ?? undefined,
-      etaMinutes: loc ? 8 : null,
-      boarding,
-      updatedAt: (loc?.updatedAt as number) || Date.now(),
-      stops,
+      state: 'located' as const,
+      ...details,
+      tripType: (active.type as string) ?? 'pickup',
+      position: { lat: outcome.position.lat, lng: outcome.position.lng, accuracy: outcome.position.accuracy },
+      ageSeconds: Math.max(0, Math.round((Date.now() - outcome.position.at) / 1000)),
     };
   },
+
+  // `transportLive` was removed with the bus-tracking rebuild. It read a stored
+  // GPS row (now gone), fabricated stop coordinates, reported a hardcoded 8-minute
+  // ETA, and surfaced boarding marks the driver app no longer collects.
+  // `locateBus` above replaces it: one real position, asked for on demand.
 
   // ── Payments (STUB — needs a payment gateway) ──
   async paymentOrder(schoolId: string, userId: string, childId: string, amount: number) {

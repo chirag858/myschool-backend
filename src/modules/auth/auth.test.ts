@@ -68,6 +68,28 @@ describe('Auth API', () => {
     expect(res.body._id).toEqual(expect.any(String));
   });
 
+  it('GET /api/auth/context requires a token (401 without one)', async () => {
+    const res = await request(app).get('/api/auth/context');
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /api/auth/context returns the tenant context (school, session, modules, availability)', async () => {
+    const token = (await login('schooladmin')).body.tokens.accessToken;
+    const res = await request(app).get('/api/auth/context').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    // real school (not a hardcoded stub)
+    expect(res.body.school).toMatchObject({ id: expect.any(String), name: expect.any(String) });
+    expect(res.body.school.id).not.toBe('');
+    // module flags cover every mobile module key
+    for (const key of ['transport', 'fee', 'homework', 'exam', 'attendance', 'complaint']) {
+      expect(typeof res.body.modules[key]).toBe('boolean');
+    }
+    // per-app availability + operational config
+    expect(res.body.availability).toMatchObject({ parent: true, teacher: true, driver: true });
+    expect(res.body.config).toMatchObject({ attendanceLockTime: expect.any(String) });
+    expect(Array.isArray(res.body.sessions)).toBe(true);
+  });
+
   it('POST /api/auth/detect: mobile → otp, username → password', async () => {
     const otp = await request(app).post('/api/auth/detect').send({ identifier: '9990000001' });
     expect(otp.body.method).toBe('otp');
@@ -143,10 +165,12 @@ describe('Auth API', () => {
     expect(res.body.message).toMatch(/Invalid school code/);
   });
 
-  it('school code: tenant account without a code hints at needing one (400)', async () => {
+  it('school code: a unique tenant account signs in code-less (backward-compatible)', async () => {
+    // School code is optional when the username resolves to exactly one tenant —
+    // only a username duplicated across schools still requires the code.
     const res = await login('accountant', 'demo1234', null);
-    expect(res.status).toBe(400);
-    expect(res.body.message).toMatch(/school code/i);
+    expect(res.status).toBe(200);
+    expect(res.body.user.role).toBe('accountant');
   });
 
   it('school code: right code, right school scopes users to that tenant', async () => {
@@ -162,5 +186,58 @@ describe('Auth API', () => {
     const res = await request(app).get('/api/nope');
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  // ── Mobile auth contract ──
+  it('detect returns maskedContact + identifierType for a mobile', async () => {
+    const res = await request(app).post('/api/auth/detect').send({ identifier: '9990000001' });
+    expect(res.body).toMatchObject({
+      method: 'otp',
+      passwordFallback: true,
+      identifierType: 'mobile',
+      maskedContact: expect.stringContaining('0001'),
+    });
+  });
+
+  it('otp/request + otp/resend (identifier) return an OtpDispatch shape', async () => {
+    const req1 = await request(app).post('/api/auth/otp/request').send({ identifier: '9990000001' });
+    expect(req1.status).toBe(200);
+    expect(req1.body).toMatchObject({
+      expiresAt: expect.any(Number),
+      cooldownSeconds: expect.any(Number),
+      maskedContact: expect.stringContaining('0001'),
+    });
+    const otp = req1.body.otp as string;
+    const resend = await request(app).post('/api/auth/otp/resend').send({ identifier: '9990000001' });
+    expect(resend.status).toBe(200);
+    // verify with identifier (mobile field alias)
+    const verify = await request(app).post('/api/auth/otp/verify').send({ identifier: '9990000001', otp: resend.body.otp ?? otp });
+    expect(verify.status).toBe(200);
+    expect(verify.body.tokens.accessToken).toBeTruthy();
+  });
+
+  it('parent-login: password by mobile identifier → { user, tokens }', async () => {
+    const res = await request(app)
+      .post('/api/auth/parent-login')
+      .send({ identifier: '9990000001', password: 'demo1234', device: { deviceId: 'x', platform: 'ios', osVersion: '17', appVersion: '1' } });
+    expect(res.status).toBe(200);
+    expect(res.body.user.role).toBe('parent');
+    expect(res.body.tokens.accessToken).toBeTruthy();
+  });
+
+  it('login accepts `identifier` (mobile-app field) as well as `username`', async () => {
+    const res = await request(app).post('/api/auth/login').send({ identifier: 'schooladmin', password: 'demo1234', captcha: 'x' });
+    expect(res.status).toBe(200);
+    expect(res.body.user.role).toBe('school_admin');
+  });
+
+  it('forgot-password works with contact only (no username)', async () => {
+    const sendRes = await request(app).post('/api/auth/forgot-password/send-otp').send({ contact: '9990000001' });
+    expect(sendRes.status).toBe(200);
+    expect(sendRes.body.otp).toBeTruthy();
+    const reset = await request(app)
+      .post('/api/auth/forgot-password/reset')
+      .send({ contact: '9990000001', otp: sendRes.body.otp, password: 'newpass123' });
+    expect(reset.body).toMatchObject({ success: true });
   });
 });

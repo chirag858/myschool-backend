@@ -30,7 +30,15 @@ describe('Fee API', () => {
   async function class1StudentId(): Promise<string> {
     // Student roster is academic-admin scoped; fetch the id with an admin token.
     const res = await request(app).get('/api/students?classKey=Class 1').set(auth(admin));
-    return res.body.rows[0].id;
+    const rows = res.body.rows as { id: string }[];
+    // Skip anyone the SEED already paid for (the demo parent's child carries a
+    // receipt covering April+May): these tests collect April, which a paid
+    // month rejects with a 400. Collection must start from a clean ledger.
+    const receipts = await request(app).get('/api/fee/receipts').set(auth(acc));
+    const paidFor = new Set(
+      ((receipts.body.rows ?? receipts.body ?? []) as { studentId?: string }[]).map((r) => String(r.studentId ?? '')),
+    );
+    return (rows.find((r) => !paidFor.has(String(r.id))) ?? rows[0]!).id;
   }
   async function headId(): Promise<string> {
     const res = await request(app).get('/api/fee/heads').set(auth(acc));

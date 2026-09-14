@@ -106,8 +106,10 @@ export const meetLinkPatchSchema = z
     description: z.string().optional(),
     scheduledAt: z.string().optional(),
     isActive: z.boolean().optional(),
-  })
-  .passthrough();
+  });
+// No `.passthrough()`: unknown keys (classKey, schoolId, teacherUserId,
+// createdBy…) must be stripped, or a teacher could move a link to another
+// class/school or spoof its author through PATCH.
 
 export const applyLeaveSchema = z
   .object({

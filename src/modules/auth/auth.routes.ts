@@ -10,8 +10,9 @@ import {
   forgotResetSchema,
   forgotSendSchema,
   loginSchema,
+  otpRequestSchema,
+  parentLoginSchema,
   refreshSchema,
-  sendOtpSchema,
   updateProfileSchema,
   verifyOtpSchema,
 } from './auth.validation';
@@ -20,8 +21,16 @@ export const authRoutes = Router();
 
 authRoutes.get('/config', asyncHandler(authController.getConfig));
 authRoutes.post('/login', validate({ body: loginSchema }), asyncHandler(authController.login));
+authRoutes.post(
+  '/parent-login',
+  validate({ body: parentLoginSchema }),
+  asyncHandler(authController.parentLogin),
+);
 authRoutes.post('/detect', validate({ body: detectSchema }), asyncHandler(authController.detect));
-authRoutes.post('/otp/send', validate({ body: sendOtpSchema }), asyncHandler(authController.sendOtp));
+// OTP: /otp/send (web) + /otp/request + /otp/resend (mobile) all dispatch a login OTP.
+authRoutes.post('/otp/send', validate({ body: otpRequestSchema }), asyncHandler(authController.sendOtp));
+authRoutes.post('/otp/request', validate({ body: otpRequestSchema }), asyncHandler(authController.sendOtp));
+authRoutes.post('/otp/resend', validate({ body: otpRequestSchema }), asyncHandler(authController.sendOtp));
 authRoutes.post(
   '/otp/verify',
   validate({ body: verifyOtpSchema }),
@@ -29,6 +38,7 @@ authRoutes.post(
 );
 authRoutes.post('/refresh', validate({ body: refreshSchema }), asyncHandler(authController.refresh));
 authRoutes.get('/profile', authenticate, asyncHandler(authController.profile));
+authRoutes.get('/context', authenticate, asyncHandler(authController.context));
 authRoutes.put(
   '/profile',
   authenticate,

@@ -1,204 +1,187 @@
 import { ApiError } from '../../lib/api-error';
+import { StudentModel } from '../students/student.model';
 import { RouteModel, StudentTransportModel, VehicleModel } from '../transport/transport.models';
-import { DriverAlertModel, DriverLocationModel, DriverTripModel } from './driver-app.models';
+import { DriverTripModel } from './driver-app.models';
+import { clearBus, park, submitPosition, type BusPosition } from './duty-registry';
 
 type Doc = Record<string, unknown> & { _id: unknown };
 const nowIso = (): string => new Date().toISOString();
 const today = (): string => nowIso().slice(0, 10);
-// Deterministic demo coordinates (Patiala) since route stops carry no lat/lng yet.
-const BASE = { lat: 30.3398, lng: 76.3869 };
-const stopPos = (i: number) => ({ lat: BASE.lat + i * 0.006, lng: BASE.lng + i * 0.006 });
 
-async function requireRoute(schoolId: string, routeId: string): Promise<Doc> {
-  const r = await RouteModel.findOne({ _id: routeId, schoolId }).lean();
-  if (!r) throw ApiError.notFound('Route not found');
-  return r as Doc;
+/**
+ * The logged-in driver's bus, with the route it runs. THE scoping primitive for
+ * the driver app: everything a driver can see or do is derived from this, so a
+ * driver can never read or touch another bus. Returns null when no bus carries
+ * this driver's login (`Vehicle.driverUserId`).
+ */
+async function myBus(schoolId: string, userId: string) {
+  const bus = (await VehicleModel.findOne({ schoolId, driverUserId: userId }).lean()) as Doc | null;
+  if (!bus) return null;
+  const route = (await RouteModel.findOne({ schoolId, assignedVehicleId: String(bus._id) }).lean()) as Doc | null;
+  return { bus, route };
 }
 
-function routeStops(r: Doc) {
-  return ((r.stops as Array<Record<string, unknown>>) ?? []).map((s, i) => ({
-    id: `${String(r._id)}:stop:${i}`,
-    name: (s.stopName as string) ?? `Stop ${i + 1}`,
-    position: stopPos(i),
-    order: (s.stopOrder as number) ?? i + 1,
-    time: (s.pickupTime as string) ?? undefined,
-  }));
-}
+/** Server-owned trip id — the app never supplies one (it cannot forge another bus's). */
+const tripIdFor = (busId: string, type: string): string => `${busId}:${today()}:${type}`;
 
+/**
+ * The driver app's entire backend: which bus am I on, start/end my trip, and the
+ * on-demand location channel. Route-scoped endpoints (whole-school assignment,
+ * manifests, boarding marks, stored GPS pings, parent alerts, trip history) were
+ * removed with the app rebuild — they either ignored the logged-in driver,
+ * invented data, or were never delivered to anyone.
+ */
 export const driverAppService = {
-  async assignment(schoolId: string) {
-    const routes = await RouteModel.find({ schoolId }).lean();
-    const vehicle = await VehicleModel.findOne({ schoolId }).lean();
+  /** The driver's bus, its route + stops, how many students ride it, and the
+   *  trip that is running right now (if any). */
+  async myBus(schoolId: string, userId: string) {
+    const mine = await myBus(schoolId, userId);
+    if (!mine) return { bus: null, route: null, studentCount: 0, activeTrip: null };
+    const { bus, route } = mine;
+    const routeId = route ? String(route._id) : null;
+    const [studentCount, active] = await Promise.all([
+      routeId ? StudentTransportModel.countDocuments({ schoolId, routeId }) : 0,
+      DriverTripModel.findOne({ schoolId, busId: String(bus._id), status: 'active' }).lean(),
+    ]);
     return {
-      routes: routes.map((r) => ({
-        id: String(r._id),
-        name: (r.routeName as string) || (r.routeCode as string) || 'Route',
-        stops: routeStops(r as Doc),
-        vehicle: {
-          registrationNumber: (vehicle?.registrationNumber as string) ?? 'PB-11-AB-1234',
-          vehicleNumber: (vehicle?.registrationNumber as string) ?? 'PB-11-AB-1234',
-          seatingCapacity: (vehicle?.seatingCapacity as number) ?? 40,
-          model: vehicle?.vehicleType as string | undefined,
-        },
-        trips: [
-          { id: `${String(r._id)}:pickup`, type: 'pickup', label: 'Morning Pickup', scheduledTime: '07:30', status: 'scheduled' },
-          { id: `${String(r._id)}:drop`, type: 'drop', label: 'Afternoon Drop', scheduledTime: '14:30', status: 'scheduled' },
-        ],
-      })),
+      bus: {
+        id: String(bus._id),
+        registrationNumber: (bus.registrationNumber as string) ?? '',
+        seatingCapacity: (bus.seatingCapacity as number) ?? 0,
+      },
+      route: route
+        ? {
+            id: routeId,
+            name: (route.routeName as string) || (route.routeCode as string) || 'Route',
+            stops: ((route.stops as Array<Record<string, unknown>>) ?? []).map((s, i) => ({
+              order: (s.stopOrder as number) ?? i + 1,
+              name: (s.stopName as string) ?? `Stop ${i + 1}`,
+              pickupTime: (s.pickupTime as string) ?? '',
+              dropTime: (s.dropTime as string) ?? '',
+            })),
+          }
+        : null,
+      studentCount,
+      activeTrip: active
+        ? { tripId: active.tripId as string, type: active.type as string, startedAt: (active.startedAt as string) ?? '' }
+        : null,
     };
   },
 
-  async manifest(schoolId: string, routeId: string, tripId: string) {
-    await requireRoute(schoolId, routeId);
-    const students = await StudentTransportModel.find({ schoolId, routeId }).lean();
-    const run = await DriverTripModel.findOne({ schoolId, routeId, tripId }).lean();
-    const marks = new Map(((run?.boarding as Array<{ studentId: string; mark: string }>) ?? []).map((b) => [b.studentId, b.mark]));
-    const type = tripId.endsWith('drop') ? 'drop' : 'pickup';
-    return {
-      routeId,
-      tripId,
-      tripType: type,
-      students: students.map((s, i) => ({
-        id: String(s.studentId),
-        name: (s.studentName as string) ?? '',
-        roll: String(i + 1),
-        stopId: `${routeId}:stop:${i}`,
-        stopName: (s.stopName as string) ?? '',
-        parentContact: ((s as Record<string, unknown>).parentContact as string) ?? undefined,
-        mark: marks.get(String(s.studentId)) ?? 'pending',
-      })),
-    };
+  /**
+   * The students who ride this bus — grouped by stop in the app.
+   *
+   * Read-only: the driver needs to know who they are collecting, where, and how
+   * to reach a parent if a child is not at the stop. There is no boarding
+   * register: tapping through a roster mid-route is not something a driver
+   * should be doing.
+   */
+  async myBusStudents(schoolId: string, userId: string) {
+    const mine = await myBus(schoolId, userId);
+    if (!mine?.route) return [];
+    const links = await StudentTransportModel.find({ schoolId, routeId: String(mine.route._id) }).lean();
+    // Only real ObjectIds reach the query — a legacy row holding something else
+    // must not turn this into a 500 (the same CastError trap as exam marks).
+    const ids = links.map((l) => String(l.studentId)).filter((id) => /^[0-9a-fA-F]{24}$/.test(id));
+    const students = await StudentModel.find({ schoolId, _id: { $in: ids } }).lean();
+    const byId = new Map(students.map((s) => [String(s._id), s as Record<string, unknown>]));
+
+    return links
+      .map((l) => {
+        const s = byId.get(String(l.studentId));
+        const parents = (s?.parents ?? {}) as Record<string, string>;
+        const className = s ? `${(s.className as string) ?? ''} ${(s.section as string) ?? ''}`.trim() : (l.className as string) ?? '';
+        return {
+          id: String(l.studentId),
+          name: (l.studentName as string) || ((s?.name as string) ?? ''),
+          className,
+          stopName: (l.stopName as string) || (l.pickupPoint as string) || '',
+          pickupPoint: (l.pickupPoint as string) ?? '',
+          dropPoint: (l.dropPoint as string) ?? '',
+          parentContact: parents.fatherMobile || parents.motherMobile || ((s?.mobile as string) ?? ''),
+        };
+      })
+      .sort((a, b) => a.stopName.localeCompare(b.stopName) || a.name.localeCompare(b.name));
   },
 
-  async startTrip(schoolId: string, routeId: string, tripId: string) {
-    const route = await requireRoute(schoolId, routeId);
-    const type = tripId.endsWith('drop') ? 'drop' : 'pickup';
+  /**
+   * Begin a trip on the driver's OWN bus. One at a time; the id is server-made.
+   *
+   * The leg is stated by the driver, never inferred from the server clock: a bus
+   * can run late and a school can hold an afternoon event, so a guess would
+   * silently file the run under the wrong leg.
+   */
+  async startBusTrip(schoolId: string, userId: string, type: string) {
+    const mine = await myBus(schoolId, userId);
+    if (!mine) throw ApiError.forbidden('You are not assigned to a bus');
+    if (!mine.route) throw ApiError.conflict('Your bus has no route assigned yet');
+    if (type !== 'pickup' && type !== 'drop') throw ApiError.badRequest('Choose pickup or drop');
+    const busId = String(mine.bus._id);
+    const running = await DriverTripModel.findOne({ schoolId, busId, status: 'active' }).lean();
+    if (running) throw ApiError.conflict('A trip is already running on this bus');
+    const tripType = type;
+    const tripId = tripIdFor(busId, tripType);
     await DriverTripModel.findOneAndUpdate(
-      { schoolId, routeId, tripId },
-      { $set: { schoolId, routeId, tripId, routeName: route.routeName ?? route.routeCode, type, status: 'active', date: today(), startedAt: nowIso() } },
-      { upsert: true },
-    );
-    // Auto lifecycle alert (delivery to parents needs a messaging provider — see triggerAlert).
-    await DriverAlertModel.create({ schoolId, routeId, tripId, type: 'started', at: nowIso(), auto: true, recipients: 'Route parents' });
-    return { tripId, status: 'active' };
-  },
-
-  async endTrip(schoolId: string, tripId: string) {
-    const run = await DriverTripModel.findOneAndUpdate(
       { schoolId, tripId },
-      { $set: { status: 'completed', endedAt: nowIso() } },
-      { new: true },
-    );
-    if (!run) throw ApiError.notFound('Trip not found');
-    await DriverLocationModel.deleteOne({ schoolId, tripId });
-    await DriverAlertModel.create({ schoolId, routeId: String(run.routeId), tripId, type: 'reached', at: nowIso(), auto: true, recipients: 'Route parents' });
-    return { tripId, status: 'completed' };
-  },
-
-  async markBoarding(schoolId: string, tripId: string, studentId: string, mark: string) {
-    const run = await DriverTripModel.findOne({ schoolId, tripId });
-    if (!run) throw ApiError.notFound('Trip not found');
-    if (run.status !== 'active') throw ApiError.conflict('Trip is not active');
-    const boarding = (run.boarding as Array<{ studentId: string; mark: string; name?: string; roll?: string; stopName?: string }>) ?? [];
-    const manifest = await this.manifest(schoolId, String(run.routeId), tripId);
-    const student = manifest.students.find((s) => s.id === studentId);
-    if (!student) throw ApiError.notFound('Student not on this manifest');
-    const idx = boarding.findIndex((b) => b.studentId === studentId);
-    const entry = { studentId, mark, name: student.name, roll: student.roll, stopName: student.stopName };
-    if (idx === -1) boarding.push(entry);
-    else boarding[idx] = entry;
-    run.set('boarding', boarding);
-    await run.save();
-    return { ...student, mark };
-  },
-
-  async emit(schoolId: string, tripId: string, payload: { position: { lat: number; lng: number }; bearing?: number; tripType?: string; updatedAt?: number }) {
-    const run = await DriverTripModel.findOne({ schoolId, tripId }).lean();
-    await DriverLocationModel.findOneAndUpdate(
-      { tripId },
       {
         $set: {
           schoolId,
+          busId,
+          routeId: String(mine.route._id),
           tripId,
-          routeId: run ? String(run.routeId) : undefined,
-          lat: payload.position?.lat,
-          lng: payload.position?.lng,
-          bearing: payload.bearing,
-          tripType: payload.tripType ?? 'pickup',
-          updatedAt: payload.updatedAt ?? Date.now(),
+          routeName: (mine.route.routeName as string) ?? '',
+          type: tripType,
+          status: 'active',
+          date: today(),
+          startedAt: nowIso(),
+          endedAt: '',
         },
       },
       { upsert: true },
     );
-    return { ok: true };
+    return { tripId, type: tripType, status: 'active', startedAt: nowIso() };
   },
 
-  async preview(schoolId: string, routeId: string) {
-    const route = await requireRoute(schoolId, routeId);
-    const stops = routeStops(route as Doc);
-    const active = await DriverTripModel.findOne({ schoolId, routeId, status: 'active' }).lean();
-    if (!active) return { tripStatus: 'no_trip', position: null, etaMinutes: null, boarding: 'unknown', updatedAt: Date.now(), stops };
-    const loc = await DriverLocationModel.findOne({ schoolId, tripId: active.tripId }).lean();
-    return {
-      tripStatus: 'active',
-      position: loc ? { lat: loc.lat, lng: loc.lng } : null,
-      bearing: loc?.bearing,
-      etaMinutes: loc ? 8 : null,
-      boarding: 'unknown',
-      updatedAt: (loc?.updatedAt as number) ?? Date.now(),
-      stops,
-    };
+  /** End whatever trip is running on the driver's own bus. */
+  async endBusTrip(schoolId: string, userId: string) {
+    const mine = await myBus(schoolId, userId);
+    if (!mine) throw ApiError.forbidden('You are not assigned to a bus');
+    const run = await DriverTripModel.findOneAndUpdate(
+      { schoolId, busId: String(mine.bus._id), status: 'active' },
+      { $set: { status: 'completed', endedAt: nowIso() } },
+      { new: true },
+    );
+    if (!run) throw ApiError.notFound('No trip is running on this bus');
+    // Off duty: release the parked request so parents immediately stop being
+    // able to locate this bus.
+    clearBus(String(mine.bus._id));
+    return { tripId: run.tripId as string, status: 'completed' };
   },
 
-  async alerts(schoolId: string) {
-    return (await DriverAlertModel.find({ schoolId }).sort({ at: -1 }).lean()).map((a) => ({
-      id: String(a._id),
-      type: (a.type as string) ?? 'started',
-      stopName: a.stopName as string | undefined,
-      at: (a.at as string) ?? '',
-      auto: Boolean(a.auto),
-      recipients: a.recipients as string | undefined,
-    }));
-  },
-  async triggerAlert(schoolId: string, tripId: string, type: string, stopId?: string) {
-    const run = await DriverTripModel.findOne({ schoolId, tripId }).lean();
-    const doc = await DriverAlertModel.create({
-      schoolId,
-      routeId: run ? String(run.routeId) : undefined,
-      tripId,
-      type,
-      stopName: stopId,
-      at: nowIso(),
-      auto: false,
-      recipients: 'Route parents',
-    });
-    const a = doc.toObject();
-    return { id: String(a._id), type: a.type, stopName: a.stopName, at: a.at, auto: false, recipients: a.recipients };
+  /**
+   * The driver app's parked request. Returns as soon as a parent asks for a
+   * position (`{ locate: true, reqId }`), or empty after the park window — the
+   * app simply parks again. Idle: no GPS is read while this waits.
+   */
+  async dutyWait(schoolId: string, userId: string) {
+    const mine = await myBus(schoolId, userId);
+    if (!mine) throw ApiError.forbidden('You are not assigned to a bus');
+    const busId = String(mine.bus._id);
+    const running = await DriverTripModel.findOne({ schoolId, busId, status: 'active' }).lean();
+    if (!running) throw ApiError.conflict('Start a trip before going on duty');
+    return park(busId);
   },
 
-  tripHistoryView(run: Doc) {
-    const boarding = (run.boarding as Array<{ mark: string }>) ?? [];
-    return {
-      id: String(run.tripId),
-      date: (run.date as string) ?? '',
-      routeName: (run.routeName as string) ?? '',
-      type: run.type,
-      startTime: (run.startedAt as string) ?? '',
-      endTime: (run.endedAt as string) ?? '',
-      boarded: boarding.filter((b) => b.mark === 'boarded' || b.mark === 'deboarded').length,
-      total: boarding.length,
-    };
-  },
-  async tripHistory(schoolId: string) {
-    return (await DriverTripModel.find({ schoolId, status: 'completed' }).sort({ endedAt: -1 }).lean()).map((r) => this.tripHistoryView(r as Doc));
-  },
-  async tripDetail(schoolId: string, tripId: string) {
-    const run = await DriverTripModel.findOne({ schoolId, tripId }).lean();
-    if (!run) throw ApiError.notFound('Trip not found');
-    const boarding = (run.boarding as Array<{ studentId: string; name: string; roll: string; mark: string; stopName: string }>) ?? [];
-    return {
-      ...this.tripHistoryView(run as Doc),
-      outcomes: boarding.map((b) => ({ studentId: b.studentId, name: b.name, roll: b.roll, mark: b.mark, stopName: b.stopName })),
-    };
+  /** The driver's phone answering a locate. The position is passed to the waiting
+   *  parent and never stored. */
+  async dutyPosition(schoolId: string, userId: string, reqId: string, position: BusPosition) {
+    const mine = await myBus(schoolId, userId);
+    if (!mine) throw ApiError.forbidden('You are not assigned to a bus');
+    if (!Number.isFinite(position.lat) || !Number.isFinite(position.lng)) {
+      throw ApiError.badRequest('A valid lat/lng is required');
+    }
+    // `false` = nobody is waiting any more (the parent's request already timed
+    // out). Not an error — the app just carries on and re-parks.
+    return { delivered: submitPosition(String(mine.bus._id), reqId, position) };
   },
 };

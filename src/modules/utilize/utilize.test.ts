@@ -34,7 +34,16 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
 
   async function class1StudentId(): Promise<{ id: string; name: string }> {
     const res = await request(app).get('/api/students?classKey=Class 1').set(auth(admin));
-    return { id: res.body.rows[0].id, name: res.body.rows[0].name };
+    const rows = res.body.rows as { id: string; name: string }[];
+    // Skip anyone the SEED already paid for (the demo parent's child carries a
+    // receipt covering April+May) — `makeReceipt` collects April, and a paid
+    // month is rejected with a 400.
+    const receipts = await request(app).get('/api/fee/receipts').set(auth(acc));
+    const paidFor = new Set(
+      ((receipts.body.rows ?? receipts.body ?? []) as { studentId?: string }[]).map((r) => String(r.studentId ?? '')),
+    );
+    const row = rows.find((r) => !paidFor.has(String(r.id))) ?? rows[0]!;
+    return { id: row.id, name: row.name };
   }
   async function anotherStudentId(excludeId: string): Promise<{ id: string; name: string }> {
     const res = await request(app).get('/api/students').set(auth(admin));

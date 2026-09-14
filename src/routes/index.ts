@@ -32,12 +32,16 @@ import { receptionRoutes } from '../modules/reception/reception.routes';
 import { staffRoutes } from '../modules/staff/staff.routes';
 import { payrollRoutes, staffHrRoutes } from '../modules/staff/staff-hr.routes';
 import { homeworkRoutes, teacherRoutes } from '../modules/teacher/teacher.routes';
+import { teacherAppRoutes } from '../modules/teacher-app/teacher-app.routes';
 import { transportRoutes } from '../modules/transport/transport.routes';
+import { driverAppRoutes } from '../modules/driver-app/driver-app.routes';
 import { transportTrackingRoutes } from '../modules/transport/transport-tracking.routes';
 import { schoolRoutes } from '../modules/school/school.routes';
 import { platformRoutes } from '../modules/platform/platform.routes';
 import { superAdminExtrasRoutes } from '../modules/superadmin/superadmin.routes';
 import { studentsRoutes } from '../modules/students/students.routes';
+import { studentAppRoutes } from '../modules/student-app/student-app.routes';
+import { adminAppRoutes } from '../modules/admin-app/admin-app.routes';
 import { supportRoutes } from '../modules/support/support.routes';
 import { utilizeRoutes } from '../modules/utilize/utilize.routes';
 import { certificatesRoutes } from '../modules/certificates/certificates.routes';
@@ -52,6 +56,12 @@ import { adminDashboardRoutes } from '../modules/admin-dashboard/admin-dashboard
 /** All domain routers mount here, under the server's `/api` base. */
 export const apiRouter = Router();
 
+// Public liveness probe — the mobile app's connectivity monitor GETs /api/health
+// and treats ANY response (even a 404) as "server-unreachable". Without this it
+// perpetually shows a "Server issue" banner though every real endpoint is 200.
+apiRouter.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
 apiRouter.use('/admin-dashboard', adminDashboardRoutes);
 
 apiRouter.use('/auth', authRoutes);
@@ -71,6 +81,8 @@ apiRouter.use('/enquiries', enquiryRoutes);
 apiRouter.use('/classes', classRoutes);
 apiRouter.use('/holidays', holidayRoutes);
 apiRouter.use('/students', studentsRoutes);
+apiRouter.use('/student', studentAppRoutes);
+apiRouter.use('/admin', adminAppRoutes);
 apiRouter.use('/attendance', attendanceRoutes);
 apiRouter.use('/timetable', timetableRoutes);
 apiRouter.use('/exams', examRoutes);
@@ -91,6 +103,7 @@ apiRouter.use('/hostel', hostelRoutes);
 // Broader-role tracking routes before the core transportRoutes gate — same reason as fee/recovery above.
 apiRouter.use('/transport', transportTrackingRoutes);
 apiRouter.use('/transport', transportRoutes);
+apiRouter.use('/driver', driverAppRoutes);
 // Broader-role requests routes before the core inventoryRoutes gate — same reason as fee/recovery above.
 apiRouter.use('/inventory', inventoryRequestsRoutes);
 apiRouter.use('/inventory', inventoryRoutes);
@@ -107,6 +120,7 @@ apiRouter.use('/gate-manager', gateManagerRoutes);
 apiRouter.use('/parent', parentAppRoutes);
 apiRouter.use('/parent', parentRoutes);
 apiRouter.use('/teacher', teacherRoutes);
+apiRouter.use('/teacher', teacherAppRoutes); // mobile teacher paths fall through the web router
 apiRouter.use('/homework', homeworkRoutes);
 apiRouter.use('/communication', communicationRoutes);
 apiRouter.use('/circulars', circularRoutes);

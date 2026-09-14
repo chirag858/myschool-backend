@@ -20,6 +20,13 @@ const vehicleSchema = new Schema(
     status: { type: String, default: 'active' },
     driverName: String,
     driverMobile: String,
+    /**
+     * The driver's LOGIN account (`User._id`) — the link that makes the bus the
+     * entity the mobile driver app is built on: a driver's bus (and therefore
+     * their route and students) is resolved from the token, never from the
+     * request. Unset on a bus whose driver has no app login.
+     */
+    driverUserId: { type: String, index: true },
     routeName: String,
     studentsAssigned: { type: Number, default: 0 },
     notes: String,

@@ -1,0 +1,238 @@
+import request from 'supertest';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { app } from '../../app';
+import { seedDemo } from '../../seed/seed';
+import { driverAppService } from '../driver-app/driver-app.service';
+import { ExamMarkModel, ExamModel } from '../exams/exams.models';
+import { SchoolModel } from '../school/school.model';
+import { TeacherClassModel } from '../teacher/teacher.models';
+import { ClassModel } from '../academics/academics.models';
+import { PeriodModel, SubjectModel, TimetableClassModel } from '../timetable/timetable.models';
+import { RouteModel, StudentTransportModel } from '../transport/transport.models';
+import { UserModel } from '../user/user.model';
+
+async function token(username: string): Promise<string> {
+  const res = await request(app).post('/api/auth/login').send({ identifier: username, password: 'demo1234', captcha: 'x' });
+  return res.body.tokens.accessToken as string;
+}
+const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+describe('Parent App API (mobile)', () => {
+  let parent: string;
+  let childId: string;
+  beforeEach(async () => {
+    await seedDemo();
+    parent = await token('parent');
+    childId = (await request(app).get('/api/parent/app-children').set(auth(parent))).body[0].id;
+  });
+
+  it('requires auth (401) and forbids non-parent roles (403)', async () => {
+    expect((await request(app).get('/api/parent/app-children')).status).toBe(401);
+    const acc = await token('accountant');
+    expect((await request(app).get('/api/parent/app-children').set(auth(acc))).status).toBe(403);
+  });
+
+  it('children + dashboard-summary + profile (own child)', async () => {
+    const kids = await request(app).get('/api/parent/app-children').set(auth(parent));
+    expect(kids.body.length).toBe(2);
+    expect(kids.body[0]).toMatchObject({ id: expect.any(String), name: expect.any(String), className: expect.any(String) });
+    const summary = await request(app).get(`/api/parent/dashboard-summary?childId=${childId}`).set(auth(parent));
+    expect(summary.body).toMatchObject({ childId, badges: expect.any(Object) });
+    const profile = await request(app).get(`/api/parent/profile?childId=${childId}`).set(auth(parent));
+    expect(profile.body).toMatchObject({ id: childId, identity: expect.any(Array), guardian: expect.any(Array) });
+    // ownership gate
+    expect((await request(app).get('/api/parent/profile?childId=000000000000000000000000').set(auth(parent))).status).toBe(404);
+  });
+
+  it('attendance returns a month summary + days', async () => {
+    const res = await request(app).get(`/api/parent/app-attendance?childId=${childId}`).set(auth(parent));
+    expect(res.body).toMatchObject({ summary: expect.objectContaining({ percentage: expect.any(Number), counts: expect.any(Object) }), month: expect.any(String), days: expect.any(Array) });
+  });
+
+  it('exams: schedules + marks + timetable stub', async () => {
+    expect((await request(app).get(`/api/parent/exam/schedules?childId=${childId}`).set(auth(parent))).body).toMatchObject({ exams: expect.any(Array), schedules: expect.any(Array) });
+    expect((await request(app).get(`/api/parent/exam/marks?childId=${childId}`).set(auth(parent))).body).toMatchObject({ assessments: expect.any(Array), results: expect.any(Array) });
+    expect((await request(app).get(`/api/parent/exam/timetable?childId=${childId}`).set(auth(parent))).body).toMatchObject({ days: expect.any(Array), today: null });
+  });
+
+  it('exam marks resolve the real subject NAME, not the raw id', async () => {
+    const schoolId = String((await SchoolModel.findOne({}).lean())!._id);
+    // `childId` above is `body[0].id` from `beforeEach` — re-fetching index 0 stays consistent.
+    const child = (await request(app).get('/api/parent/app-children').set(auth(parent))).body[0];
+    const classKey = `${child.className}-${child.section}`;
+    const subject = await SubjectModel.create({ schoolId, name: 'English', code: 'ENG' });
+    const exam = await ExamModel.create({ schoolId, name: 'Unit Test 1', classes: [child.className], status: 'published', publishedResults: [classKey] });
+    await ExamMarkModel.create({ schoolId, examId: exam._id, classKey, subjectId: String(subject._id), studentId: childId, theory: 70, practical: 17, internal: 0 });
+
+    const marks = (await request(app).get(`/api/parent/exam/marks?childId=${childId}`).set(auth(parent))).body;
+    const result = marks.results.find((r: { assessmentId: string }) => r.assessmentId === String(exam._id));
+    expect(result.published).toBe(true);
+    expect(result.subjects).toEqual([{ subject: 'English', subjectId: String(subject._id), obtained: 87, max: 100, status: 'pass' }]);
+  });
+
+  it('fees: dues + receipts + ledger', async () => {
+    expect((await request(app).get(`/api/parent/fees/dues?childId=${childId}`).set(auth(parent))).body).toMatchObject({ totalOutstanding: expect.any(Number), items: expect.any(Array) });
+    expect(Array.isArray((await request(app).get(`/api/parent/fees/receipts?childId=${childId}`).set(auth(parent))).body)).toBe(true);
+    expect(Array.isArray((await request(app).get(`/api/parent/fees/ledger?childId=${childId}`).set(auth(parent))).body)).toBe(true);
+  });
+
+  it('notifications: list + mark read + read-all', async () => {
+    const list = await request(app).get(`/api/parent/notifications?childId=${childId}`).set(auth(parent));
+    expect(Array.isArray(list.body)).toBe(true);
+    await request(app).post('/api/parent/notifications/read-all').set(auth(parent)).send({ childId });
+    const after = await request(app).get(`/api/parent/notifications?childId=${childId}`).set(auth(parent));
+    expect(after.body.every((n: { read: boolean }) => n.read)).toBe(true);
+  });
+
+  it('complaints: seeded list + submit', async () => {
+    const list = await request(app).get(`/api/parent/app-complaints?childId=${childId}`).set(auth(parent));
+    expect(list.body.length).toBeGreaterThanOrEqual(1);
+    const submit = await request(app).post('/api/parent/app-complaints').set(auth(parent)).send({ childId, values: { subject: 'Canteen', category: 'other', description: 'Food quality' } });
+    expect(submit.status).toBe(201);
+    expect(submit.body).toMatchObject({ subject: 'Canteen', status: 'submitted' });
+  });
+
+  it('requests: seeded + submit + cancel', async () => {
+    const list = await request(app).get(`/api/parent/requests?childId=${childId}`).set(auth(parent));
+    expect(list.body.length).toBeGreaterThanOrEqual(1);
+    const submit = await request(app).post('/api/parent/requests').set(auth(parent)).send({ childId, type: 'appointment', values: { title: 'Meet teacher', reason: 'Discuss progress' } });
+    expect(submit.status).toBe(201);
+    const cancel = await request(app).post('/api/parent/requests/cancel').set(auth(parent)).send({ childId, id: submit.body.id });
+    expect(cancel.body.status).toBe('cancelled');
+  });
+
+  it('outpass: seeded awaiting → otp → approve (wrong otp 401)', async () => {
+    const list = await request(app).get(`/api/parent/outpass?childId=${childId}`).set(auth(parent));
+    expect(list.body.length).toBeGreaterThanOrEqual(1);
+    const op = list.body[0];
+    const otpRes = await request(app).post('/api/parent/outpass/otp').set(auth(parent)).send({ childId, id: op.id });
+    expect(otpRes.body).toMatchObject({ cooldownSeconds: expect.any(Number), maskedContact: expect.any(String) });
+    const wrong = await request(app).post('/api/parent/outpass/approve').set(auth(parent)).send({ childId, id: op.id, otp: '000000' });
+    expect(wrong.status).toBe(401);
+    const approve = await request(app).post('/api/parent/outpass/approve').set(auth(parent)).send({ childId, id: op.id, otp: otpRes.body.otp });
+    expect(approve.body.status).toBe('approved');
+  });
+
+  it('messenger: conversations + thread + send + read', async () => {
+    const convs = await request(app).get(`/api/parent/messenger/conversations?childId=${childId}`).set(auth(parent));
+    expect(convs.body.length).toBeGreaterThanOrEqual(1);
+    const cId = convs.body[0].id;
+    const thread = await request(app).get(`/api/parent/messenger/thread?conversationId=${cId}&childId=${childId}`).set(auth(parent));
+    expect(thread.body).toMatchObject({ conversation: expect.any(Object), messages: expect.any(Array) });
+    const sent = await request(app).post('/api/parent/messenger/send').set(auth(parent)).send({ childId, conversationId: cId, body: 'Thank you' });
+    expect(sent.body).toMatchObject({ body: 'Thank you', own: true });
+    expect((await request(app).post('/api/parent/messenger/read').set(auth(parent)).send({ childId, conversationId: cId })).status).toBe(200);
+  });
+
+  it('utility: bag + rewards + class-incharge + online-classes', async () => {
+    expect((await request(app).get(`/api/parent/bag?childId=${childId}`).set(auth(parent))).body).toMatchObject({ days: expect.any(Array) });
+    const rewards = await request(app).get(`/api/parent/rewards?childId=${childId}`).set(auth(parent));
+    expect(rewards.body).toMatchObject({ totalPoints: expect.any(Number), entries: expect.any(Array) });
+    expect(rewards.body.entries.length).toBeGreaterThanOrEqual(1);
+    expect((await request(app).get(`/api/parent/class-incharge?childId=${childId}`).set(auth(parent))).body).toMatchObject({ name: expect.any(String), role: expect.any(String) });
+    expect(Array.isArray((await request(app).get(`/api/parent/online-classes?childId=${childId}`).set(auth(parent))).body)).toBe(true);
+  });
+
+  it('subject-teachers: flattens every TeacherClassAssignment for the child\'s section, sorted by subject', async () => {
+    const schoolId = String((await SchoolModel.findOne({}).lean())!._id);
+    const child = (await request(app).get('/api/parent/app-children').set(auth(parent))).body[0];
+    // Own the fixture: the demo child's class may already carry seeded
+    // assignments (it is the demo teacher's incharge class), and this test
+    // asserts the EXACT flattened list.
+    await TeacherClassModel.deleteMany({ schoolId, className: child.className, section: child.section });
+    const teacherA = await UserModel.create({ name: 'Mrs. Gupta', role: 'teacher', schoolId, username: 'mrs-gupta-test', email: 'gupta.test@msc.test' });
+    const teacherB = await UserModel.create({ name: 'Mr. Rao', role: 'teacher', schoolId, username: 'mr-rao-test', email: 'rao.test@msc.test' });
+    await TeacherClassModel.create({ schoolId, teacherUserId: String(teacherA._id), className: child.className, section: child.section, subjects: ['Science', 'Maths'], isClassTeacher: true });
+    await TeacherClassModel.create({ schoolId, teacherUserId: String(teacherB._id), className: child.className, section: child.section, subjects: ['English'], isClassTeacher: false });
+
+    const res = await request(app).get(`/api/parent/subject-teachers?childId=${childId}`).set(auth(parent));
+    expect(res.body).toEqual([
+      { subject: 'English', teacherName: 'Mr. Rao', isClassTeacher: false },
+      { subject: 'Maths', teacherName: 'Mrs. Gupta', isClassTeacher: true },
+      { subject: 'Science', teacherName: 'Mrs. Gupta', isClassTeacher: true },
+    ]);
+  });
+
+  it('class timetable: unpublished stays empty, published returns real day/period/subject/teacher/room rows', async () => {
+    const schoolId = String((await SchoolModel.findOne({}).lean())!._id);
+    const child = (await request(app).get('/api/parent/app-children').set(auth(parent))).body[0];
+    const cls = await ClassModel.findOneAndUpdate(
+      { schoolId, name: child.className },
+      { schoolId, name: child.className },
+      { upsert: true, new: true },
+    );
+    // Start from a clean slate: the demo child's class can already have a
+    // published timetable + periods from the seed, which would defeat the
+    // "unpublished stays empty" leg and add rows to the published one.
+    await TimetableClassModel.deleteMany({ schoolId });
+    await PeriodModel.deleteMany({ schoolId });
+    const period = await PeriodModel.create({ schoolId, order: 1, name: 'P1', startTime: '09:00', endTime: '09:40' });
+
+    const unpublished = await request(app).get(`/api/parent/timetable?childId=${childId}`).set(auth(parent));
+    expect(unpublished.body).toEqual({ published: false, days: [], today: null });
+
+    await TimetableClassModel.create({
+      schoolId,
+      classId: String(cls._id),
+      section: child.section,
+      published: true,
+      slots: [
+        {
+          classId: String(cls._id), section: child.section, day: 'mon', periodId: String(period._id),
+          subjectId: 'sub1', subjectName: 'Mathematics', subjectColor: '#000', teacherId: 't1',
+          teacherName: 'Mrs. Gupta', roomId: 'r1', roomName: 'Room 101',
+        },
+      ],
+    });
+
+    const published = await request(app).get(`/api/parent/timetable?childId=${childId}`).set(auth(parent));
+    expect(published.body.published).toBe(true);
+    expect(published.body.days).toHaveLength(6);
+    const monday = published.body.days.find((d: { day: string }) => d.day === 'monday');
+    expect(monday.periods).toEqual([
+      { id: String(period._id), order: 1, startTime: '09:00', endTime: '09:40', subject: 'Mathematics', teacher: 'Mrs. Gupta', room: 'Room 101', isBreak: false },
+    ]);
+    const tuesday = published.body.days.find((d: { day: string }) => d.day === 'tuesday');
+    expect(tuesday.periods).toEqual([
+      { id: String(period._id), order: 1, startTime: '09:00', endTime: '09:40', subject: undefined, teacher: undefined, room: undefined, isBreak: false },
+    ]);
+  });
+
+  it('merged app: a STUDENT drives the parent app scoped to their own record', async () => {
+    const student = await token('student');
+    const kids = await request(app).get('/api/parent/app-children').set(auth(student));
+    expect(kids.status).toBe(200);
+    expect(kids.body.length).toBe(1); // the student themselves — the single subject
+    const selfId = kids.body[0].id;
+    // and the parent screens work for that student subject
+    expect((await request(app).get(`/api/parent/dashboard-summary?childId=${selfId}`).set(auth(student))).status).toBe(200);
+    expect((await request(app).get(`/api/parent/app-attendance?childId=${selfId}`).set(auth(student))).status).toBe(200);
+    expect((await request(app).get(`/api/parent/fees/dues?childId=${selfId}`).set(auth(student))).status).toBe(200);
+    // a student still cannot read someone else's record
+    expect((await request(app).get('/api/parent/profile?childId=000000000000000000000000').set(auth(student))).status).toBe(404);
+  });
+
+  it('transport assignment resolves the child\'s OWN bus and its driver', async () => {
+    const res = await request(app).get(`/api/parent/transport/assignment?childId=${childId}`).set(auth(parent));
+    expect(res.status).toBe(200);
+    if (res.body) {
+      // The bus comes from the child's route, and the driver's name/phone come
+      // from that bus — both used to come back wrong or blank.
+      expect(res.body).toMatchObject({ route: expect.any(String), stopName: expect.any(String), vehicle: expect.any(String) });
+      expect(res.body.driverName).toBeTruthy();
+      expect(res.body.driverContact).toBeTruthy();
+    }
+    const order = await request(app).post('/api/parent/fees/payment/order').set(auth(parent)).send({ childId, amount: 5000, selectedDueIds: ['tuition'] });
+    expect(order.body).toMatchObject({ orderId: expect.any(String), amount: 5000 });
+  });
+
+  it('the stored-GPS transport feed is gone (404) — location is on-demand only', async () => {
+    expect((await request(app).get(`/api/parent/transport/live?childId=${childId}`).set(auth(parent))).status).toBe(404);
+    // Its replacement answers without any stored position.
+    const locate = await request(app).get(`/api/parent/transport/locate?childId=${childId}`).set(auth(parent));
+    expect(locate.status).toBe(200);
+    expect(locate.body.position).toBeNull();
+    expect(['not_started', 'no_bus', 'not_on_duty']).toContain(locate.body.state);
+  });
+});
