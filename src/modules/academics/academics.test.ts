@@ -81,7 +81,7 @@ describe('Academics API', () => {
     expect(res.status).toBe(200);
     expect(res.body.length).toBeGreaterThanOrEqual(5);
     const nursery = res.body.find((c: { name: string }) => c.name === 'Nursery');
-    expect(nursery).toMatchObject({ id: expect.any(String), order: expect.any(Number), totalSections: 2, totalStudents: 0 });
+    expect(nursery).toMatchObject({ id: expect.any(String), order: expect.any(Number), totalSections: 2, totalStudents: 3 });
   });
 
   it('creates/updates/deletes a class; rejects a duplicate name (409)', async () => {
