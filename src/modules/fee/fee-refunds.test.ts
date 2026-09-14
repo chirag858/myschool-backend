@@ -19,10 +19,13 @@ const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
 describe('Fee Refund Requests API', () => {
   let acc: string;
+  let director: string;
   let studentId: string;
   beforeEach(async () => {
     await seedDemo();
     acc = await token('accountant');
+    // Approve/reject is director-level by design ("accountant raises but never decides").
+    director = await token('schooladmin');
     const q = await request(app).get('/api/fee/refund-requests').set(auth(acc));
     studentId = q.body[0].studentId as string;
   });
@@ -49,7 +52,7 @@ describe('Fee Refund Requests API', () => {
     expect(create.status).toBe(201);
     expect(create.body).toMatchObject({ status: 'pending_approval', amount: 500, raisedByMe: true, requestedBy: expect.any(String) });
 
-    const approve = await request(app).patch(`/api/fee/refund-requests/${create.body.id}/decide`).set(auth(acc)).send({ action: 'approve' });
+    const approve = await request(app).patch(`/api/fee/refund-requests/${create.body.id}/decide`).set(auth(director)).send({ action: 'approve' });
     expect(approve.body).toMatchObject({ status: 'approved', approvedBy: expect.any(String), approvedAt: expect.any(String) });
 
     const list2 = await request(app).get('/api/fee/refund-requests').set(auth(acc));
@@ -63,7 +66,7 @@ describe('Fee Refund Requests API', () => {
 
   it('rejects a request with a reason', async () => {
     const pending = (await request(app).get('/api/fee/refund-requests').set(auth(acc))).body.find((r: { status: string }) => r.status === 'pending_approval');
-    const reject = await request(app).patch(`/api/fee/refund-requests/${pending.id}/decide`).set(auth(acc)).send({ action: 'reject', reason: 'Not eligible' });
+    const reject = await request(app).patch(`/api/fee/refund-requests/${pending.id}/decide`).set(auth(director)).send({ action: 'reject', reason: 'Not eligible' });
     expect(reject.body).toMatchObject({ status: 'rejected', rejectionReason: 'Not eligible', rejectedAt: expect.any(String) });
   });
 });

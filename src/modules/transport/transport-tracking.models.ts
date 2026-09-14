@@ -1,7 +1,7 @@
 import { Schema, model, type InferSchemaType } from 'mongoose';
 
 export const SIM_PROVIDERS = ['jio', 'airtel', 'vi', 'bsnl', 'other'] as const;
-export const GPS_DEVICE_STATUSES = ['active', 'inactive', 'not_installed'] as const;
+export const GPS_DEVICE_STATUSES = ['active', 'inactive', 'not_installed', 'maintenance'] as const;
 
 const maintenanceSchema = new Schema(
   {

@@ -29,12 +29,13 @@ describe('Custom Report Builder API (/api/reports/custom)', () => {
     expect(
       (await request(app).post('/api/reports/custom').send({ source: 'students', fields: ['name'] })).status,
     ).toBe(401);
-    const acc = await token('accountant');
+    // Accountant is deliberately in the report gate; assert with a non-admin role.
+    const driver = await token('driver');
     expect(
       (
         await request(app)
           .post('/api/reports/custom')
-          .set(auth(acc))
+          .set(auth(driver))
           .send({ source: 'students', fields: ['name'] })
       ).status,
     ).toBe(403);
