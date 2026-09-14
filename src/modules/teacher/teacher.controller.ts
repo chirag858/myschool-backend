@@ -98,6 +98,21 @@ export const teacherController = {
     send(res, { url });
   },
 
+  // Meet links
+  async getMeetLinks(req: Request, res: Response) {
+    send(res, await teacherService.getMeetLinks(schoolId(req), userId(req)));
+  },
+  async createMeetLink(req: Request, res: Response) {
+    created(res, await teacherService.createMeetLink(schoolId(req), userId(req), req.body));
+  },
+  async updateMeetLink(req: Request, res: Response) {
+    send(res, await teacherService.updateMeetLink(schoolId(req), userId(req), p(req, 'id'), req.body));
+  },
+  async deleteMeetLink(req: Request, res: Response) {
+    await teacherService.deleteMeetLink(schoolId(req), userId(req), p(req, 'id'));
+    res.status(204).end();
+  },
+
   // Assignments
   async getAssignments(req: Request, res: Response) {
     send(res, await teacherService.getAssignments(schoolId(req), userId(req), { classKey: q(req, 'classKey'), status: q(req, 'status') }));

@@ -17,5 +17,6 @@ parentRoutes.get('/receipts', validate({ query: childQuery }), asyncHandler(pare
 parentRoutes.get('/receipts/:id', validate({ params: idParam }), asyncHandler(parentController.getReceipt));
 parentRoutes.get('/attendance', validate({ query: childQuery }), asyncHandler(parentController.getAttendance));
 parentRoutes.get('/circulars', asyncHandler(parentController.getCirculars));
+parentRoutes.get('/meet-links', validate({ query: childQuery }), asyncHandler(parentController.getMeetLinks));
 parentRoutes.get('/complaints', validate({ query: childQuery }), asyncHandler(parentController.getComplaints));
 parentRoutes.post('/complaints', validate({ body: complaintSchema }), asyncHandler(parentController.submitComplaint));

@@ -4,6 +4,7 @@ import { CircularModel } from '../communication/communication.models';
 import { ReceiptModel } from '../fee/fee.models';
 import { MONTH_ABBR_TO_FULL, annualByClass } from '../fee/fee.service';
 import { StudentModel } from '../students/student.model';
+import { ClassMeetLinkModel } from '../teacher/teacher.models';
 import { UserModel } from '../user/user.model';
 import { ParentComplaintModel } from './parent.models';
 
@@ -200,6 +201,22 @@ export const parentService = {
         audience: scope,
       };
     });
+  },
+
+  /** Active Google Meet links posted by the child's class incharge. */
+  async getMeetLinks(schoolId: string, userId: string, childId: string) {
+    const child = await ownChild(schoolId, userId, childId);
+    const classKey = `${(child.className as string) ?? ''}-${(child.section as string) ?? ''}`;
+    const rows = await ClassMeetLinkModel.find({ schoolId, classKey, isActive: true }).sort({ createdAt: -1 }).lean();
+    return rows.map((r) => ({
+      id: String(r._id),
+      title: r.title as string,
+      meetLink: r.meetLink as string,
+      description: (r.description as string) ?? '',
+      scheduledAt: (r.scheduledAt as string) ?? '',
+      createdBy: (r.createdBy as string) ?? '',
+      createdAt: (r.createdAt as Date)?.toISOString?.() ?? '',
+    }));
   },
 
   async getComplaints(schoolId: string, userId: string, childId: string) {

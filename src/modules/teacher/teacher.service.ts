@@ -8,6 +8,7 @@ import { StudentModel } from '../students/student.model';
 import { timetableService } from '../timetable/timetable.service';
 import { UserModel } from '../user/user.model';
 import {
+  ClassMeetLinkModel,
   HomeworkSubmissionModel,
   SubmissionModel,
   TeacherAssignmentModel,
@@ -397,6 +398,51 @@ export const teacherService = {
     const r = await TeacherHomeworkModel.deleteOne({ _id: id, schoolId, teacherUserId: userId });
     if (!r.deletedCount) throw ApiError.notFound('Homework not found');
     await HomeworkSubmissionModel.deleteMany({ schoolId, homeworkId: id });
+  },
+
+  // ─── Class meet links (incharge-only) ───
+  async getMeetLinks(schoolId: string, userId: string) {
+    const incharge = await myInchargeClass(schoolId, userId);
+    if (!incharge) return [];
+    return (
+      await ClassMeetLinkModel.find({ schoolId, classKey: incharge.classKey }).sort({ createdAt: -1 }).lean()
+    ).map(dto);
+  },
+
+  async createMeetLink(schoolId: string, userId: string, payload: Record<string, unknown>) {
+    const incharge = await myInchargeClass(schoolId, userId);
+    assertInchargeOf(incharge, String(payload.classKey ?? ''));
+    const name = await teacherName(userId);
+    const doc = await ClassMeetLinkModel.create({
+      schoolId,
+      teacherUserId: userId,
+      classKey: incharge!.classKey,
+      className: incharge!.className,
+      section: incharge!.section,
+      title: payload.title,
+      meetLink: payload.meetLink,
+      description: payload.description ?? '',
+      scheduledAt: payload.scheduledAt ?? '',
+      createdBy: name,
+      createdById: userId,
+    });
+    return dto(doc.toObject());
+  },
+
+  async updateMeetLink(schoolId: string, userId: string, id: string, patch: Record<string, unknown>) {
+    const link = await ClassMeetLinkModel.findOne({ _id: id, schoolId });
+    if (!link) throw ApiError.notFound('Meet link not found');
+    if (String(link.teacherUserId) !== userId) {
+      throw ApiError.forbidden('You can only edit a meet link you created');
+    }
+    Object.assign(link, patch);
+    await link.save();
+    return dto(link.toObject());
+  },
+
+  async deleteMeetLink(schoolId: string, userId: string, id: string) {
+    const r = await ClassMeetLinkModel.deleteOne({ _id: id, schoolId, teacherUserId: userId });
+    if (!r.deletedCount) throw ApiError.notFound('Meet link not found');
   },
 
   /** Materialises one persisted row per student in the class on first read,

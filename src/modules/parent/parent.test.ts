@@ -118,4 +118,39 @@ describe('Parent Web API', () => {
       (await request(app).post('/api/parent/complaints').set(auth(parent)).send({ childId: notMine, subject: 'x', category: 'other', description: 'y' })).status,
     ).toBe(404);
   });
+
+  it('meet-links: shows only active links for the child’s own class, scoped by childId', async () => {
+    const { StudentModel } = await import('../students/student.model');
+    // Put the parent's first child into the demo teacher's incharge class
+    // (Class 1-A) so a link the teacher posts is actually visible to them.
+    await StudentModel.updateOne({ _id: childId }, { $set: { className: 'Class 1', section: 'A' } });
+
+    const teacherToken = await token('teacher');
+    const create = await request(app)
+      .post('/api/teacher/meet-links')
+      .set(auth(teacherToken))
+      .send({ classKey: 'Class 1-A', title: 'Morning class', meetLink: 'https://meet.google.com/abc-defg-hij' });
+    expect(create.status).toBe(201);
+
+    const mine = await request(app).get(`/api/parent/meet-links?childId=${childId}`).set(auth(parent));
+    expect(mine.status).toBe(200);
+    expect(mine.body).toHaveLength(1);
+    expect(mine.body[0]).toMatchObject({
+      title: 'Morning class',
+      meetLink: 'https://meet.google.com/abc-defg-hij',
+      createdBy: 'Teacher',
+    });
+
+    // Deactivating the link hides it from the parent view without deleting it.
+    await request(app)
+      .patch(`/api/teacher/meet-links/${create.body.id}`)
+      .set(auth(teacherToken))
+      .send({ isActive: false });
+    const afterDeactivate = await request(app).get(`/api/parent/meet-links?childId=${childId}`).set(auth(parent));
+    expect(afterDeactivate.body).toEqual([]);
+
+    // Requesting another parent's/nonexistent child is refused, not just empty.
+    const notMine = '000000000000000000000000';
+    expect((await request(app).get(`/api/parent/meet-links?childId=${notMine}`).set(auth(parent))).status).toBe(404);
+  });
 });

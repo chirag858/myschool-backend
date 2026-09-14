@@ -87,6 +87,28 @@ export const circularPatchSchema = z.object({
   audienceClasses: z.array(z.string()).optional(),
 });
 
+export const meetLinkSchema = z.object({
+  classKey: z.string().min(1),
+  title: z.string().min(1),
+  meetLink: z.string().url().refine((v) => v.includes('meet.google.com'), 'Must be a Google Meet link'),
+  description: z.string().optional(),
+  scheduledAt: z.string().optional(),
+});
+
+export const meetLinkPatchSchema = z
+  .object({
+    title: z.string().min(1).optional(),
+    meetLink: z
+      .string()
+      .url()
+      .refine((v) => v.includes('meet.google.com'), 'Must be a Google Meet link')
+      .optional(),
+    description: z.string().optional(),
+    scheduledAt: z.string().optional(),
+    isActive: z.boolean().optional(),
+  })
+  .passthrough();
+
 export const applyLeaveSchema = z
   .object({
     type: z.enum(['casual', 'sick', 'earned', 'special']),

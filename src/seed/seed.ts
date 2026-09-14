@@ -188,9 +188,6 @@ export async function seedDemo() {
     // all. Assigning `undefined` is not enough — depending on the driver path
     // it can persist as an explicit null, which reads as "has a tenant" and
     // locks the account out of code-less login. `$unset` guarantees absence.
-    const tenancy = u.tenant
-      ? { $set: { schoolId: school._id, schoolName: school.name } }
-      : { $unset: { schoolId: '', schoolName: '' } };
     const doc = await UserModel.findOneAndUpdate(
       { username: u.username },
       {
@@ -203,8 +200,11 @@ export async function seedDemo() {
           passwordHash,
           active: true,
           assignedClasses: u.assignedClasses ?? [],
+          ...(u.tenant ? { schoolId: school._id, schoolName: school.name } : {}),
         },
-        ...tenancy,
+        // `$set`ting undefined above wouldn't persist a tenant clear, so a
+        // platform account (no tenant) needs an explicit $unset instead.
+        ...(u.tenant ? {} : { $unset: { schoolId: '', schoolName: '' } }),
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );

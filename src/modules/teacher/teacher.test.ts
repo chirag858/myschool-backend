@@ -424,4 +424,59 @@ describe('Teacher Portal API', () => {
     const pendingAfter = await request(app).get('/api/teacher/leave/all-pending').set(auth(admin));
     expect(pendingAfter.body.some((r: { id: string }) => r.id === apply.body.id)).toBe(false);
   });
+
+  it('meet links: requires auth/role, create/list/update/delete for the incharge class', async () => {
+    expect((await request(app).get('/api/teacher/meet-links')).status).toBe(401);
+    const acc = await token('accountant');
+    expect((await request(app).get('/api/teacher/meet-links').set(auth(acc))).status).toBe(403);
+
+    expect((await request(app).get('/api/teacher/meet-links').set(auth(teacher))).body).toEqual([]);
+
+    const create = await request(app)
+      .post('/api/teacher/meet-links')
+      .set(auth(teacher))
+      .send({ classKey: 'Class 1-A', title: 'Morning class', meetLink: 'https://meet.google.com/abc-defg-hij' });
+    expect(create.status).toBe(201);
+    expect(create.body).toMatchObject({
+      classKey: 'Class 1-A',
+      className: 'Class 1',
+      section: 'A',
+      title: 'Morning class',
+      meetLink: 'https://meet.google.com/abc-defg-hij',
+      isActive: true,
+      createdBy: 'Teacher',
+    });
+
+    // Not a Google Meet URL — rejected by validation.
+    const badUrl = await request(app)
+      .post('/api/teacher/meet-links')
+      .set(auth(teacher))
+      .send({ classKey: 'Class 1-A', title: 'Bad', meetLink: 'https://zoom.us/j/123' });
+    expect(badUrl.status).toBe(400);
+
+    // Not the teacher's incharge class — rejected even though it's a valid class.
+    const wrongClass = await request(app)
+      .post('/api/teacher/meet-links')
+      .set(auth(teacher))
+      .send({ classKey: 'Class 2-A', title: 'Not mine', meetLink: 'https://meet.google.com/xyz-defg-hij' });
+    expect(wrongClass.status).toBe(403);
+
+    const list = await request(app).get('/api/teacher/meet-links').set(auth(teacher));
+    expect(list.status).toBe(200);
+    expect(list.body).toHaveLength(1);
+    expect(list.body[0].id).toBe(create.body.id);
+
+    const update = await request(app)
+      .patch(`/api/teacher/meet-links/${create.body.id}`)
+      .set(auth(teacher))
+      .send({ title: 'Morning class (rescheduled)', isActive: false });
+    expect(update.status).toBe(200);
+    expect(update.body).toMatchObject({ title: 'Morning class (rescheduled)', isActive: false });
+
+    expect((await request(app).patch('/api/teacher/meet-links/000000000000000000000000').set(auth(teacher)).send({ title: 'x' })).status).toBe(404);
+    expect((await request(app).delete('/api/teacher/meet-links/000000000000000000000000').set(auth(teacher))).status).toBe(404);
+
+    expect((await request(app).delete(`/api/teacher/meet-links/${create.body.id}`).set(auth(teacher))).status).toBe(204);
+    expect((await request(app).get('/api/teacher/meet-links').set(auth(teacher))).body).toEqual([]);
+  });
 });

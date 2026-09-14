@@ -17,6 +17,8 @@ import {
   homeworkSchema,
   homeworkSubmissionSchema,
   idParam,
+  meetLinkPatchSchema,
+  meetLinkSchema,
   receiveSubmissionSchema,
   reviewTeacherLeaveSchema,
 } from './teacher.validation';
@@ -43,6 +45,15 @@ teacherRoutes.post('/homework/:id/remind', validate({ params: idParam }), asyncH
 teacherRoutes.post('/homework/upload-attachment', upload.single('file'), asyncHandler(teacherController.uploadHomeworkAttachment));
 teacherRoutes.get('/homework/:id', validate({ params: idParam }), asyncHandler(teacherController.homeworkById));
 teacherRoutes.delete('/homework/:id', validate({ params: idParam }), asyncHandler(teacherController.deleteHomework));
+
+teacherRoutes.get('/meet-links', asyncHandler(teacherController.getMeetLinks));
+teacherRoutes.post('/meet-links', validate({ body: meetLinkSchema }), asyncHandler(teacherController.createMeetLink));
+teacherRoutes.patch(
+  '/meet-links/:id',
+  validate({ params: idParam, body: meetLinkPatchSchema }),
+  asyncHandler(teacherController.updateMeetLink),
+);
+teacherRoutes.delete('/meet-links/:id', validate({ params: idParam }), asyncHandler(teacherController.deleteMeetLink));
 
 teacherRoutes.get('/assignments', asyncHandler(teacherController.getAssignments));
 teacherRoutes.post('/assignments', validate({ body: assignmentSchema }), asyncHandler(teacherController.createAssignment));

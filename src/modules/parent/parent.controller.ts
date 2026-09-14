@@ -34,6 +34,9 @@ export const parentController = {
   async getCirculars(req: Request, res: Response) {
     send(res, await parentService.getCirculars(schoolId(req)));
   },
+  async getMeetLinks(req: Request, res: Response) {
+    send(res, await parentService.getMeetLinks(schoolId(req), userId(req), childId(req)));
+  },
   async getComplaints(req: Request, res: Response) {
     send(res, await parentService.getComplaints(schoolId(req), userId(req), childId(req)));
   },

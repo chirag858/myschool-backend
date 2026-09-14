@@ -107,6 +107,25 @@ const submissionSchema = new Schema(
 );
 submissionSchema.index({ assignmentId: 1, studentId: 1 }, { unique: true });
 
+/** A Google Meet link posted by the class incharge for their own class. */
+const classMeetLinkSchema = new Schema(
+  {
+    schoolId: school,
+    teacherUserId: { type: String, required: true, index: true },
+    classKey: { type: String, required: true, index: true },
+    className: { type: String, default: '' },
+    section: { type: String, default: '' },
+    title: { type: String, required: true },
+    meetLink: { type: String, required: true },
+    description: { type: String, default: '' },
+    scheduledAt: { type: String, default: '' },
+    isActive: { type: Boolean, default: true },
+    createdBy: { type: String, default: '' },
+    createdById: String,
+  },
+  { timestamps: true },
+);
+
 /** A teacher's own leave request. */
 const teacherLeaveSchema = new Schema(
   {
@@ -135,3 +154,4 @@ export const HomeworkSubmissionModel = model('HomeworkSubmission', homeworkSubmi
 export const TeacherAssignmentModel = model('TeacherAssignment', teacherAssignmentSchema);
 export const SubmissionModel = model('AssignmentSubmission', submissionSchema);
 export const TeacherLeaveModel = model('TeacherLeave', teacherLeaveSchema);
+export const ClassMeetLinkModel = model('ClassMeetLink', classMeetLinkSchema);
