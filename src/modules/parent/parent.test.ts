@@ -153,4 +153,53 @@ describe('Parent Web API', () => {
     const notMine = '000000000000000000000000';
     expect((await request(app).get(`/api/parent/meet-links?childId=${notMine}`).set(auth(parent))).status).toBe(404);
   });
+
+  it('homework: shows daily + holiday homework for the child’s class, filterable by type, carrying the child’s own submission status', async () => {
+    const { StudentModel } = await import('../students/student.model');
+    // Seeded daily homework already targets Class 1-A — put the child there
+    // so they see it, same as the meet-links test above.
+    await StudentModel.updateOne({ _id: childId }, { $set: { className: 'Class 1', section: 'A' } });
+
+    const all = await request(app).get(`/api/parent/homework?childId=${childId}`).set(auth(parent));
+    expect(all.status).toBe(200);
+    expect(all.body.length).toBeGreaterThan(0);
+    expect(all.body[0]).toMatchObject({
+      id: expect.any(String),
+      title: expect.any(String),
+      homeworkType: expect.any(String),
+      submissionStatus: 'pending',
+    });
+
+    const teacherToken = await token('teacher');
+    const holiday = await request(app)
+      .post('/api/teacher/homework')
+      .set(auth(teacherToken))
+      .send({ classKey: 'Class 1-A', subject: 'Mathematics', title: 'Vacation worksheet', dueDate: '2025-06-20', homeworkType: 'holiday' });
+    expect(holiday.status).toBe(201);
+
+    const onlyHoliday = await request(app).get(`/api/parent/homework?childId=${childId}&type=holiday`).set(auth(parent));
+    expect(onlyHoliday.body).toHaveLength(1);
+    expect(onlyHoliday.body[0]).toMatchObject({ title: 'Vacation worksheet', homeworkType: 'holiday' });
+
+    const onlyDaily = await request(app).get(`/api/parent/homework?childId=${childId}&type=daily`).set(auth(parent));
+    expect(onlyDaily.body.every((h: { homeworkType: string }) => h.homeworkType === 'daily')).toBe(true);
+    expect(onlyDaily.body.some((h: { title: string }) => h.title === 'Vacation worksheet')).toBe(false);
+
+    // The teacher records the child's submission — the parent's own row picks
+    // it up, not the whole class's count. Putting the child in Class 1-A
+    // above already puts them on the teacher's own roster for that class, but
+    // the submission row only materialises once the teacher opens the roster.
+    await request(app).get(`/api/teacher/homework/${holiday.body.id}/submissions`).set(auth(teacherToken));
+    const patch = await request(app)
+      .patch(`/api/teacher/homework/${holiday.body.id}/submissions/${childId}`)
+      .set(auth(teacherToken))
+      .send({ status: 'submitted' });
+    expect(patch.status).toBe(200);
+    const afterSubmit = await request(app).get(`/api/parent/homework?childId=${childId}&type=holiday`).set(auth(parent));
+    expect(afterSubmit.body[0]).toMatchObject({ submissionStatus: 'submitted' });
+
+    // Requesting another parent's/nonexistent child is refused, not just empty.
+    const notMine = '000000000000000000000000';
+    expect((await request(app).get(`/api/parent/homework?childId=${notMine}`).set(auth(parent))).status).toBe(404);
+  });
 });

@@ -11,6 +11,10 @@ function schoolId(req: Request): string {
 }
 const userId = (req: Request): string => String(req.user?._id);
 const childId = (req: Request): string => String(req.query.childId ?? '');
+const q = (req: Request, key: string): string | undefined => {
+  const v = req.query[key];
+  return v == null ? undefined : String(v);
+};
 
 export const parentController = {
   async getChildren(req: Request, res: Response) {
@@ -36,6 +40,9 @@ export const parentController = {
   },
   async getMeetLinks(req: Request, res: Response) {
     send(res, await parentService.getMeetLinks(schoolId(req), userId(req), childId(req)));
+  },
+  async getHomework(req: Request, res: Response) {
+    send(res, await parentService.getHomework(schoolId(req), userId(req), childId(req), { type: q(req, 'type') }));
   },
   async getComplaints(req: Request, res: Response) {
     send(res, await parentService.getComplaints(schoolId(req), userId(req), childId(req)));
