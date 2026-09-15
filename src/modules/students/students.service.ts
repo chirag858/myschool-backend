@@ -16,28 +16,47 @@ import { EnquiryModel } from '../enquiries/enquiry.model';
  * it wasn't derivable. Never trust `mobile` alone. */
 function parentMobileOf(student: { mobile?: string; parents?: Record<string, unknown> }): string {
   const p = student.parents ?? {};
-  return String(p.fatherMobile ?? p.motherMobile ?? p.guardianMobile ?? student.mobile ?? '');
+  // First NON-BLANK number: a form that saves `fatherMobile: ''` must not hide
+  // the mother's or guardian's number (`??` only skips null/undefined).
+  for (const v of [p.fatherMobile, p.motherMobile, p.guardianMobile, student.mobile]) {
+    const s = typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '';
+    if (s) return s;
+  }
+  return '';
 }
 
 /** Creates a parent login the first time a mobile number is seen for this
  * school, or links the student to an existing parent account when a
  * sibling already registered that same mobile. Never creates a duplicate
  * account per mobile+school. Returns the one-time generated password only
- * when a brand-new account was created (undefined when linked to an
- * existing sibling account). */
+ * when a brand-new account was created; `linked: true` (no password) when the
+ * student was attached to an existing sibling account. */
 async function createOrLinkParentAccount(
   schoolId: string,
   studentName: string,
   mobile: string,
-): Promise<{ parentUserId: unknown; tempPassword?: string }> {
+): Promise<{ parentUserId: unknown; tempPassword?: string; linked?: boolean }> {
   const existing = await UserModel.findOne({ schoolId, mobile, role: 'parent' });
-  if (existing) return { parentUserId: existing._id };
+  if (existing) return { parentUserId: existing._id, linked: true };
+
+  // Usernames are unique per school. The mobile is the natural parent username,
+  // but a staff login (or a parent whose mobile was later edited) may already
+  // hold it — creating would then 409 and block the student. Reuse that parent
+  // account if it IS one; otherwise fall back to a distinct handle. Parents can
+  // still sign in by mobile either way.
+  const holder = await UserModel.findOne({ schoolId, username: mobile.toLowerCase() }).lean();
+  if (holder?.role === 'parent') return { parentUserId: holder._id, linked: true };
+  let username = mobile;
+  if (holder) {
+    username = `p${mobile}`;
+    if (await UserModel.exists({ schoolId, username })) username = `p${mobile}-${randomUUID().slice(0, 4)}`;
+  }
 
   const tempPassword = randomUUID().slice(0, 10);
   const passwordHash = await bcrypt.hash(tempPassword, 10);
   const user = await UserModel.create({
     name: `Parent of ${studentName}`,
-    username: mobile,
+    username,
     mobile,
     role: 'parent',
     passwordHash,
@@ -382,22 +401,27 @@ export const studentsService = {
     const student = await StudentModel.findOne({ _id: studentId, schoolId }).lean();
     if (!student) throw ApiError.notFound('Student not found');
 
-    const mobile = parentMobileOf(student);
-    if (!student.parentUserId) {
+    // A link to an account that no longer exists counts as "no login" — the
+    // same answer getParentCredentials gives, so Create actually creates
+    // instead of 404ing on a reset of a missing user.
+    const linkedUser = student.parentUserId
+      ? await UserModel.exists({ _id: student.parentUserId, schoolId })
+      : null;
+
+    if (!linkedUser) {
+      const mobile = parentMobileOf(student);
       if (!mobile) throw ApiError.badRequest('Student has no parent mobile number on file');
-      const { parentUserId, tempPassword } = await createOrLinkParentAccount(schoolId, student.name, mobile);
+      const { parentUserId, tempPassword, linked } = await createOrLinkParentAccount(schoolId, student.name, mobile);
       await StudentModel.updateOne({ _id: studentId, schoolId }, { $set: { parentUserId, mobile } });
-      return { tempPassword };
+      return linked ? { linked: true } : { tempPassword };
     }
 
     const tempPassword = randomUUID().slice(0, 10);
     const passwordHash = await bcrypt.hash(tempPassword, 10);
-    const user = await UserModel.findOneAndUpdate(
+    await UserModel.updateOne(
       { _id: student.parentUserId, schoolId },
       { $set: { passwordHash, mustChangePassword: true } },
-      { new: true },
-    ).lean();
-    if (!user) throw ApiError.notFound('No parent login found for this student');
+    );
     return { tempPassword };
   },
 
