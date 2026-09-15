@@ -4,7 +4,7 @@ import { CircularModel } from '../communication/communication.models';
 import { ReceiptModel } from '../fee/fee.models';
 import { MONTH_ABBR_TO_FULL, annualByClass } from '../fee/fee.service';
 import { StudentModel } from '../students/student.model';
-import { ClassMeetLinkModel } from '../teacher/teacher.models';
+import { ClassMeetLinkModel, HomeworkSubmissionModel, TeacherHomeworkModel } from '../teacher/teacher.models';
 import { UserModel } from '../user/user.model';
 import { ParentComplaintModel } from './parent.models';
 
@@ -217,6 +217,48 @@ export const parentService = {
       createdBy: (r.createdBy as string) ?? '',
       createdAt: (r.createdAt as Date)?.toISOString?.() ?? '',
     }));
+  },
+
+  /**
+   * A child's daily/holiday homework, newest-assigned first, each row
+   * carrying the CHILD'S OWN submission status (not the whole-class count a
+   * teacher sees) — resolved from `HomeworkSubmissionModel` when a row for
+   * this student already exists, defaulting to `pending` otherwise (the
+   * teacher materialises a row only on first read of the submissions roster).
+   */
+  async getHomework(schoolId: string, userId: string, childId: string, filters: { type?: string }) {
+    const child = await ownChild(schoolId, userId, childId);
+    const classKey = `${(child.className as string) ?? ''}-${(child.section as string) ?? ''}`;
+    const q: Record<string, unknown> = { schoolId, classKey };
+    if (filters.type && filters.type !== 'all') q.homeworkType = filters.type;
+    const rows = await TeacherHomeworkModel.find(q).sort({ assignedDate: -1 }).lean();
+
+    const ids = rows.map((r) => String(r._id));
+    const subs = await HomeworkSubmissionModel.find({ schoolId, homeworkId: { $in: ids }, studentId: childId }).lean();
+    const subByHomeworkId = new Map(subs.map((s) => [String(s.homeworkId), s]));
+
+    return rows.map((r) => {
+      const sub = subByHomeworkId.get(String(r._id));
+      return {
+        id: String(r._id),
+        subject: (r.subject as string) ?? '',
+        title: r.title as string,
+        description: (r.description as string) ?? '',
+        descriptionHtml: r.descriptionHtml as string | undefined,
+        assignedDate: (r.assignedDate as string) ?? '',
+        dueDate: (r.dueDate as string) ?? '',
+        dueTime: r.dueTime as string | undefined,
+        homeworkType: (r.homeworkType as string) ?? 'daily',
+        priority: (r.priority as string) ?? 'normal',
+        maxMarks: r.maxMarks as number | undefined,
+        estimatedMinutes: r.estimatedMinutes as number | undefined,
+        attachments: (r.attachments as string[]) ?? [],
+        createdBy: (r.createdBy as string) ?? '',
+        submissionStatus: (sub?.status as string) ?? 'pending',
+        marks: sub?.marks as number | undefined,
+        remark: sub?.remark as string | undefined,
+      };
+    });
   },
 
   async getComplaints(schoolId: string, userId: string, childId: string) {
