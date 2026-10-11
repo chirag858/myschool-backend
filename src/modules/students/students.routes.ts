@@ -20,6 +20,7 @@ import {
   documentSchema,
   idParam,
   studentsQuerySchema,
+  updateHouseSchema,
 } from './students.validation';
 
 /**
@@ -74,6 +75,14 @@ studentsRoutes.post(
   requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
   validate({ body: createStudentSchema }),
   asyncHandler(studentsController.create),
+);
+// Assign/change a student's house — e.g. backfilling a legacy student
+// admitted before this field existed. Same roles as create.
+studentsRoutes.patch(
+  '/:id/house',
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  validate({ params: idParam, body: updateHouseSchema }),
+  asyncHandler(studentsController.updateHouse),
 );
 // Admission wizard's webcam-captured photo — same roles as create.
 studentsRoutes.post(

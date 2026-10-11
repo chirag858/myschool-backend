@@ -1,6 +1,8 @@
 import { ApiError } from '../../lib/api-error';
 import { AttendanceModel } from '../attendance/attendance.models';
 import { CircularModel } from '../communication/communication.models';
+import { ExamModel } from '../exams/exams.models';
+import { examService } from '../exams/exams.service';
 import { ReceiptModel } from '../fee/fee.models';
 import { MONTH_ABBR_TO_FULL, annualByClass } from '../fee/fee.service';
 import { StudentModel } from '../students/student.model';
@@ -273,6 +275,34 @@ export const parentService = {
       status: r.status as string,
       resolution: r.resolution as string | undefined,
     }));
+  },
+
+  /**
+   * A child's published exam results — reuses `examService.studentExams`
+   * verbatim (it already filters to `exam.publishedResults` for the child's
+   * class), so a parent can never see a draft/unpublished result through a
+   * second, slightly-different code path.
+   */
+  async getExams(schoolId: string, userId: string, childId: string) {
+    await ownChild(schoolId, userId, childId);
+    return examService.studentExams(schoolId, childId);
+  },
+
+  /**
+   * One exam's full report card for a child. `examService.reportCard` itself
+   * has no publish gate (it's also called by staff, who are allowed to see
+   * drafts) — mirror `parent-app.service.ts`'s gate here: a class's result is
+   * parent-visible once its classKey is in `publishedResults`, or the whole
+   * exam is marked `published`.
+   */
+  async getReportCard(schoolId: string, userId: string, childId: string, examId: string) {
+    const child = await ownChild(schoolId, userId, childId);
+    const exam = await ExamModel.findOne({ _id: examId, schoolId }).lean();
+    if (!exam) throw ApiError.notFound('Exam not found');
+    const classKey = (child.className as string) ?? '';
+    const published = (exam.publishedResults ?? []).includes(classKey) || exam.status === 'published';
+    if (!published) throw ApiError.notFound('Result not published yet');
+    return examService.reportCard(schoolId, examId, childId);
   },
 
   async submitComplaint(schoolId: string, userId: string, payload: Record<string, unknown>) {

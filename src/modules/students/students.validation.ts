@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ADMISSION_TYPES, GENDERS, PROFILE_STATUSES } from './student.model';
+import { ADMISSION_TYPES, GENDERS, HOUSES, PROFILE_STATUSES } from './student.model';
 
 export const idParam = z.object({ id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id') });
 
@@ -60,6 +60,7 @@ export const createStudentSchema = z.object({
   photoUrl: z.string().optional(),
   dateOfBirth: z.string().optional(),
   gender: z.enum(GENDERS),
+  house: z.enum(HOUSES),
   bloodGroup: bloodGroup.optional(),
   religion: religion.optional(),
   caste: z.string().max(50).optional(),
@@ -92,6 +93,8 @@ export const createStudentSchema = z.object({
     )
     .optional(),
 });
+
+export const updateHouseSchema = z.object({ house: z.enum(HOUSES) });
 
 export const studentsQuerySchema = z.object({
   page: z.coerce.number().optional(),

@@ -68,6 +68,10 @@ export const studentsController = {
   async create(req: Request, res: Response) {
     created(res, await studentsService.create(schoolId(req), req.body));
   },
+  async updateHouse(req: Request, res: Response) {
+    const { house } = req.body as { house: string };
+    send(res, await studentsService.updateHouse(schoolId(req), String(req.params.id), house));
+  },
   async profile(req: Request, res: Response) {
     send(res, await studentsService.profile(schoolId(req), String(req.params.id)));
   },

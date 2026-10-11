@@ -101,6 +101,7 @@ function toProfile(d: Doc) {
     name: d.name,
     dateOfBirth: d.dateOfBirth ?? '',
     gender: d.gender,
+    house: d.house,
     bloodGroup: d.bloodGroup,
     religion: d.religion,
     caste: d.caste,
@@ -348,6 +349,7 @@ export const studentsService = {
       sessionLabel: payload.sessionLabel ?? '',
       dateOfBirth: payload.dateOfBirth ?? '',
       gender: payload.gender,
+      house: payload.house,
       bloodGroup: payload.bloodGroup,
       religion: payload.religion,
       caste: payload.caste,
@@ -380,6 +382,23 @@ export const studentsService = {
       admissionNumber: doc.admissionNumber,
       ...(parentCredentials ? { parentCredentials } : {}),
     };
+  },
+
+  /**
+   * Assigns/changes a student's house. Separate from a generic student-update
+   * endpoint (none exists yet) — this exists specifically so legacy students
+   * admitted before the House field existed can be assigned one without
+   * backfilling the whole fleet, and so an existing student's house can be
+   * corrected later.
+   */
+  async updateHouse(schoolId: string, studentId: string, house: string) {
+    const doc = await StudentModel.findOneAndUpdate(
+      { _id: studentId, schoolId },
+      { $set: { house } },
+      { new: true },
+    ).lean();
+    if (!doc) throw ApiError.notFound('Student not found');
+    return { id: String(doc._id), house: doc.house };
   },
 
   async getParentCredentials(schoolId: string, studentId: string) {
