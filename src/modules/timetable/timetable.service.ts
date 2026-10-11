@@ -99,10 +99,32 @@ export const timetableService = {
   },
 
   savePeriods: async (schoolId: string, periods: AnyDoc[]) => {
-    // Delete existing and insert new ones to handle order and deletions simply
-    await PeriodModel.deleteMany({ schoolId });
-    const docs = periods.map((p) => ({ ...p, schoolId }));
-    await PeriodModel.insertMany(docs);
+    // Saves the WHOLE ordered list, but updates periods IN PLACE. It used to
+    // delete everything and re-insert, which gave every period a new _id — and
+    // every timetable slot stores `periodId`, so renaming one period silently
+    // detached the entire school's timetable.
+    const existing = await PeriodModel.find({ schoolId }, { _id: 1 }).lean();
+    const existingIds = new Set(existing.map((p) => String(p._id)));
+    const kept = new Set<string>();
+
+    for (const period of periods) {
+      const { id, ...fields } = period as AnyDoc & { id?: string };
+      if (id && existingIds.has(String(id))) {
+        await PeriodModel.updateOne({ _id: id, schoolId }, { $set: fields });
+        kept.add(String(id));
+      } else {
+        const created = await PeriodModel.create({ ...fields, schoolId });
+        kept.add(String(created._id));
+      }
+    }
+
+    // A period left out of the list was deleted: remove it, and the slots that
+    // pointed at it, so no class is left with an unreachable ghost slot.
+    const removed = [...existingIds].filter((id) => !kept.has(id));
+    if (removed.length) {
+      await PeriodModel.deleteMany({ schoolId, _id: { $in: removed } });
+      await TimetableClassModel.updateMany({ schoolId }, { $pull: { slots: { periodId: { $in: removed } } } });
+    }
   },
 
   // ── Subjects ──────────────────────────────────────────────────────
