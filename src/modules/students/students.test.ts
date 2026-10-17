@@ -413,6 +413,48 @@ describe("Students API", () => {
     expect(row.mobile).toBe("9990001111");
   });
 
+  it("a real unique-index collision on admissionNumber (two reception counters racing the same auto-generated number) is retried transparently, not surfaced as a raw 409 Duplicate value", async () => {
+    // generateAdmissionNumber is a plain count+1, not a reserved sequence, so
+    // two concurrent admissions can both pass the pre-insert exists-check for
+    // the same number before either commits — the real collision then
+    // happens at the database's unique index, past that check. Simulate
+    // exactly that: the first create() attempt throws the real Mongo E11000
+    // shape despite the exists-check having just said "not taken" (a
+    // genuine TOCTOU race, not a payload bug), and assert students.service.ts
+    // bumps the number and retries instead of letting the raw error escape.
+    const realCreate = StudentModel.create.bind(StudentModel);
+    const createSpy = vi
+      .spyOn(StudentModel, "create")
+      .mockImplementationOnce(async () => {
+        const err = Object.assign(new Error("E11000 duplicate key error"), {
+          code: 11000,
+          keyPattern: { schoolId: 1, admissionNumber: 1 },
+        });
+        throw err;
+      })
+      .mockImplementationOnce(realCreate);
+
+    const res = await request(app)
+      .post("/api/students")
+      .set(auth(admin))
+      .send({
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "5",
+        section: "A",
+        gender: "male",
+        house: "BLUE",
+        name: "Race Student",
+        admissionNumber: "ADM-2026-700",
+      });
+
+    expect(res.status).toBe(201);
+    // Bumped past the number that "collided" — not the literal one submitted.
+    expect(res.body.admissionNumber).toBe("ADM-2026-701");
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    createSpy.mockRestore();
+  });
+
   it("POST /students falls back to motherMobile, then guardianMobile, when fatherMobile is absent", async () => {
     const base = {
       admissionType: "new",

@@ -12,6 +12,7 @@ import { validate } from '../../middleware/validate';
 import { ACADEMIC_ADMIN_ROLES } from '../user/roles';
 import { studentsController } from './students.controller';
 import {
+  bulkImportCommitSchema,
   bulkPromoteSchema,
   bulkStatusSchema,
   bulkTransferSchema,
@@ -106,6 +107,11 @@ studentsRoutes.get(
 studentsRoutes.post('/bulk/status', adminGate, validate({ body: bulkStatusSchema }), asyncHandler(studentsController.bulkStatus));
 studentsRoutes.post('/bulk/transfer', adminGate, validate({ body: bulkTransferSchema }), asyncHandler(studentsController.bulkTransfer));
 studentsRoutes.post('/bulk/promote', adminGate, validate({ body: bulkPromoteSchema }), asyncHandler(studentsController.bulkPromote));
+// Bulk admission import — same roles as single create (receptionist manages admissions).
+const importGate = requireRole('school_admin', 'principal', 'coordinator', 'receptionist');
+studentsRoutes.get('/bulk/import-template', importGate, asyncHandler(studentsController.importTemplate));
+studentsRoutes.post('/bulk/import-preview', importGate, upload.single('file'), asyncHandler(studentsController.bulkImportPreview));
+studentsRoutes.post('/bulk/import', importGate, validate({ body: bulkImportCommitSchema }), asyncHandler(studentsController.bulkImportCommit));
 // Student attendance calendar views (Attendance domain). Also allow teacher
 // (Attendance Reports > Student detail reads a real student's own history).
 // Also allow receptionist — read-only Student Search profile view.

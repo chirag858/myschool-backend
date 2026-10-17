@@ -96,6 +96,13 @@ export const createStudentSchema = z.object({
 
 export const updateHouseSchema = z.object({ house: z.enum(HOUSES) });
 
+// Bulk import commit — each row is already-validated/normalized data built
+// server-side by parseImportWorkbook (students.service.ts), carrying a
+// `__row` marker back for the per-row result list; `.passthrough()` keeps it.
+export const bulkImportCommitSchema = z.object({
+  rows: z.array(createStudentSchema.passthrough()).min(1),
+});
+
 export const studentsQuerySchema = z.object({
   page: z.coerce.number().optional(),
   pageSize: z.coerce.number().optional(),
