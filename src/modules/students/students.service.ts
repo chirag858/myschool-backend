@@ -198,6 +198,21 @@ function setDeep(obj: Record<string, unknown>, path: string, value: string): voi
   setDeep(child, rest.join('.'), value);
 }
 
+/** Recursively deletes empty-string leaves (and any object left empty as a
+ * result) so optional schema fields left blank read as `undefined`. */
+function pruneEmptyStrings(obj: Record<string, unknown>): void {
+  for (const key of Object.keys(obj)) {
+    const value = obj[key];
+    if (value === '') {
+      delete obj[key];
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const child = value as Record<string, unknown>;
+      pruneEmptyStrings(child);
+      if (Object.keys(child).length === 0) delete obj[key];
+    }
+  }
+}
+
 /** Parses an uploaded .xlsx workbook into per-row create-student payloads,
  * validating each with the exact same `createStudentSchema` the manual
  * admission form uses — so a bulk-imported row can never slip in data the
@@ -277,6 +292,12 @@ async function parseImportWorkbook(schoolId: string, buffer: Buffer) {
     if (raw.category) raw.category = (raw.category as string).toLowerCase();
     if (!raw.admissionNumber) raw.admissionNumber = nextAutoNumber();
     usedInFile.add(raw.admissionNumber as string);
+
+    // Blank spreadsheet cells arrive as '' — but the schema's optional enums
+    // (bloodGroup/religion/category) only accept a real value or `undefined`,
+    // not ''. Drop empty-string leaves so optional columns left blank in the
+    // sheet are treated as absent rather than as an invalid option.
+    pruneEmptyStrings(raw);
 
     const parsed = createStudentSchema.safeParse(raw);
     const errors: Array<{ field: string; message: string }> = [];

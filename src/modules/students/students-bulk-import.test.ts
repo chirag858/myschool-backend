@@ -47,10 +47,20 @@ describe('Bulk admission import', () => {
   });
 
   it('downloads a real, non-empty xlsx template', async () => {
-    const res = await request(app).get('/api/students/bulk/import-template').set(auth(schoolAdmin));
+    // supertest has no parser for the xlsx content-type, so buffer the raw
+    // response ourselves to inspect its real byte length.
+    const res = await request(app)
+      .get('/api/students/bulk/import-template')
+      .set(auth(schoolAdmin))
+      .buffer(true)
+      .parse((stream, callback) => {
+        const chunks: Buffer[] = [];
+        stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        stream.on('end', () => callback(null, Buffer.concat(chunks)));
+      });
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('spreadsheetml');
-    expect(res.body.length).toBeGreaterThan(1000);
+    expect((res.body as Buffer).length).toBeGreaterThan(1000);
   });
 
   it('previews a valid row, auto-generates a missing admission number, and flags bad rows', async () => {
