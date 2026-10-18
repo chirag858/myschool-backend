@@ -14,11 +14,16 @@ import { billingRenewSchema, gracePeriodSchema, idParam, renewSchema } from './s
  * Impersonation is also opened to support_engineer, mirroring schoolRoutes'
  * readRoles split (see school.routes.ts) — support engineers need to sign in
  * as a school to reproduce/debug issues, same as super_admin.
+ *
+ * audit-logs-full is also opened to school_admin/principal, scoped to their
+ * own schoolId in the controller (super_admin sees all schools, others see
+ * only their own) — the frontend's Audit Logs page allows those roles in.
  */
 export const superAdminExtrasRoutes = Router();
 
 const writeOnly = requireRole('super_admin');
 const impersonateRoles = requireRole('super_admin', 'support_engineer');
+const auditReadRoles = requireRole('super_admin', 'school_admin', 'principal');
 
 superAdminExtrasRoutes.use(authenticate);
 
@@ -37,6 +42,6 @@ superAdminExtrasRoutes.get('/schools/:id/activity', writeOnly, validate({ params
 superAdminExtrasRoutes.post('/schools/:id/impersonate', impersonateRoles, validate({ params: idParam }), asyncHandler(superAdminController.impersonate));
 
 superAdminExtrasRoutes.get('/audit-logs', writeOnly, asyncHandler(superAdminController.getAuditLogs));
-superAdminExtrasRoutes.get('/audit-logs-full', writeOnly, asyncHandler(superAdminController.getFullAuditLogs));
-superAdminExtrasRoutes.get('/audit-logs-full/:id', writeOnly, validate({ params: idParam }), asyncHandler(superAdminController.getAuditLogDetail));
+superAdminExtrasRoutes.get('/audit-logs-full', auditReadRoles, asyncHandler(superAdminController.getFullAuditLogs));
+superAdminExtrasRoutes.get('/audit-logs-full/:id', auditReadRoles, validate({ params: idParam }), asyncHandler(superAdminController.getAuditLogDetail));
 superAdminExtrasRoutes.get('/tickets/stats', writeOnly, asyncHandler(superAdminController.ticketStats));

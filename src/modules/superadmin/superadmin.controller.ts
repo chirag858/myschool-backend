@@ -49,9 +49,11 @@ export const superAdminController = {
   },
   async getFullAuditLogs(req: Request, res: Response) {
     const { module, action, search } = req.query as { module?: string; action?: string; search?: string };
-    send(res, await superAdminService.getFullAuditLogs({ module, action, search }));
+    const schoolId = req.user?.role === 'super_admin' ? undefined : req.user?.schoolId;
+    send(res, await superAdminService.getFullAuditLogs({ module, action, search, schoolId }));
   },
   async getAuditLogDetail(req: Request, res: Response) {
-    send(res, await superAdminService.getAuditLogDetail(id(req)));
+    const schoolId = req.user?.role === 'super_admin' ? undefined : req.user?.schoolId;
+    send(res, await superAdminService.getAuditLogDetail(id(req), schoolId));
   },
 };
