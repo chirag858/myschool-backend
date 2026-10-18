@@ -68,6 +68,24 @@ export const studentsController = {
   async create(req: Request, res: Response) {
     created(res, await studentsService.create(schoolId(req), req.body));
   },
+  async updateHouse(req: Request, res: Response) {
+    const { house } = req.body as { house: string };
+    send(res, await studentsService.updateHouse(schoolId(req), String(req.params.id), house));
+  },
+  async bulkImportPreview(req: MulterRequest, res: Response) {
+    if (!req.file) throw ApiError.badRequest('No file uploaded (expected field "file")');
+    send(res, await studentsService.parseImportFile(schoolId(req), req.file.buffer));
+  },
+  async bulkImportCommit(req: Request, res: Response) {
+    const { rows } = req.body as { rows: Array<Record<string, unknown>> };
+    created(res, await studentsService.bulkImportCommit(schoolId(req), rows));
+  },
+  async importTemplate(req: Request, res: Response) {
+    const buffer = await studentsService.importTemplateBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="students-import-template.xlsx"');
+    res.send(buffer);
+  },
   async profile(req: Request, res: Response) {
     send(res, await studentsService.profile(schoolId(req), String(req.params.id)));
   },

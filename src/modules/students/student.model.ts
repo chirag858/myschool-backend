@@ -4,6 +4,7 @@ export const PROFILE_STATUSES = ['active', 'inactive', 'left', 'tc_issued', 'pas
 export const FEE_STATUSES = ['paid', 'partial', 'pending', 'advance'] as const;
 export const ADMISSION_TYPES = ['new', 'old'] as const;
 export const GENDERS = ['male', 'female', 'other'] as const;
+export const HOUSES = ['BLUE', 'GREEN', 'RED', 'YELLOW'] as const;
 
 const addressSchema = new Schema(
   { line1: String, line2: String, city: String, state: String, pinCode: String },
@@ -78,6 +79,10 @@ const studentSchema = new Schema(
     sessionLabel: { type: String, default: '' },
     dateOfBirth: { type: String, default: '' },
     gender: { type: String, enum: GENDERS, default: 'male' },
+    // No default — legacy students admitted before this field existed stay
+    // unset rather than being silently assigned a house. Required for every
+    // NEW admission via createStudentSchema (students.validation.ts).
+    house: { type: String, enum: HOUSES },
     bloodGroup: { type: String, default: 'O+' },
     religion: { type: String, default: 'hindu' },
     caste: String,

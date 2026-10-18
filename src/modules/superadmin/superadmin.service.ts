@@ -306,8 +306,9 @@ export const superAdminService = {
     return (await AuditLogModel.find({}).sort({ timestamp: -1 }).limit(limit).lean()).map(auditView);
   },
 
-  async getFullAuditLogs(filter: { module?: string; action?: string; search?: string }) {
+  async getFullAuditLogs(filter: { module?: string; action?: string; search?: string; schoolId?: string }) {
     const query: Record<string, unknown> = {};
+    if (filter.schoolId) query.schoolId = filter.schoolId;
     if (filter.module && filter.module !== 'all') query.module = filter.module;
     if (filter.search?.trim()) {
       const rx = new RegExp(filter.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
@@ -326,9 +327,10 @@ export const superAdminService = {
     return rows;
   },
 
-  async getAuditLogDetail(id: string) {
+  async getAuditLogDetail(id: string, schoolId?: string) {
     const doc = await AuditLogModel.findById(id).lean();
     if (!doc) return null;
+    if (schoolId && String(doc.schoolId) !== schoolId) return null;
     const school = doc.schoolId ? await SchoolModel.findById(doc.schoolId).select('name').lean() : null;
     return fullAuditView(doc as Doc, school?.name ?? 'Unknown school');
   },

@@ -27,6 +27,7 @@ import { inventoryRoutes } from '../modules/inventory/inventory.routes';
 import { inventoryRequestsRoutes } from '../modules/inventory/inventory-requests.routes';
 import { libraryRoutes } from '../modules/library/library.routes';
 import { parentAppRoutes } from '../modules/parent-app/parent-app.routes';
+import { picnicRoutes } from '../modules/picnic/picnic.routes';
 import { parentRoutes } from '../modules/parent/parent.routes';
 import { receptionRoutes } from '../modules/reception/reception.routes';
 import { staffRoutes } from '../modules/staff/staff.routes';
@@ -113,6 +114,7 @@ apiRouter.use('/payroll', payrollRoutes);
 apiRouter.use('/reception', receptionRoutes);
 apiRouter.use('/coordinator', coordinatorRoutes);
 apiRouter.use('/gate-manager', gateManagerRoutes);
+apiRouter.use('/picnic', picnicRoutes);
 // Mobile parent-app FIRST: it allows parent+student and owns the /app-* + mobile
 // paths. Its router-level role gate must run before the web parent router's
 // stricter parent-only gate, else a student is 403'd before reaching /app-*.

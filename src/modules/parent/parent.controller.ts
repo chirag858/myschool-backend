@@ -44,6 +44,12 @@ export const parentController = {
   async getHomework(req: Request, res: Response) {
     send(res, await parentService.getHomework(schoolId(req), userId(req), childId(req), { type: q(req, 'type') }));
   },
+  async getExams(req: Request, res: Response) {
+    send(res, await parentService.getExams(schoolId(req), userId(req), childId(req)));
+  },
+  async getReportCard(req: Request, res: Response) {
+    send(res, await parentService.getReportCard(schoolId(req), userId(req), childId(req), String(req.params.examId)));
+  },
   async getComplaints(req: Request, res: Response) {
     send(res, await parentService.getComplaints(schoolId(req), userId(req), childId(req)));
   },

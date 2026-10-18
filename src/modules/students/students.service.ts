@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
 import bcrypt from 'bcryptjs';
+import ExcelJS from 'exceljs';
 import { Types } from 'mongoose';
 
 import { ApiError } from '../../lib/api-error';
 import { UserModel } from '../user/user.model';
 import { StudentModel } from './student.model';
+import { createStudentSchema } from './students.validation';
 import { EnquiryModel } from '../enquiries/enquiry.model';
 
 /** Resolves the parent contact number for a student from `parents.*` first
@@ -101,6 +103,7 @@ function toProfile(d: Doc) {
     name: d.name,
     dateOfBirth: d.dateOfBirth ?? '',
     gender: d.gender,
+    house: d.house,
     bloodGroup: d.bloodGroup,
     religion: d.religion,
     caste: d.caste,
@@ -146,6 +149,161 @@ interface StudentsQuery {
   search?: string;
   fromDate?: string;
   toDate?: string;
+}
+
+/**
+ * Bulk-import spreadsheet columns, in template order. `key` is either a
+ * top-level `createStudentSchema` field or a `parents.<field>` dotted path.
+ * Keep this the single source of truth for both the downloadable template
+ * and the upload parser, so they can never drift apart.
+ */
+const IMPORT_COLUMNS: Array<{ header: string; key: string }> = [
+  { header: 'Admission Number', key: 'admissionNumber' },
+  { header: 'Admission Type (new/old)', key: 'admissionType' },
+  { header: 'Roll Number', key: 'rollNumber' },
+  { header: 'Session', key: 'sessionLabel' },
+  { header: 'Class', key: 'className' },
+  { header: 'Section', key: 'section' },
+  { header: 'Admission Date', key: 'admittedAt' },
+  { header: 'Name', key: 'name' },
+  { header: 'Gender (male/female/other)', key: 'gender' },
+  { header: 'House (BLUE/GREEN/RED/YELLOW)', key: 'house' },
+  { header: 'Date of Birth', key: 'dateOfBirth' },
+  { header: 'Blood Group', key: 'bloodGroup' },
+  { header: 'Religion', key: 'religion' },
+  { header: 'Category', key: 'category' },
+  { header: 'Father Name', key: 'parents.fatherName' },
+  { header: 'Father Mobile', key: 'parents.fatherMobile' },
+  { header: 'Mother Name', key: 'parents.motherName' },
+  { header: 'Mother Mobile', key: 'parents.motherMobile' },
+];
+
+function cellText(value: ExcelJS.CellValue): string {
+  if (value == null) return '';
+  if (typeof value === 'object' && 'text' in (value as unknown as Record<string, unknown>)) {
+    return String((value as unknown as { text: unknown }).text ?? '').trim();
+  }
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).trim();
+}
+
+function setDeep(obj: Record<string, unknown>, path: string, value: string): void {
+  const [head, ...rest] = path.split('.');
+  if (rest.length === 0) {
+    obj[head!] = value;
+    return;
+  }
+  const child = (obj[head!] as Record<string, unknown> | undefined) ?? {};
+  obj[head!] = child;
+  setDeep(child, rest.join('.'), value);
+}
+
+/** Parses an uploaded .xlsx workbook into per-row create-student payloads,
+ * validating each with the exact same `createStudentSchema` the manual
+ * admission form uses — so a bulk-imported row can never slip in data the
+ * single-admission flow would have rejected. Missing admission numbers are
+ * auto-generated (same `ADM-<year>-<seq>` scheme as `generateAdmissionNumber`),
+ * with final uniqueness still enforced by `create()`'s own retry loop at
+ * commit time — this is just enough to populate a sensible preview. */
+async function parseImportWorkbook(schoolId: string, buffer: Buffer) {
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
+  } catch {
+    throw ApiError.badRequest('Could not read this file — upload a .xlsx workbook exported from the template.');
+  }
+  const sheet = workbook.worksheets[0];
+  if (!sheet) throw ApiError.badRequest('The workbook has no sheets.');
+
+  // Match headers ignoring a parenthetical hint ("Gender (male/female/other)"
+  // → "gender") so the uploaded sheet's header row doesn't have to be byte-
+  // identical to the template's, just recognisably the same column name.
+  const bareHeader = (h: string): string => h.toLowerCase().split('(')[0]!.trim();
+  const headerRow = sheet.getRow(1);
+  const colByKey = new Map<string, number>();
+  headerRow.eachCell((cell, colNumber) => {
+    const text = bareHeader(cellText(cell.value));
+    const match = IMPORT_COLUMNS.find((c) => bareHeader(c.header) === text);
+    if (match) colByKey.set(match.key, colNumber);
+  });
+  if (!colByKey.has('name') || !colByKey.has('className') || !colByKey.has('section')) {
+    throw ApiError.badRequest('This file is missing required columns (Name, Class, Section) — download the template and keep its header row.');
+  }
+
+  const existingNumbers = new Set(
+    (await StudentModel.find({ schoolId }, { admissionNumber: 1 }).lean()).map((d) => d.admissionNumber as string),
+  );
+  const usedInFile = new Set<string>();
+  const year = new Date().getFullYear();
+  let autoSeq = existingNumbers.size + 1;
+  const nextAutoNumber = (): string => {
+    let candidate = `ADM-${year}-${String(autoSeq).padStart(3, '0')}`;
+    while (existingNumbers.has(candidate) || usedInFile.has(candidate)) {
+      autoSeq += 1;
+      candidate = `ADM-${year}-${String(autoSeq).padStart(3, '0')}`;
+    }
+    autoSeq += 1;
+    return candidate;
+  };
+
+  const rows: Array<{
+    row: number;
+    name?: string;
+    fatherName?: string;
+    className?: string;
+    section?: string;
+    admissionType?: string;
+    mobile?: string;
+    data: Record<string, unknown>;
+    errors: Array<{ field: string; message: string }>;
+  }> = [];
+
+  const lastRow = sheet.actualRowCount;
+  for (let r = 2; r <= lastRow; r++) {
+    const row = sheet.getRow(r);
+    if (row.cellCount === 0) continue;
+    const raw: Record<string, unknown> = {};
+    for (const [key, colNumber] of colByKey) {
+      setDeep(raw, key, cellText(row.getCell(colNumber).value));
+    }
+    const name = cellText(row.getCell(colByKey.get('name') ?? 0).value);
+    if (!name) continue; // blank row — skip silently rather than surfacing a wall of "required" errors
+
+    raw.admissionType = ((raw.admissionType as string) || 'new').toLowerCase();
+    raw.admittedAt = (raw.admittedAt as string) || new Date().toISOString().slice(0, 10);
+    raw.gender = ((raw.gender as string) || '').toLowerCase();
+    raw.house = ((raw.house as string) || '').toUpperCase();
+    if (raw.religion) raw.religion = (raw.religion as string).toLowerCase();
+    if (raw.category) raw.category = (raw.category as string).toLowerCase();
+    if (!raw.admissionNumber) raw.admissionNumber = nextAutoNumber();
+    usedInFile.add(raw.admissionNumber as string);
+
+    const parsed = createStudentSchema.safeParse(raw);
+    const errors: Array<{ field: string; message: string }> = [];
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        errors.push({ field: issue.path.join('.') || 'row', message: issue.message });
+      }
+    } else if (existingNumbers.has(parsed.data.admissionNumber)) {
+      errors.push({ field: 'admissionNumber', message: 'Admission number already in use' });
+    }
+
+    const parents = raw.parents as Record<string, unknown> | undefined;
+    rows.push({
+      row: r,
+      name,
+      fatherName: (parents?.fatherName as string) || undefined,
+      className: (raw.className as string) || undefined,
+      section: (raw.section as string) || undefined,
+      admissionType: (raw.admissionType as string) || undefined,
+      mobile: (parents?.fatherMobile as string) || (parents?.motherMobile as string) || undefined,
+      data: { ...raw, __row: r },
+      errors,
+    });
+  }
+
+  const errorCount = rows.filter((r) => r.errors.length > 0).length;
+  return { rows, validCount: rows.length - errorCount, errorCount };
 }
 
 export const studentsService = {
@@ -324,7 +482,7 @@ export const studentsService = {
   async create(schoolId: string, payload: Record<string, unknown>) {
     const className = String(payload.className);
     const section = String(payload.section);
-    const admissionNumber = String(payload.admissionNumber);
+    let admissionNumber = String(payload.admissionNumber);
 
     const exists = await StudentModel.exists({ schoolId, admissionNumber });
     if (exists) throw ApiError.conflict('Admission number already in use');
@@ -332,54 +490,99 @@ export const studentsService = {
     const parents = payload.parents as Record<string, unknown> | undefined;
     const mobile = parents?.fatherMobile ?? parents?.motherMobile ?? parents?.guardianMobile ?? '';
 
-    const doc = await StudentModel.create({
-      schoolId,
-      admissionNumber,
-      rollNumber: payload.rollNumber ?? '',
-      name: payload.name,
-      photoUrl: payload.photoUrl,
-      fatherName: parents?.fatherName ?? '',
-      mobile,
-      className,
-      section,
-      classKey: `${className}-${section}`,
-      admissionType: payload.admissionType,
-      admittedAt: new Date(String(payload.admittedAt)),
-      sessionLabel: payload.sessionLabel ?? '',
-      dateOfBirth: payload.dateOfBirth ?? '',
-      gender: payload.gender,
-      bloodGroup: payload.bloodGroup,
-      religion: payload.religion,
-      caste: payload.caste,
-      category: payload.category,
-      nationality: payload.nationality,
-      aadhaar: payload.aadhaar,
-      aparId: payload.aparId,
-      parents: payload.parents ?? {},
-      currentAddress: payload.currentAddress ?? {},
-      permanentAddress: payload.permanentAddress ?? {},
-      permanentSameAsCurrent: payload.permanentSameAsCurrent ?? true,
-      previousAcademic: payload.previousAcademic,
-      documents: (payload.documents as unknown[] | undefined)?.map((d) => ({
-        ...(d as Record<string, unknown>),
-        uploadedAt: new Date().toISOString(),
-        verification: 'pending',
-      })) ?? [],
-    });
+    // The exists-check above and this insert aren't atomic — two reception
+    // counters admitting at the same moment can both pass the check for the
+    // same auto-generated number (generateAdmissionNumber is a plain
+    // count+1, not a reserved sequence) and then race on the real unique
+    // index. Rather than surface that as a raw, unhelpful "Duplicate value"
+    // to whichever request loses the race, bump past it and retry — the
+    // admission itself is valid, only the number needs to change.
+    let doc: InstanceType<typeof StudentModel> | undefined;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        doc = await StudentModel.create({
+          schoolId,
+          admissionNumber,
+          rollNumber: payload.rollNumber ?? '',
+          name: payload.name,
+          photoUrl: payload.photoUrl,
+          fatherName: parents?.fatherName ?? '',
+          mobile,
+          className,
+          section,
+          classKey: `${className}-${section}`,
+          admissionType: payload.admissionType,
+          admittedAt: new Date(String(payload.admittedAt)),
+          sessionLabel: payload.sessionLabel ?? '',
+          dateOfBirth: payload.dateOfBirth ?? '',
+          gender: payload.gender,
+          house: payload.house,
+          bloodGroup: payload.bloodGroup,
+          religion: payload.religion,
+          caste: payload.caste,
+          category: payload.category,
+          nationality: payload.nationality,
+          aadhaar: payload.aadhaar,
+          aparId: payload.aparId,
+          parents: payload.parents ?? {},
+          currentAddress: payload.currentAddress ?? {},
+          permanentAddress: payload.permanentAddress ?? {},
+          permanentSameAsCurrent: payload.permanentSameAsCurrent ?? true,
+          previousAcademic: payload.previousAcademic,
+          documents: (payload.documents as unknown[] | undefined)?.map((d) => ({
+            ...(d as Record<string, unknown>),
+            uploadedAt: new Date().toISOString(),
+            verification: 'pending',
+          })) ?? [],
+        });
+        break;
+      } catch (err) {
+        const isDuplicateAdmissionNumber =
+          (err as { code?: number })?.code === 11000 &&
+          /admissionNumber/.test(JSON.stringify((err as { keyPattern?: unknown })?.keyPattern ?? ''));
+        if (!isDuplicateAdmissionNumber || attempt >= 5) {
+          if (isDuplicateAdmissionNumber) {
+            throw ApiError.conflict('Admission number was just taken by another admission — please try again.');
+          }
+          throw err;
+        }
+        const match = /(\d+)$/.exec(admissionNumber);
+        const nextSeq = match ? String(Number(match[1]) + 1).padStart(match[1]!.length, '0') : `${admissionNumber}-2`;
+        admissionNumber = match ? admissionNumber.slice(0, match.index) + nextSeq : nextSeq;
+      }
+    }
 
+    const created = doc!;
     let parentCredentials: { tempPassword?: string } | undefined;
     if (mobile) {
-      const { parentUserId, tempPassword } = await createOrLinkParentAccount(schoolId, doc.name, String(mobile));
-      doc.parentUserId = parentUserId as typeof doc.parentUserId;
-      await doc.save();
+      const { parentUserId, tempPassword } = await createOrLinkParentAccount(schoolId, created.name, String(mobile));
+      created.parentUserId = parentUserId as typeof created.parentUserId;
+      await created.save();
       parentCredentials = tempPassword ? { tempPassword } : undefined;
     }
 
     return {
-      id: String(doc._id),
-      admissionNumber: doc.admissionNumber,
+      id: String(created._id),
+      admissionNumber: created.admissionNumber,
       ...(parentCredentials ? { parentCredentials } : {}),
     };
+  },
+
+  /**
+   * Assigns/changes a student's house. Separate from a generic student-update
+   * endpoint (none exists yet) — this exists specifically so legacy students
+   * admitted before the House field existed can be assigned one without
+   * backfilling the whole fleet, and so an existing student's house can be
+   * corrected later.
+   */
+  async updateHouse(schoolId: string, studentId: string, house: string) {
+    const doc = await StudentModel.findOneAndUpdate(
+      { _id: studentId, schoolId },
+      { $set: { house } },
+      { new: true },
+    ).lean();
+    if (!doc) throw ApiError.notFound('Student not found');
+    return { id: String(doc._id), house: doc.house };
   },
 
   async getParentCredentials(schoolId: string, studentId: string) {
@@ -429,6 +632,47 @@ export const studentsService = {
     const d = await StudentModel.findOne({ _id: id, schoolId }).lean();
     if (!d) throw ApiError.notFound('Student not found');
     return toProfile(d);
+  },
+
+  async parseImportFile(schoolId: string, buffer: Buffer) {
+    return parseImportWorkbook(schoolId, buffer);
+  },
+
+  /** Creates one student per row via the exact same `create()` used by the
+   * admission wizard — same parent-account creation, same admission-number
+   * collision retry — so a bulk-imported student is indistinguishable from
+   * one entered by hand. Rows are created sequentially: a later row's
+   * auto-admission-number retry must see earlier rows' inserts to avoid
+   * handing out the same number twice within one file. */
+  async bulkImportCommit(schoolId: string, rows: Array<Record<string, unknown>>) {
+    const results: Array<{ row: number; admissionNumber?: string; error?: string }> = [];
+    let created = 0;
+    for (const row of rows) {
+      const rowNumber = Number(row.__row ?? 0);
+      try {
+        const res = await this.create(schoolId, row);
+        created += 1;
+        results.push({ row: rowNumber, admissionNumber: res.admissionNumber });
+      } catch (err) {
+        results.push({ row: rowNumber, error: err instanceof ApiError ? err.message : 'Could not create this student' });
+      }
+    }
+    return { created, failed: results.length - created, results };
+  },
+
+  async importTemplateBuffer(): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Students');
+    sheet.addRow(IMPORT_COLUMNS.map((c) => c.header));
+    sheet.getRow(1).font = { bold: true };
+    sheet.addRow([
+      '', 'new', '', '2025-26', 'Class 1', 'A', '', 'Student Name', 'male', 'BLUE',
+      '2018-04-15', 'O+', 'hindu', 'general', 'Father Name', '9990000000', 'Mother Name', '',
+    ]);
+    sheet.columns.forEach((col) => {
+      col.width = Math.max(14, ...(col.values ?? []).map((v) => String(v ?? '').length + 2));
+    });
+    return (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
   },
 
   async bulkStatus(schoolId: string, studentIds: string[], status: string) {

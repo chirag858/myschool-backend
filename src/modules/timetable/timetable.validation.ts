@@ -11,6 +11,9 @@ export const classSectionParams = z.object({
 });
 
 const periodSchema = z.object({
+  /** Existing period's id — kept so timetable slots (which store `periodId`)
+   *  stay attached. Absent (or unknown, e.g. a client temp id) = a new period. */
+  id: z.string().optional(),
   order: z.number().int().min(0),
   name: z.string().min(1),
   startTime: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Invalid time format (HH:MM)'),

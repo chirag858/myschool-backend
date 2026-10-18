@@ -1,58 +1,80 @@
-import request from 'supertest';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import request from "supertest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { app } from '../../app';
-import { seedDemo } from '../../seed/seed';
-import { StudentModel } from './student.model';
+import { app } from "../../app";
+import { seedDemo } from "../../seed/seed";
+import { StudentModel } from "./student.model";
 
 // Document/photo uploads go to Cloudflare R2 in real life; stub the transport
 // so the multipart endpoints are testable without network/credentials.
-vi.mock('../../lib/storage', () => ({
-  uploadToR2: vi.fn().mockResolvedValue({ url: 'https://r2.test/upload.bin', key: 'test-key' }),
+vi.mock("../../lib/storage", () => ({
+  uploadToR2: vi
+    .fn()
+    .mockResolvedValue({ url: "https://r2.test/upload.bin", key: "test-key" }),
 }));
 
 async function token(username: string): Promise<string> {
   const res = await request(app)
-    .post('/api/auth/login')
+    .post("/api/auth/login")
     .send({
       username,
-      password: 'demo1234',
-      captcha: 'x',
-      ...(['superadmin', 'support'].includes(username) ? {} : { schoolCode: 'MSC' }),
+      password: "demo1234",
+      captcha: "x",
+      ...(["superadmin", "support"].includes(username)
+        ? {}
+        : { schoolCode: "MSC" }),
     });
   return res.body.tokens.accessToken as string;
 }
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
-describe('Students API', () => {
+describe("Students API", () => {
   let admin: string;
   beforeEach(async () => {
     await seedDemo();
-    admin = await token('schooladmin');
+    admin = await token("schooladmin");
   });
 
-  it('requires auth (401), allows accountant, forbids roles with no student access (403)', async () => {
-    expect((await request(app).get('/api/students')).status).toBe(401);
+  it("requires auth (401), allows accountant, forbids roles with no student access (403)", async () => {
+    expect((await request(app).get("/api/students")).status).toBe(401);
     // Accountant has read access to the student list (Fee Ledger lookups).
-    const acc = await token('accountant');
-    expect((await request(app).get('/api/students').set(auth(acc))).status).toBe(200);
+    const acc = await token("accountant");
+    expect(
+      (await request(app).get("/api/students").set(auth(acc))).status,
+    ).toBe(200);
     // Teacher does not — they only reach a single student's own sub-resources.
-    const teacher = await token('teacher');
-    expect((await request(app).get('/api/students').set(auth(teacher))).status).toBe(403);
+    const teacher = await token("teacher");
+    expect(
+      (await request(app).get("/api/students").set(auth(teacher))).status,
+    ).toBe(403);
   });
 
-  it('teacher can read a real student\'s attendance calendar/summary, but not the full student list', async () => {
-    const list = await request(app).get('/api/students').set(auth(admin));
+  it("teacher can read a real student's attendance calendar/summary, but not the full student list", async () => {
+    const list = await request(app).get("/api/students").set(auth(admin));
     const id = list.body.rows[0].id;
-    const teacher = await token('teacher');
+    const teacher = await token("teacher");
 
-    expect((await request(app).get('/api/students').set(auth(teacher))).status).toBe(403);
-    expect((await request(app).get(`/api/students/${id}/attendance?year=2025&month=4`).set(auth(teacher))).status).toBe(200);
-    expect((await request(app).get(`/api/students/${id}/attendance/annual-summary`).set(auth(teacher))).status).toBe(200);
+    expect(
+      (await request(app).get("/api/students").set(auth(teacher))).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(app)
+          .get(`/api/students/${id}/attendance?year=2025&month=4`)
+          .set(auth(teacher))
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request(app)
+          .get(`/api/students/${id}/attendance/annual-summary`)
+          .set(auth(teacher))
+      ).status,
+    ).toBe(200);
   });
 
-  it('GET /students returns a paginated StudentsListResponse with StudentRow shape', async () => {
-    const res = await request(app).get('/api/students').set(auth(admin));
+  it("GET /students returns a paginated StudentsListResponse with StudentRow shape", async () => {
+    const res = await request(app).get("/api/students").set(auth(admin));
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ total: 15, page: 1, pageSize: 10 });
     expect(res.body.rows.length).toBe(10);
@@ -69,33 +91,52 @@ describe('Students API', () => {
     });
   });
 
-  it('paginates and filters by class, section and search', async () => {
-    const page2 = await request(app).get('/api/students?page=2&pageSize=5').set(auth(admin));
+  it("paginates and filters by class, section and search", async () => {
+    const page2 = await request(app)
+      .get("/api/students?page=2&pageSize=5")
+      .set(auth(admin));
     expect(page2.body.rows.length).toBe(5);
     expect(page2.body.page).toBe(2);
 
-    const nursery = await request(app).get('/api/students?classKey=Nursery').set(auth(admin));
+    const nursery = await request(app)
+      .get("/api/students?classKey=Nursery")
+      .set(auth(admin));
     expect(nursery.body.total).toBe(3);
-    expect(nursery.body.rows.every((r: { className: string }) => r.className === 'Nursery')).toBe(true);
+    expect(
+      nursery.body.rows.every(
+        (r: { className: string }) => r.className === "Nursery",
+      ),
+    ).toBe(true);
 
     const oneAdm = nursery.body.rows[0].admissionNumber;
-    const search = await request(app).get(`/api/students?search=${oneAdm}`).set(auth(admin));
+    const search = await request(app)
+      .get(`/api/students?search=${oneAdm}`)
+      .set(auth(admin));
     expect(search.body.total).toBe(1);
   });
 
-  it('GET /students/class-summary groups by class', async () => {
-    const res = await request(app).get('/api/students/class-summary').set(auth(admin));
+  it("GET /students/class-summary groups by class", async () => {
+    const res = await request(app)
+      .get("/api/students/class-summary")
+      .set(auth(admin));
     expect(res.status).toBe(200);
     // classKey is `${className}-${section}` — seed round-robins 3 students
     // across 2 sections per class (5 classes), so 10 distinct groups.
     expect(res.body.length).toBe(10);
-    expect(res.body[0]).toMatchObject({ classKey: expect.any(String), className: expect.any(String), studentCount: expect.any(Number) });
-    const total = res.body.reduce((s: number, c: { studentCount: number }) => s + c.studentCount, 0);
+    expect(res.body[0]).toMatchObject({
+      classKey: expect.any(String),
+      className: expect.any(String),
+      studentCount: expect.any(Number),
+    });
+    const total = res.body.reduce(
+      (s: number, c: { studentCount: number }) => s + c.studentCount,
+      0,
+    );
     expect(total).toBe(15);
   });
 
-  it('GET /students/:id returns a full StudentProfile', async () => {
-    const list = await request(app).get('/api/students').set(auth(admin));
+  it("GET /students/:id returns a full StudentProfile", async () => {
+    const list = await request(app).get("/api/students").set(auth(admin));
     const id = list.body.rows[0].id;
     const res = await request(app).get(`/api/students/${id}`).set(auth(admin));
     expect(res.status).toBe(200);
@@ -110,210 +151,381 @@ describe('Students API', () => {
     });
   });
 
-  it('404 for a missing student, 400 for an invalid id', async () => {
-    expect((await request(app).get('/api/students/000000000000000000000000').set(auth(admin))).status).toBe(404);
-    expect((await request(app).get('/api/students/nope').set(auth(admin))).status).toBe(400);
+  it("404 for a missing student, 400 for an invalid id", async () => {
+    expect(
+      (
+        await request(app)
+          .get("/api/students/000000000000000000000000")
+          .set(auth(admin))
+      ).status,
+    ).toBe(404);
+    expect(
+      (await request(app).get("/api/students/nope").set(auth(admin))).status,
+    ).toBe(400);
   });
 
-  it('POST /students/bulk/status changes profileStatus for the selected students', async () => {
-    const list = await request(app).get('/api/students').set(auth(admin));
+  it("POST /students/bulk/status changes profileStatus for the selected students", async () => {
+    const list = await request(app).get("/api/students").set(auth(admin));
     const ids = list.body.rows.slice(0, 2).map((r: { id: string }) => r.id);
     const res = await request(app)
-      .post('/api/students/bulk/status')
+      .post("/api/students/bulk/status")
       .set(auth(admin))
-      .send({ studentIds: ids, status: 'suspended', reason: 'test' });
+      .send({ studentIds: ids, status: "suspended", reason: "test" });
     expect(res.status).toBe(200);
     expect(res.body.affected).toBe(2);
-    const suspended = await request(app).get('/api/students?profileStatus=suspended').set(auth(admin));
+    const suspended = await request(app)
+      .get("/api/students?profileStatus=suspended")
+      .set(auth(admin));
     expect(suspended.body.total).toBe(2);
   });
 
-  it('POST /students/bulk/transfer moves students to a new class/section', async () => {
-    const list = await request(app).get('/api/students').set(auth(admin));
+  it("POST /students/bulk/transfer moves students to a new class/section", async () => {
+    const list = await request(app).get("/api/students").set(auth(admin));
     const id = list.body.rows[0].id;
     const res = await request(app)
-      .post('/api/students/bulk/transfer')
+      .post("/api/students/bulk/transfer")
       .set(auth(admin))
-      .send({ studentIds: [id], toClassName: 'Class 10', toSection: 'C' });
+      .send({ studentIds: [id], toClassName: "Class 10", toSection: "C" });
     expect(res.body.affected).toBe(1);
-    const profile = await request(app).get(`/api/students/${id}`).set(auth(admin));
-    expect(profile.body.className).toBe('Class 10');
-    expect(profile.body.section).toBe('C');
+    const profile = await request(app)
+      .get(`/api/students/${id}`)
+      .set(auth(admin));
+    expect(profile.body.className).toBe("Class 10");
+    expect(profile.body.section).toBe("C");
   });
 
-  it('POST /students/bulk/promote promotes a whole class and records real academic history', async () => {
-    const before = await request(app).get('/api/students?classKey=Nursery').set(auth(admin));
+  it("POST /students/bulk/promote promotes a whole class and records real academic history", async () => {
+    const before = await request(app)
+      .get("/api/students?classKey=Nursery")
+      .set(auth(admin));
     const studentId = before.body.rows[0].id;
-    const preProfile = await request(app).get(`/api/students/${studentId}`).set(auth(admin));
+    const preProfile = await request(app)
+      .get(`/api/students/${studentId}`)
+      .set(auth(admin));
     const preClass = preProfile.body.className;
     const preSection = preProfile.body.section;
     const preRoll = preProfile.body.rollNumber;
 
     const res = await request(app)
-      .post('/api/students/bulk/promote')
+      .post("/api/students/bulk/promote")
       .set(auth(admin))
-      .send({ fromClassKey: 'Nursery', toClassName: 'LKG', toSection: 'A', toSession: '2026-27' });
+      .send({
+        fromClassKey: "Nursery",
+        toClassName: "LKG",
+        toSection: "A",
+        toSession: "2026-27",
+      });
     expect(res.body.affected).toBe(3);
 
     // Checked before the (pre-existing, documented, unrelated) class-summary
     // count assertion below, so this passes/fails independently of that bug.
-    const history = await request(app).get(`/api/students/${studentId}/academic-history`).set(auth(admin));
+    const history = await request(app)
+      .get(`/api/students/${studentId}/academic-history`)
+      .set(auth(admin));
     expect(history.status).toBe(200);
     expect(history.body).toMatchObject([
-      { className: preClass, section: preSection, rollNumber: preRoll, result: 'promoted' },
+      {
+        className: preClass,
+        section: preSection,
+        rollNumber: preRoll,
+        result: "promoted",
+      },
     ]);
 
-    const summary = await request(app).get('/api/students/class-summary').set(auth(admin));
+    const summary = await request(app)
+      .get("/api/students/class-summary")
+      .set(auth(admin));
     // classKey groups by section, so sum across every LKG-* group (original 3 + promoted 3).
     const lkgTotal = summary.body
-      .filter((c: { className: string }) => c.className === 'LKG')
-      .reduce((s: number, c: { studentCount: number }) => s + c.studentCount, 0);
+      .filter((c: { className: string }) => c.className === "LKG")
+      .reduce(
+        (s: number, c: { studentCount: number }) => s + c.studentCount,
+        0,
+      );
     expect(lkgTotal).toBe(6);
   });
 
-  it('rejects invalid bulk payloads (400)', async () => {
-    expect((await request(app).post('/api/students/bulk/status').set(auth(admin)).send({ status: 'active' })).status).toBe(400);
+  it("rejects invalid bulk payloads (400)", async () => {
+    expect(
+      (
+        await request(app)
+          .post("/api/students/bulk/status")
+          .set(auth(admin))
+          .send({ status: "active" })
+      ).status,
+    ).toBe(400);
   });
 
-  it('documents: list, upload, delete (embedded on the student)', async () => {
-    const list = await request(app).get('/api/students').set(auth(admin));
+  it("documents: list, upload, delete (embedded on the student)", async () => {
+    const list = await request(app).get("/api/students").set(auth(admin));
     const id = list.body.rows[0].id;
 
-    expect((await request(app).get(`/api/students/${id}/documents`).set(auth(admin))).body.length).toBe(0);
+    expect(
+      (await request(app).get(`/api/students/${id}/documents`).set(auth(admin)))
+        .body.length,
+    ).toBe(0);
 
     const add = await request(app)
       .post(`/api/students/${id}/documents`)
       .set(auth(admin))
-      .field('type', 'birth_certificate')
-      .field('customLabel', 'Birth cert')
-      .attach('document', Buffer.from('%PDF-1.4 test'), 'birth.pdf');
+      .field("type", "birth_certificate")
+      .field("customLabel", "Birth cert")
+      .attach("document", Buffer.from("%PDF-1.4 test"), "birth.pdf");
     expect(add.status).toBe(201);
-    expect(add.body).toMatchObject({ id: expect.any(String), type: 'birth_certificate', fileName: 'birth.pdf', verification: 'pending' });
+    expect(add.body).toMatchObject({
+      id: expect.any(String),
+      type: "birth_certificate",
+      fileName: "birth.pdf",
+      verification: "pending",
+    });
 
-    const after = await request(app).get(`/api/students/${id}/documents`).set(auth(admin));
+    const after = await request(app)
+      .get(`/api/students/${id}/documents`)
+      .set(auth(admin));
     expect(after.body.length).toBe(1);
 
-    expect((await request(app).delete(`/api/students/${id}/documents/${add.body.id}`).set(auth(admin))).status).toBe(204);
-    expect((await request(app).get(`/api/students/${id}/documents`).set(auth(admin))).body.length).toBe(0);
+    expect(
+      (
+        await request(app)
+          .delete(`/api/students/${id}/documents/${add.body.id}`)
+          .set(auth(admin))
+      ).status,
+    ).toBe(204);
+    expect(
+      (await request(app).get(`/api/students/${id}/documents`).set(auth(admin)))
+        .body.length,
+    ).toBe(0);
   });
 
-  it('POST /students validates admission number, pinCode, parent mobile, email, aadhaar formats', async () => {
+  it("POST /students validates admission number, pinCode, parent mobile, email, aadhaar formats", async () => {
     const base = {
-      admissionType: 'new',
-      admittedAt: '2025-08-01',
-      className: '5',
-      section: 'A',
-      name: 'Valid Student',
-      gender: 'male',
+      admissionType: "new",
+      admittedAt: "2025-08-01",
+      className: "5",
+      section: "A",
+      name: "Valid Student",
+      gender: "male",
+      house: "BLUE",
     };
     // Bad admission number format.
-    expect((await request(app).post('/api/students').set(auth(admin)).send({ ...base, admissionNumber: 'BAD-1' })).status).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post("/api/students")
+          .set(auth(admin))
+          .send({ ...base, admissionNumber: "BAD-1" })
+      ).status,
+    ).toBe(400);
 
-    const good = { ...base, admissionNumber: 'ADM-2026-999' };
+    const good = { ...base, admissionNumber: "ADM-2026-999" };
     // Bad pinCode.
     expect(
-      (await request(app).post('/api/students').set(auth(admin)).send({ ...good, currentAddress: { pinCode: '123' } })).status,
+      (
+        await request(app)
+          .post("/api/students")
+          .set(auth(admin))
+          .send({ ...good, currentAddress: { pinCode: "123" } })
+      ).status,
     ).toBe(400);
     // Bad parent mobile.
     expect(
-      (await request(app).post('/api/students').set(auth(admin)).send({ ...good, parents: { fatherMobile: '123' } })).status,
+      (
+        await request(app)
+          .post("/api/students")
+          .set(auth(admin))
+          .send({ ...good, parents: { fatherMobile: "123" } })
+      ).status,
     ).toBe(400);
     // Bad parent email.
     expect(
-      (await request(app).post('/api/students').set(auth(admin)).send({ ...good, parents: { fatherEmail: 'not-an-email' } })).status,
+      (
+        await request(app)
+          .post("/api/students")
+          .set(auth(admin))
+          .send({ ...good, parents: { fatherEmail: "not-an-email" } })
+      ).status,
     ).toBe(400);
     // Bad aadhaar.
-    expect((await request(app).post('/api/students').set(auth(admin)).send({ ...good, aadhaar: '123' })).status).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post("/api/students")
+          .set(auth(admin))
+          .send({ ...good, aadhaar: "123" })
+      ).status,
+    ).toBe(400);
     // Bad document type enum.
     expect(
       (
         await request(app)
-          .post('/api/students')
+          .post("/api/students")
           .set(auth(admin))
-          .send({ ...good, documents: [{ type: 'not_a_type', fileName: 'x.pdf', sizeBytes: 100 }] })
+          .send({
+            ...good,
+            documents: [
+              { type: "not_a_type", fileName: "x.pdf", sizeBytes: 100 },
+            ],
+          })
       ).status,
     ).toBe(400);
 
     // Fully valid payload succeeds.
     const ok = await request(app)
-      .post('/api/students')
+      .post("/api/students")
       .set(auth(admin))
       .send({
         ...good,
-        bloodGroup: 'O+',
-        religion: 'hindu',
-        category: 'general',
-        aadhaar: '123456789012',
-        currentAddress: { line1: '1 St', city: 'X', state: 'Y', pinCode: '110001' },
-        parents: { fatherName: 'Father Name', fatherMobile: '9990001111', fatherEmail: 'father@example.com' },
-        documents: [{ type: 'birth_certificate', fileName: 'birth.pdf', sizeBytes: 1000 }],
-        photoUrl: 'data:image/png;base64,xyz',
+        bloodGroup: "O+",
+        religion: "hindu",
+        category: "general",
+        aadhaar: "123456789012",
+        currentAddress: {
+          line1: "1 St",
+          city: "X",
+          state: "Y",
+          pinCode: "110001",
+        },
+        parents: {
+          fatherName: "Father Name",
+          fatherMobile: "9990001111",
+          fatherEmail: "father@example.com",
+        },
+        documents: [
+          { type: "birth_certificate", fileName: "birth.pdf", sizeBytes: 1000 },
+        ],
+        photoUrl: "data:image/png;base64,xyz",
       });
     expect(ok.status).toBe(201);
 
-    const profile = await request(app).get(`/api/students/${ok.body.id}`).set(auth(admin));
-    expect(profile.body.photoUrl).toBe('data:image/png;base64,xyz');
+    const profile = await request(app)
+      .get(`/api/students/${ok.body.id}`)
+      .set(auth(admin));
+    expect(profile.body.photoUrl).toBe("data:image/png;base64,xyz");
 
     // Top-level `mobile` (shown in the students list / custom report) must
     // be derived from parents.fatherMobile on create — it has no dedicated
     // form field of its own, so if this isn't derived it stays '' forever.
-    const list = await request(app).get('/api/students').set(auth(admin)).query({ search: 'Valid Student' });
+    const list = await request(app)
+      .get("/api/students")
+      .set(auth(admin))
+      .query({ search: "Valid Student" });
     const row = list.body.rows.find((r: { id: string }) => r.id === ok.body.id);
-    expect(row.mobile).toBe('9990001111');
+    expect(row.mobile).toBe("9990001111");
   });
 
-  it('POST /students falls back to motherMobile, then guardianMobile, when fatherMobile is absent', async () => {
-    const base = {
-      admissionType: 'new',
-      admittedAt: '2025-08-01',
-      className: '5',
-      section: 'B',
-      name: 'Fallback Student',
-      gender: 'female',
-      admissionNumber: 'ADM-2026-998',
-      parents: { motherMobile: '9990002222' },
-    };
-    const created = await request(app).post('/api/students').set(auth(admin)).send(base);
-    expect(created.status).toBe(201);
-    const list = await request(app).get('/api/students').set(auth(admin)).query({ search: 'Fallback Student' });
-    const row = list.body.rows.find((r: { id: string }) => r.id === created.body.id);
-    expect(row.mobile).toBe('9990002222');
-  });
+  it("a real unique-index collision on admissionNumber (two reception counters racing the same auto-generated number) is retried transparently, not surfaced as a raw 409 Duplicate value", async () => {
+    // generateAdmissionNumber is a plain count+1, not a reserved sequence, so
+    // two concurrent admissions can both pass the pre-insert exists-check for
+    // the same number before either commits — the real collision then
+    // happens at the database's unique index, past that check. Simulate
+    // exactly that: the first create() attempt throws the real Mongo E11000
+    // shape despite the exists-check having just said "not taken" (a
+    // genuine TOCTOU race, not a payload bug), and assert students.service.ts
+    // bumps the number and retries instead of letting the raw error escape.
+    const realCreate = StudentModel.create.bind(StudentModel);
+    const createSpy = vi
+      .spyOn(StudentModel, "create")
+      .mockImplementationOnce(async () => {
+        const err = Object.assign(new Error("E11000 duplicate key error"), {
+          code: 11000,
+          keyPattern: { schoolId: 1, admissionNumber: 1 },
+        });
+        throw err;
+      })
+      .mockImplementationOnce(realCreate);
 
-  it('POST /students auto-creates a parent login and returns a one-time password', async () => {
-    const created = await request(app)
-      .post('/api/students')
+    const res = await request(app)
+      .post("/api/students")
       .set(auth(admin))
       .send({
-        admissionType: 'new',
-        admittedAt: '2025-08-01',
-        className: '5',
-        section: 'C',
-        name: 'Parent Login Student',
-        gender: 'male',
-        admissionNumber: 'ADM-2026-997',
-        parents: { fatherMobile: '9990003333' },
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "5",
+        section: "A",
+        gender: "male",
+        house: "BLUE",
+        name: "Race Student",
+        admissionNumber: "ADM-2026-700",
       });
-    expect(created.status).toBe(201);
-    expect(created.body.parentCredentials.tempPassword).toEqual(expect.any(String));
 
-    const creds = await request(app).get(`/api/students/${created.body.id}/parent-credentials`).set(auth(admin));
-    expect(creds.status).toBe(200);
-    expect(creds.body).toMatchObject({ hasLogin: true, mobile: '9990003333', active: true });
-
-    const login = await request(app)
-      .post('/api/auth/login')
-      .send({
-        username: '9990003333',
-        password: created.body.parentCredentials.tempPassword,
-        captcha: 'x',
-        schoolCode: 'MSC',
-      });
-    expect(login.status).toBe(200);
-    expect(login.body.user).toMatchObject({ role: 'parent', mustChangePassword: true });
+    expect(res.status).toBe(201);
+    // Bumped past the number that "collided" — not the literal one submitted.
+    expect(res.body.admissionNumber).toBe("ADM-2026-701");
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    createSpy.mockRestore();
   });
 
-  it('creates two unrelated parent accounts (different families, same school) without a duplicate-key conflict', async () => {
+  it("POST /students falls back to motherMobile, then guardianMobile, when fatherMobile is absent", async () => {
+    const base = {
+      admissionType: "new",
+      admittedAt: "2025-08-01",
+      className: "5",
+      section: "B",
+      name: "Fallback Student",
+      gender: "female",
+      house: "GREEN",
+      admissionNumber: "ADM-2026-998",
+      parents: { motherMobile: "9990002222" },
+    };
+    const created = await request(app)
+      .post("/api/students")
+      .set(auth(admin))
+      .send(base);
+    expect(created.status).toBe(201);
+    const list = await request(app)
+      .get("/api/students")
+      .set(auth(admin))
+      .query({ search: "Fallback Student" });
+    const row = list.body.rows.find(
+      (r: { id: string }) => r.id === created.body.id,
+    );
+    expect(row.mobile).toBe("9990002222");
+  });
+
+  it("POST /students auto-creates a parent login and returns a one-time password", async () => {
+    const created = await request(app)
+      .post("/api/students")
+      .set(auth(admin))
+      .send({
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "5",
+        section: "C",
+        name: "Parent Login Student",
+        gender: "male",
+        house: "BLUE",
+        admissionNumber: "ADM-2026-997",
+        parents: { fatherMobile: "9990003333" },
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.parentCredentials.tempPassword).toEqual(
+      expect.any(String),
+    );
+
+    const creds = await request(app)
+      .get(`/api/students/${created.body.id}/parent-credentials`)
+      .set(auth(admin));
+    expect(creds.status).toBe(200);
+    expect(creds.body).toMatchObject({
+      hasLogin: true,
+      mobile: "9990003333",
+      active: true,
+    });
+
+    const login = await request(app).post("/api/auth/login").send({
+      username: "9990003333",
+      password: created.body.parentCredentials.tempPassword,
+      captcha: "x",
+      schoolCode: "MSC",
+    });
+    expect(login.status).toBe(200);
+    expect(login.body.user).toMatchObject({
+      role: "parent",
+      mustChangePassword: true,
+    });
+  });
+
+  it("creates two unrelated parent accounts (different families, same school) without a duplicate-key conflict", async () => {
     // Parent accounts have no email — the User model's email uniqueness
     // index must be scoped so that two different email-less accounts in
     // the same school don't collide with each other (regression: a plain
@@ -321,39 +533,45 @@ describe('Students API', () => {
     // field is missing, and schoolId is always set, so a second
     // email-less parent used to 409 as a duplicate of the first).
     const first = await request(app)
-      .post('/api/students')
+      .post("/api/students")
       .set(auth(admin))
       .send({
-        admissionType: 'new',
-        admittedAt: '2025-08-01',
-        className: '5',
-        section: 'D',
-        name: 'Unrelated Family One',
-        gender: 'male',
-        admissionNumber: 'ADM-2026-992',
-        parents: { fatherMobile: '9990007777' },
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "5",
+        section: "D",
+        name: "Unrelated Family One",
+        gender: "male",
+        house: "BLUE",
+        admissionNumber: "ADM-2026-992",
+        parents: { fatherMobile: "9990007777" },
       });
     expect(first.status).toBe(201);
-    expect(first.body.parentCredentials.tempPassword).toEqual(expect.any(String));
+    expect(first.body.parentCredentials.tempPassword).toEqual(
+      expect.any(String),
+    );
 
     const second = await request(app)
-      .post('/api/students')
+      .post("/api/students")
       .set(auth(admin))
       .send({
-        admissionType: 'new',
-        admittedAt: '2025-08-01',
-        className: '6',
-        section: 'D',
-        name: 'Unrelated Family Two',
-        gender: 'female',
-        admissionNumber: 'ADM-2026-991',
-        parents: { fatherMobile: '9990008888' },
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "6",
+        section: "D",
+        name: "Unrelated Family Two",
+        gender: "female",
+        house: "GREEN",
+        admissionNumber: "ADM-2026-991",
+        parents: { fatherMobile: "9990008888" },
       });
     expect(second.status).toBe(201);
-    expect(second.body.parentCredentials.tempPassword).toEqual(expect.any(String));
+    expect(second.body.parentCredentials.tempPassword).toEqual(
+      expect.any(String),
+    );
   });
 
-  it('resets credentials for a legacy student with a real parents.fatherMobile but a blank top-level mobile mirror', async () => {
+  it("resets credentials for a legacy student with a real parents.fatherMobile but a blank top-level mobile mirror", async () => {
     // Students admitted before this feature existed never went through
     // create()'s auto-link — no parentUserId, and the denormalised
     // top-level `mobile` field was never populated either — but the real
@@ -362,16 +580,17 @@ describe('Students API', () => {
     const anySeededStudent = await StudentModel.findOne({}).lean();
     const doc = await StudentModel.create({
       schoolId: anySeededStudent!.schoolId,
-      admissionNumber: 'ADM-2026-990',
-      name: 'Legacy Mobile Student',
-      className: '6',
-      section: 'E',
-      classKey: '6-E',
-      admissionType: 'new',
-      admittedAt: new Date('2025-08-01'),
-      gender: 'male',
-      mobile: '', // never mirrored — simulates a pre-feature student
-      parents: { fatherMobile: '9990009999' },
+      admissionNumber: "ADM-2026-990",
+      name: "Legacy Mobile Student",
+      className: "6",
+      section: "E",
+      classKey: "6-E",
+      admissionType: "new",
+      admittedAt: new Date("2025-08-01"),
+      gender: "male",
+      house: "BLUE",
+      mobile: "", // never mirrored — simulates a pre-feature student
+      parents: { fatherMobile: "9990009999" },
       // parentUserId intentionally omitted — simulates a student that predates auto-linking.
     });
 
@@ -381,60 +600,71 @@ describe('Students API', () => {
     expect(reset.status).toBe(200);
     expect(reset.body.tempPassword).toEqual(expect.any(String));
 
-    const creds = await request(app).get(`/api/students/${doc._id}/parent-credentials`).set(auth(admin));
-    expect(creds.body).toMatchObject({ hasLogin: true, mobile: '9990009999' });
+    const creds = await request(app)
+      .get(`/api/students/${doc._id}/parent-credentials`)
+      .set(auth(admin));
+    expect(creds.body).toMatchObject({ hasLogin: true, mobile: "9990009999" });
   });
 
-  it('POST /students reuses one parent account across siblings sharing a mobile number', async () => {
+  it("POST /students reuses one parent account across siblings sharing a mobile number", async () => {
     const first = await request(app)
-      .post('/api/students')
+      .post("/api/students")
       .set(auth(admin))
       .send({
-        admissionType: 'new',
-        admittedAt: '2025-08-01',
-        className: '5',
-        section: 'D',
-        name: 'Sibling One',
-        gender: 'male',
-        admissionNumber: 'ADM-2026-996',
-        parents: { fatherMobile: '9990004444' },
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "5",
+        section: "D",
+        name: "Sibling One",
+        gender: "male",
+        house: "BLUE",
+        admissionNumber: "ADM-2026-996",
+        parents: { fatherMobile: "9990004444" },
       });
-    expect(first.body.parentCredentials.tempPassword).toEqual(expect.any(String));
+    expect(first.body.parentCredentials.tempPassword).toEqual(
+      expect.any(String),
+    );
 
     const second = await request(app)
-      .post('/api/students')
+      .post("/api/students")
       .set(auth(admin))
       .send({
-        admissionType: 'new',
-        admittedAt: '2025-08-01',
-        className: '6',
-        section: 'A',
-        name: 'Sibling Two',
-        gender: 'female',
-        admissionNumber: 'ADM-2026-995',
-        parents: { fatherMobile: '9990004444' },
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "6",
+        section: "A",
+        name: "Sibling Two",
+        gender: "female",
+        house: "GREEN",
+        admissionNumber: "ADM-2026-995",
+        parents: { fatherMobile: "9990004444" },
       });
     expect(second.status).toBe(201);
     expect(second.body.parentCredentials).toBeUndefined();
 
-    const credsOne = await request(app).get(`/api/students/${first.body.id}/parent-credentials`).set(auth(admin));
-    const credsTwo = await request(app).get(`/api/students/${second.body.id}/parent-credentials`).set(auth(admin));
+    const credsOne = await request(app)
+      .get(`/api/students/${first.body.id}/parent-credentials`)
+      .set(auth(admin));
+    const credsTwo = await request(app)
+      .get(`/api/students/${second.body.id}/parent-credentials`)
+      .set(auth(admin));
     expect(credsOne.body.userId).toBe(credsTwo.body.userId);
   });
 
-  it('POST /students/:id/parent-credentials/reset issues a new password and forces a change', async () => {
+  it("POST /students/:id/parent-credentials/reset issues a new password and forces a change", async () => {
     const created = await request(app)
-      .post('/api/students')
+      .post("/api/students")
       .set(auth(admin))
       .send({
-        admissionType: 'new',
-        admittedAt: '2025-08-01',
-        className: '6',
-        section: 'B',
-        name: 'Reset Student',
-        gender: 'male',
-        admissionNumber: 'ADM-2026-994',
-        parents: { fatherMobile: '9990005555' },
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "6",
+        section: "B",
+        name: "Reset Student",
+        gender: "male",
+        house: "BLUE",
+        admissionNumber: "ADM-2026-994",
+        parents: { fatherMobile: "9990005555" },
       });
     const firstPassword = created.body.parentCredentials.tempPassword;
 
@@ -446,36 +676,65 @@ describe('Students API', () => {
     expect(reset.body.tempPassword).not.toBe(firstPassword);
 
     const oldLogin = await request(app)
-      .post('/api/auth/login')
-      .send({ username: '9990005555', password: firstPassword, captcha: 'x', schoolCode: 'MSC' });
+      .post("/api/auth/login")
+      .send({
+        username: "9990005555",
+        password: firstPassword,
+        captcha: "x",
+        schoolCode: "MSC",
+      });
     expect(oldLogin.status).toBe(401);
 
     const newLogin = await request(app)
-      .post('/api/auth/login')
-      .send({ username: '9990005555', password: reset.body.tempPassword, captcha: 'x', schoolCode: 'MSC' });
+      .post("/api/auth/login")
+      .send({
+        username: "9990005555",
+        password: reset.body.tempPassword,
+        captcha: "x",
+        schoolCode: "MSC",
+      });
     expect(newLogin.status).toBe(200);
   });
 
-  it('receptionist can view and reset parent credentials; accountant cannot', async () => {
+  it("receptionist can view and reset parent credentials; accountant cannot", async () => {
     const created = await request(app)
-      .post('/api/students')
+      .post("/api/students")
       .set(auth(admin))
       .send({
-        admissionType: 'new',
-        admittedAt: '2025-08-01',
-        className: '6',
-        section: 'C',
-        name: 'Gate Student',
-        gender: 'female',
-        admissionNumber: 'ADM-2026-993',
-        parents: { fatherMobile: '9990006666' },
+        admissionType: "new",
+        admittedAt: "2025-08-01",
+        className: "6",
+        section: "C",
+        name: "Gate Student",
+        gender: "female",
+        house: "GREEN",
+        admissionNumber: "ADM-2026-993",
+        parents: { fatherMobile: "9990006666" },
       });
 
-    const reception = await token('receptionist');
-    expect((await request(app).get(`/api/students/${created.body.id}/parent-credentials`).set(auth(reception))).status).toBe(200);
+    const reception = await token("receptionist");
+    expect(
+      (
+        await request(app)
+          .get(`/api/students/${created.body.id}/parent-credentials`)
+          .set(auth(reception))
+      ).status,
+    ).toBe(200);
 
-    const accountant = await token('accountant');
-    expect((await request(app).get(`/api/students/${created.body.id}/parent-credentials`).set(auth(accountant))).status).toBe(403);
-    expect((await request(app).post(`/api/students/${created.body.id}/parent-credentials/reset`).set(auth(accountant))).status).toBe(403);
+    const accountant = await token("accountant");
+    expect(
+      (
+        await request(app)
+          .get(`/api/students/${created.body.id}/parent-credentials`)
+          .set(auth(accountant))
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(app)
+          .post(`/api/students/${created.body.id}/parent-credentials/reset`)
+          .set(auth(accountant))
+      ).status,
+    ).toBe(403);
   });
 });

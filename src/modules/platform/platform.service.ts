@@ -101,7 +101,31 @@ export const platformService = {
       { $set: { [`moduleOverrides.${key}`]: enabled } },
       { upsert: true },
     );
-    return { key, enabled };
+
+    // The confirm dialog on this screen tells the admin "Disabling this
+    // module globally affects ALL N schools currently using it" — previously
+    // this only flipped the platform-level flag (which nothing else ever
+    // read) while every school's own moduleFlags stayed untouched, so the
+    // warning was false and "enabled in N schools" never moved. Make the
+    // disable path real: force the flag off for every school that currently
+    // has it on (or hasn't overridden it, which defaults to on). Re-enabling
+    // globally only lifts the platform-level block — it does not silently
+    // re-enable the module for schools that had separately turned it off.
+    let affectedSchools = 0;
+    if (!enabled) {
+      const result = await SchoolModel.updateMany(
+        {
+          $or: [
+            { [`moduleFlags.${key}`]: { $exists: false } },
+            { [`moduleFlags.${key}`]: true },
+          ],
+        },
+        { $set: { [`moduleFlags.${key}`]: false } },
+      );
+      affectedSchools = result.modifiedCount;
+    }
+
+    return { key, enabled, affectedSchools };
   },
 
   async getAppsOverview() {

@@ -4,7 +4,7 @@ import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { parentController } from './parent.controller';
-import { childQuery, complaintSchema, homeworkQuery, idParam } from './parent.validation';
+import { childQuery, complaintSchema, examIdParam, homeworkQuery, idParam } from './parent.validation';
 
 /** Mounted at /api/parent. Parent portal — each call is scoped to the parent's own children. */
 export const parentRoutes = Router();
@@ -16,6 +16,8 @@ parentRoutes.get('/fee-monthly', validate({ query: childQuery }), asyncHandler(p
 parentRoutes.get('/receipts', validate({ query: childQuery }), asyncHandler(parentController.listReceipts));
 parentRoutes.get('/receipts/:id', validate({ params: idParam }), asyncHandler(parentController.getReceipt));
 parentRoutes.get('/attendance', validate({ query: childQuery }), asyncHandler(parentController.getAttendance));
+parentRoutes.get('/exams', validate({ query: childQuery }), asyncHandler(parentController.getExams));
+parentRoutes.get('/exams/:examId/report-card', validate({ params: examIdParam, query: childQuery }), asyncHandler(parentController.getReportCard));
 parentRoutes.get('/circulars', asyncHandler(parentController.getCirculars));
 parentRoutes.get('/meet-links', validate({ query: childQuery }), asyncHandler(parentController.getMeetLinks));
 parentRoutes.get('/homework', validate({ query: homeworkQuery }), asyncHandler(parentController.getHomework));

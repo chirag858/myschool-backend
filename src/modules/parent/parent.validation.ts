@@ -10,6 +10,9 @@ export const homeworkQuery = z.object({
 /** Path `:id` for a single receipt — a 24-char Mongo ObjectId. */
 export const idParam = z.object({ id: z.string().regex(/^[0-9a-fA-F]{24}$/) });
 
+/** Path `:examId` for a child's report card. */
+export const examIdParam = z.object({ examId: z.string().regex(/^[0-9a-fA-F]{24}$/) });
+
 export const complaintSchema = z
   .object({
     childId: z.string().min(1),
