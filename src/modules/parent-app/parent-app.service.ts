@@ -291,16 +291,22 @@ export const parentAppService = {
   },
   async feeReceipts(schoolId: string, userId: string, childId: string) {
     await ownChild(schoolId, userId, childId);
+    // Only real, positive-amount active payments — a 'reversed' original stays
+    // 'active' for sum purposes (see fee.service.reverseReceipt) but must not
+    // show to the parent as a valid receipt, and its negative credit-note row
+    // (also 'active') is an internal ledger adjustment, not a payment to list.
     const receipts = await ReceiptModel.find({ schoolId, studentId: childId }).sort({ paymentDate: -1 }).lean();
-    return receipts.map((r) => ({
-      id: String(r._id),
-      receiptNo: (r.receiptNumber as string) ?? '',
-      date: (r.paymentDate as string) ?? '',
-      amount: Number(r.amount ?? 0),
-      paymentMethod: (r.paymentMode as string) ?? 'cash',
-      status: r.status === 'cancelled' ? 'cancelled' : 'valid',
-      items: ((r.feeHeads as Array<{ name?: string; amount?: number }>) ?? []).map((h) => ({ head: h.name ?? '', period: 'Session', amount: Number(h.amount ?? 0), concession: 0, fine: 0 })),
-    }));
+    return receipts
+      .filter((r) => r.status === 'cancelled' || (r.status === 'active' && !r.reversedAt && Number(r.amount ?? 0) > 0))
+      .map((r) => ({
+        id: String(r._id),
+        receiptNo: (r.receiptNumber as string) ?? '',
+        date: (r.paymentDate as string) ?? '',
+        amount: Number(r.amount ?? 0),
+        paymentMethod: (r.paymentMode as string) ?? 'cash',
+        status: r.status === 'cancelled' ? 'cancelled' : 'valid',
+        items: ((r.feeHeads as Array<{ name?: string; amount?: number }>) ?? []).map((h) => ({ head: h.name ?? '', period: 'Session', amount: Number(h.amount ?? 0), concession: 0, fine: 0 })),
+      }));
   },
   async feeLedger(schoolId: string, userId: string, childId: string) {
     await ownChild(schoolId, userId, childId);
@@ -636,7 +642,9 @@ export const parentAppService = {
     await ownChild(schoolId, userId, childId);
     // ponytail: STUB — real verify checks the gateway signature and records a receipt.
     void orderId;
-    const receipts = await this.feeReceipts(schoolId, userId, childId);
-    return { success: false, receipt: receipts[0] ?? null };
+    await ownChild(schoolId, userId, childId);
+    // Never attach an unrelated existing receipt to a failed verify — a client
+    // that only checks `receipt != null` would otherwise show a false "paid".
+    return { success: false, receipt: null };
   },
 };

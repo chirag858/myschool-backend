@@ -145,7 +145,10 @@ export const utilizeService = {
   async getDuplicates(schoolId: string | undefined) {
     const { rows } = await feeService.listReceipts(schoolId, { page: '1', pageSize: '100000', status: 'active' });
     const groups = new Map<string, typeof rows>();
-    for (const r of rows) {
+    // A reversed receipt keeps status:'active' (so it still cancels out in every
+    // sum via its offsetting credit-note row — see fee.service.ts reverseReceipt)
+    // but is settled, not a live duplicate candidate — drop anything with reversedAt set.
+    for (const r of rows.filter((row) => !(row as { reversedAt?: string }).reversedAt)) {
       const key = `${r.studentId}|${r.amount}|${String(r.paymentDate).slice(0, 10)}`;
       groups.set(key, [...(groups.get(key) ?? []), r]);
     }

@@ -3,7 +3,7 @@ import { getActiveSessionName } from '../academics/academics.service';
 import { ApiError } from '../../lib/api-error';
 import { sendBulk, type MessagingChannel } from '../../lib/messaging-provider';
 import { StudentModel } from '../students/student.model';
-import { annualByClass } from './fee.service';
+import { annualByClass, transportFeeByStudent } from './fee.service';
 import { ReceiptModel } from './fee.models';
 import {
   InstallmentPlanModel,
@@ -38,6 +38,7 @@ async function computeDefaulters(schoolId: string): Promise<Array<ReturnType<typ
   const startYear = parseInt(session.split('-')[0]!, 10) || new Date().getFullYear();
   const annual = await annualByClass(schoolId, session);
   const students = await StudentModel.find({ schoolId }).lean();
+  const transportByStudent = await transportFeeByStudent(schoolId, students.map((s) => String(s._id)));
   const receipts = await ReceiptModel.find({ schoolId, status: 'active' }).lean();
   const byStudent = new Map<string, typeof receipts>();
   for (const r of receipts) {
@@ -58,7 +59,7 @@ async function computeDefaulters(schoolId: string): Promise<Array<ReturnType<typ
 
   for (const s of students) {
     const cls = s.className ?? '';
-    const totalFee = annual[cls] ?? 0;
+    const totalFee = (annual[cls] ?? 0) + (transportByStudent.get(String(s._id)) ?? 0) * 12;
     if (totalFee <= 0) continue;
     const monthlyDue = totalFee / 12;
     const studentReceipts = byStudent.get(String(s._id)) ?? [];

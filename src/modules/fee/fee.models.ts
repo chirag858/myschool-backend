@@ -54,6 +54,11 @@ const receiptSchema = new Schema(
     className: { type: String, default: '' },
     section: { type: String, default: '' },
     monthsCovered: { type: [String], default: [] },
+    /** How this receipt's `amount` splits across `monthsCovered` — a receipt spanning several months
+     * must not count its full amount against each one (that would let a partial multi-month payment
+     * show every covered month as fully paid). Empty on legacy receipts; readers fall back to an
+     * even split across `monthsCovered` for those. */
+    monthAllocations: { type: [new Schema({ month: String, amount: Number }, { _id: false })], default: [] },
     feeHeads: { type: [new Schema({ name: String, amount: Number }, { _id: false })], default: [] },
     amount: { type: Number, default: 0 },
     paymentMode: { type: String, default: 'cash' },
@@ -65,6 +70,10 @@ const receiptSchema = new Schema(
     cancelledReason: String,
     cancelledBy: String,
     cancelledAt: String,
+    /** Set once this receipt has been reversed by a credit-note receipt — blocks a second cancel/duplicate/reverse even though `status` stays 'active' for sum purposes. */
+    reversedAt: String,
+    /** AppliedFine ids this receipt settled — restored to 'pending' on cancel/reverse. */
+    fineIds: { type: [Schema.Types.ObjectId], default: [] },
     remarks: String,
   },
   { timestamps: true },

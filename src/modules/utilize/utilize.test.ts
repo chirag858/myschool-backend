@@ -69,22 +69,20 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
   ): Promise<{ id: string; receiptNumber: string; amount: number }> {
     const context = await request(app).get(`/api/fee/pending/${studentId}`).set(auth(acc));
     const entry = context.body.months.find((m: { month: string }) => m.month === month);
-    const amount = entry.amount;
-    // context.previousDues (fetched before any month is picked) counts every
-    // overdue-and-unpaid month, including `month` itself if it qualifies —
-    // collect() excludes exactly the month(s) being paid from its own
-    // previousDues recompute, so subtract this month's own unpaid share
-    // before sending, or the strict server-side recompute in collect()
-    // rejects a mismatched netPayable (see fee.service.ts recompute).
+    // A collection only charges the ticked month(s) — other overdue months
+    // (context.previousDues) are informational only and excluded from the
+    // transaction total (see fee.service.ts collect()'s duesBeforeAdvance),
+    // or the strict server-side recompute rejects a mismatched netPayable.
     const ownUnpaid = Math.max(0, entry.amount - entry.paid);
-    const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+    // Concession is scaled by how many months this receipt settles — see
+    // fee.service.ts collect()'s scaledConcessionAmount.
+    const scaledConcession = context.body.concessionAmount ?? 0;
     const netPayable = Math.max(
       0,
       Math.round(
-        amount -
-          (context.body.concessionAmount ?? 0) -
+        ownUnpaid -
+          scaledConcession -
           (context.body.advanceBalance ?? 0) +
-          previousDues +
           (context.body.fineAmount ?? 0),
       ),
     );
@@ -204,7 +202,10 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('applied');
     const original = await request(app).get(`/api/fee/receipts/${receipt.id}`).set(auth(acc));
-    expect(original.body.status).toBe('reversed');
+    // Original stays status:'active' (so it still counts +X in every sum, cancelled
+    // out exactly by the reversal's -X) but reversedAt is now set.
+    expect(original.body.status).toBe('active');
+    expect(original.body.reversedAt).toBeTruthy();
     const list = await request(app).get('/api/fee/receipts').set(auth(acc)).query({ search: `${receipt.receiptNumber}-REV` });
     expect(list.body.rows.length).toBe(1);
     expect(list.body.rows[0].amount).toBe(-receipt.amount);
@@ -230,7 +231,7 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
     expect((await request(app).post('/api/utilize/corrections').set(auth(admin)).send(body)).status).toBe(201);
     const second = await request(app).post('/api/utilize/corrections').set(auth(admin)).send(body);
     expect(second.status).toBe(400);
-    expect(second.body.message).toMatch(/already been reversed|active receipt/i);
+    expect(second.body.message).toMatch(/already been reversed|unreversed receipt/i);
     // Only one reversal receipt exists — the failed retry created nothing.
     const list = await request(app).get('/api/fee/receipts').set(auth(acc)).query({ search: `${receipt.receiptNumber}-REV` });
     expect(list.body.rows.length).toBe(1);
@@ -249,9 +250,12 @@ describe('Utilize API (receipt corrections + fee readjustments)', () => {
       const context = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
       const entry = context.body.months.find((m: { month: string }) => m.month === month);
       const ownUnpaid = Math.max(0, entry.amount - entry.paid);
-      const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+      // A collection only charges the ticked month — other overdue months are
+      // informational only, excluded from the total (see fee.service.ts
+      // collect()'s duesBeforeAdvance).
+      const scaledConcession = context.body.concessionAmount ?? 0;
       const preWaive =
-        entry.amount - (context.body.concessionAmount ?? 0) - (context.body.advanceBalance ?? 0) + previousDues + (context.body.fineAmount ?? 0);
+        ownUnpaid - scaledConcession - (context.body.advanceBalance ?? 0) + (context.body.fineAmount ?? 0);
       const waiveOffAmount = Math.max(0, Math.round(preWaive) - CHECK_AMOUNT);
       const res = await request(app)
         .post('/api/fee/collect')

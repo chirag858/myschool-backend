@@ -46,29 +46,43 @@ describe('Fee Adjustments API (readjustments + waive-offs + reports)', () => {
     expect((await request(app).get('/api/fee/readjustments/history').set(auth(acc))).body.length).toBe(2);
   });
 
-  it('waive-off: seeded queue, request (self-apply + queued), approve, reject, history', async () => {
+  it('waive-off: seeded queue, request (accountant always queued, school_admin self-applies), approve, reject, own-request guard, history', async () => {
+    const admin = await token('schooladmin');
     const queue = await request(app).get('/api/fee/waive-off/queue').set(auth(acc));
     expect(queue.body.length).toBe(2);
     const pending = await request(app).get('/api/fee/waive-off/queue?status=pending_approval').set(auth(acc));
     expect(pending.body.length).toBe(1);
     const pendingId = pending.body[0].id;
 
-    const selfApplied = await request(app)
+    // The accountant can never self-approve, regardless of what `selfApprove` the client sends —
+    // the server recomputes it from the actor's own role.
+    const accountantRequest = await request(app)
       .post('/api/fee/waive-off/request')
       .set(auth(acc))
       .send({ studentId, studentName: 'X', className: 'Class 1', type: 'partial', amount: 500, reasonCode: 'other', reason: 'small', selfApprove: true });
+    expect(accountantRequest.body).toMatchObject({ status: 'pending_approval' });
+
+    // school_admin always self-applies, regardless of amount.
+    const selfApplied = await request(app)
+      .post('/api/fee/waive-off/request')
+      .set(auth(admin))
+      .send({ studentId, studentName: 'X', className: 'Class 1', type: 'partial', amount: 500, reasonCode: 'other', reason: 'small' });
     expect(selfApplied.body).toMatchObject({ status: 'applied', approvedBy: expect.any(String), appliedAt: expect.any(String) });
 
     const queued = await request(app)
       .post('/api/fee/waive-off/request')
       .set(auth(acc))
-      .send({ studentId, studentName: 'Y', className: 'Class 1', type: 'partial', amount: 900, reasonCode: 'other', reason: 'needs approval', selfApprove: false });
+      .send({ studentId, studentName: 'Y', className: 'Class 1', type: 'partial', amount: 900, reasonCode: 'other', reason: 'needs approval' });
     expect(queued.body).toMatchObject({ status: 'pending_approval' });
 
-    const approve = await request(app).patch(`/api/fee/waive-off/${queued.body.id}/approve`).set(auth(acc)).send({ remarks: 'ok' });
+    // The requester (accountant) cannot approve their own request.
+    const selfApprove = await request(app).patch(`/api/fee/waive-off/${queued.body.id}/approve`).set(auth(acc)).send({ remarks: 'ok' });
+    expect(selfApprove.status).toBe(403);
+
+    const approve = await request(app).patch(`/api/fee/waive-off/${queued.body.id}/approve`).set(auth(admin)).send({ remarks: 'ok' });
     expect(approve.body).toMatchObject({ status: 'applied', approvedBy: expect.any(String) });
 
-    const reject = await request(app).patch(`/api/fee/waive-off/${pendingId}/reject`).set(auth(acc)).send({ reason: 'insufficient grounds' });
+    const reject = await request(app).patch(`/api/fee/waive-off/${pendingId}/reject`).set(auth(admin)).send({ reason: 'insufficient grounds' });
     expect(reject.body).toMatchObject({ status: 'rejected', rejectedReason: 'insufficient grounds' });
 
     const hist = await request(app).get('/api/fee/waive-off/history').set(auth(acc));

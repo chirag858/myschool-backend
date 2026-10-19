@@ -1,3 +1,4 @@
+import { ApiError } from '../../lib/api-error';
 import { UserModel } from '../user/user.model';
 import { ReceiptModel, type ReceiptDoc } from './fee.models';
 import { DaySessionModel, ScrollExpenseModel, type ScrollExpenseDoc } from './fee-scroll.models';
@@ -225,13 +226,21 @@ export const feeScrollService = {
     collector: string,
     payload: { date: string; openingBalance: number; reason?: string },
   ) {
+    const existing = await DaySessionModel.findOne({ schoolId, collectorId, date: payload.date }).lean();
+    if (existing?.status === 'closed') {
+      throw ApiError.badRequest('This day is already closed — use reopen to edit it');
+    }
+    // Opening balance is never trusted from the client beyond the first open:
+    // once a session row exists, carry its own opening forward; otherwise
+    // chain from the collector's last closed day's retained cash.
+    const openingBalance = existing ? existing.openingBalance ?? 0 : await openingBalanceFor(schoolId, collectorId, payload.date);
     const doc = await DaySessionModel.findOneAndUpdate(
-      { schoolId, collectorId, date: payload.date },
+      { schoolId, collectorId, date: payload.date, status: { $ne: 'closed' } },
       {
         $set: {
           collector,
           status: 'open',
-          openingBalance: payload.openingBalance,
+          openingBalance,
           openingReason: payload.reason,
           openedBy: collector,
           openedAt: nowIso(),
@@ -239,6 +248,7 @@ export const feeScrollService = {
       },
       { upsert: true, new: true },
     ).lean();
+    if (!doc) throw ApiError.badRequest('This day is already closed — use reopen to edit it');
     return dto(doc as unknown as Doc);
   },
 
@@ -254,6 +264,30 @@ export const feeScrollService = {
   }) {
     const session = await DaySessionModel.findOne({ schoolId, collectorId, date: input.date });
     if (!session) return null;
+    if (session.status !== 'open') {
+      throw ApiError.badRequest('This day is already closed — use reopen first to edit it');
+    }
+
+    // An empty breakdown means "not itemised", not "zero cash" — only reconcile when one was actually given.
+    const denomTotal = Array.isArray(input.denominations) && input.denominations.length > 0
+      ? (input.denominations as Array<{ value: number; count: number }>).reduce(
+          (s, d) => s + (Number(d.value) || 0) * (Number(d.count) || 0),
+          0,
+        )
+      : null;
+    if (denomTotal !== null && denomTotal !== Number(input.countedCash)) {
+      throw ApiError.badRequest(`Counted cash (₹${input.countedCash}) does not match the denomination breakdown (₹${denomTotal})`);
+    }
+    const retained = Number(input.retained) || 0;
+    const depositAmt = Number(input.deposit?.amount) || 0;
+    const handoverAmt = Number(input.handover?.amount) || 0;
+    if (retained < 0 || depositAmt < 0 || handoverAmt < 0) {
+      throw ApiError.badRequest('Retained, deposit and handover amounts must not be negative');
+    }
+    if (retained + depositAmt + handoverAmt !== Number(input.countedCash)) {
+      throw ApiError.badRequest('Retained + deposit + handover must add up to the counted cash');
+    }
+
     const data = await assembleScroll(schoolId, { date: input.date, collectorId, collector });
     session.status = 'closed';
     session.closedBy = collector;
@@ -298,6 +332,10 @@ export const feeScrollService = {
     payload: { category: string; description: string; amount: number; mode: string },
   ) {
     const date = nowIso().slice(0, 10);
+    const session = await DaySessionModel.findOne({ schoolId, collectorId, date }).lean();
+    if (session?.status === 'closed') {
+      throw ApiError.badRequest('Today\'s cash day is already closed — reopen it before adding expenses');
+    }
     const count = await ScrollExpenseModel.countDocuments({ schoolId });
     const doc = await ScrollExpenseModel.create({
       schoolId,

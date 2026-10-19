@@ -4,7 +4,7 @@ import { CircularModel } from '../communication/communication.models';
 import { ExamModel } from '../exams/exams.models';
 import { examService } from '../exams/exams.service';
 import { ReceiptModel } from '../fee/fee.models';
-import { MONTH_ABBR_TO_FULL, annualByClass } from '../fee/fee.service';
+import { MONTH_ABBR_TO_FULL, annualByClass, transportFeeByStudent } from '../fee/fee.service';
 import { StudentModel } from '../students/student.model';
 import { ClassMeetLinkModel, HomeworkSubmissionModel, TeacherHomeworkModel } from '../teacher/teacher.models';
 import { UserModel } from '../user/user.model';
@@ -90,8 +90,8 @@ export const parentService = {
   async getFeeSummary(schoolId: string, userId: string, childId: string) {
     const child = await ownChild(schoolId, userId, childId);
     const session = (child.sessionLabel as string) ?? '';
-    const annual = await annualByClass(schoolId, session);
-    const total = annual[(child.className as string) ?? ''] ?? 0;
+    const [annual, transportByStudent] = await Promise.all([annualByClass(schoolId, session), transportFeeByStudent(schoolId, [childId])]);
+    const total = (annual[(child.className as string) ?? ''] ?? 0) + (transportByStudent.get(childId) ?? 0) * 12;
     const receipts = await ReceiptModel.find({ schoolId, studentId: childId, status: 'active' })
       .sort({ paymentDate: -1 })
       .lean();
@@ -111,8 +111,8 @@ export const parentService = {
     // Annual total ÷ 12 mirrors the admin Fee Collection screen's per-month
     // figure (fee.service.ts's `annualByClass`) — a monthly-only filter here
     // previously dropped quarterly/half-yearly/yearly fee heads entirely.
-    const annual = await annualByClass(schoolId, session);
-    const monthlyDue = Math.round((annual[(child.className as string) ?? ''] ?? 0) / 12);
+    const [annual, transportByStudent] = await Promise.all([annualByClass(schoolId, session), transportFeeByStudent(schoolId, [childId])]);
+    const monthlyDue = Math.round(((annual[(child.className as string) ?? ''] ?? 0) + (transportByStudent.get(childId) ?? 0) * 12) / 12);
     const receipts = await ReceiptModel.find({ schoolId, studentId: childId, status: 'active' }).lean();
 
     // Session months: Apr → Mar. Receipts store the FULL month name in
