@@ -94,9 +94,10 @@ describe('Fee Extras API (fines + concessions)', () => {
     expect(queue.body.length).toBe(1);
     expect(queue.body[0]).toMatchObject({ appliedConcessionId, status: 'pending', concessionName: 'Staff Child' });
 
+    // Reviewed by a different actor than the one who requested it — self-review is blocked.
     const review = await request(app)
       .patch(`/api/fee/concessions/approvals/${queue.body[0].id}`)
-      .set(auth(acc))
+      .set(auth(admin))
       .send({ action: 'approve', remarks: 'Verified staff parent' });
     expect(review.body).toMatchObject({ status: 'approved', history: expect.any(Array) });
     expect(review.body.history.length).toBe(1);

@@ -10,9 +10,9 @@ function schoolId(req: Request): string {
   if (!id) throw ApiError.forbidden('No school scope');
   return id;
 }
-async function actor(req: Request): Promise<{ name: string; ip: string }> {
+async function actor(req: Request): Promise<{ name: string; ip: string; role: string }> {
   const u = await UserModel.findById(req.user?._id).lean();
-  return { name: (u?.name as string) ?? 'System', ip: req.ip ?? '' };
+  return { name: (u?.name as string) ?? 'System', ip: req.ip ?? '', role: req.user?.role ?? '' };
 }
 const p = (req: Request, key: string): string => String(req.params[key]);
 

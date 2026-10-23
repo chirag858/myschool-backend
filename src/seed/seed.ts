@@ -1082,6 +1082,28 @@ export async function seedDemo() {
   // Fee adjustments: one readjustment audit row + two waive-offs (pending + applied).
   const woStudent = allStudents[0];
   if (woStudent) {
+    // Refund requests below are capped against what this student actually paid —
+    // seed a receipt so the seeded (1200 + 800) and fee-refunds.test.ts's own request have room.
+    await ReceiptModel.findOneAndUpdate(
+      { schoolId: school._id, receiptNumber: 'RCPT-WAIVE-001' },
+      {
+        schoolId: school._id,
+        receiptNumber: 'RCPT-WAIVE-001',
+        studentId: woStudent._id,
+        studentName: woStudent.name,
+        className: woStudent.className,
+        section: woStudent.section,
+        monthsCovered: ['April', 'May', 'June'],
+        feeHeads: [{ name: 'Tuition', amount: 4000 }],
+        amount: 4000,
+        paymentMode: 'cash',
+        payments: [{ mode: 'cash', amount: 4000 }],
+        paymentDate: '2025-04-05T09:00:00.000Z',
+        generatedBy: 'Accountant',
+        status: 'active',
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
     await ReadjustmentModel.findOneAndUpdate(
       { schoolId: school._id, reason: 'Carried-forward correction' },
       { schoolId: school._id, type: 'previous_fee', date: '2025-05-01T09:00:00.000Z', studentName: woStudent.name, className: woStudent.className, oldValue: '5000', newValue: '4500', difference: '-500', reason: 'Carried-forward correction', performedBy: 'Accountant', ipAddress: '10.0.0.5' },

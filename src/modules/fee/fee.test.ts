@@ -55,17 +55,19 @@ describe('Fee API', () => {
   async function collectOneMonth(studentId: string, month: string) {
     const context = await request(app).get(`/api/fee/pending/${studentId}`).set(auth(acc));
     const entry = context.body.months.find((m: { month: string }) => m.month === month);
-    // See utilize.test.ts's makeReceipt for why previousDues excludes this
-    // month's own unpaid share — collect() does the same exclusion.
+    // A collection only charges the ticked month(s) — other overdue months
+    // (context.previousDues) are informational only and excluded from the
+    // transaction total (see fee.service.ts collect()'s duesBeforeAdvance).
     const ownUnpaid = Math.max(0, entry.amount - entry.paid);
-    const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+    // Concession is scaled by how many months this receipt settles — see
+    // fee.service.ts collect()'s scaledConcessionAmount.
+    const scaledConcession = context.body.concessionAmount ?? 0;
     const netPayable = Math.max(
       0,
       Math.round(
-        entry.amount -
-          (context.body.concessionAmount ?? 0) -
+        ownUnpaid -
+          scaledConcession -
           (context.body.advanceBalance ?? 0) +
-          previousDues +
           (context.body.fineAmount ?? 0),
       ),
     );
@@ -161,7 +163,18 @@ describe('Fee API', () => {
     // The old bug (summing raw configured amounts regardless of frequency)
     // would overstate this whenever any head isn't 'monthly' frequency.
     const structureRes = await request(app).get('/api/fee/structure').set(auth(acc));
-    const cls1Rows = structureRes.body.rows.filter((r: { amounts: Record<string, number> }) => r.amounts['Class 1'] != null);
+    const headsRes = await request(app).get('/api/fee/heads').set(auth(acc));
+    // Transport is excluded from annualByClass/feeHeadDefsForClass — it's
+    // billed per the student's route assignment, not per class (see
+    // fee.service.ts's `studentFeeContext`) — so this test's own hand-rolled
+    // "true annual" must exclude it too, to match what the API now returns.
+    const transportHeadIds = new Set(
+      (headsRes.body as { id: string; type: string }[]).filter((h) => h.type === 'transport').map((h) => h.id),
+    );
+    const cls1Rows = structureRes.body.rows.filter(
+      (r: { feeHeadId: string; amounts: Record<string, number> }) =>
+        r.amounts['Class 1'] != null && !transportHeadIds.has(r.feeHeadId),
+    );
     const hasNonMonthlyHead = structureRes.body.rows.some(
       (r: { frequency: string; amounts: Record<string, number> }) => r.amounts['Class 1'] != null && r.frequency !== 'monthly',
     );
@@ -196,8 +209,9 @@ describe('Fee API', () => {
     const rid = collect.body.id;
 
     const list = await request(app).get('/api/fee/receipts').set(auth(acc));
-    // 1 just-collected + 1 historical receipt in the demo seed (a parent's paid child).
-    expect(list.body.total).toBe(2);
+    // 1 just-collected + 1 historical receipt in the demo seed (a parent's paid child)
+    // + 1 seeded receipt backing the fee-adjustments/refund-request fixtures.
+    expect(list.body.total).toBe(3);
 
     const get = await request(app).get(`/api/fee/receipts/${rid}`).set(auth(acc));
     expect(get.body.receiptNumber).toBe(collect.body.receiptNumber);
@@ -205,13 +219,20 @@ describe('Fee API', () => {
     const dup = await request(app).post(`/api/fee/receipts/${rid}/duplicate`).set(auth(acc));
     expect(dup.body.receiptNumber).toMatch(/-DUP$/);
 
-    const cancel = await request(app).patch(`/api/fee/receipts/${rid}/cancel`).set(auth(acc)).send({ reason: 'Wrong entry' });
+    // The original is now 'duplicate_issued' — superseded, so it can no longer
+    // be cancelled, duplicated or reversed itself; only the live duplicate can be.
+    const original = await request(app).get(`/api/fee/receipts/${rid}`).set(auth(acc));
+    expect(original.body.status).toBe('duplicate_issued');
+    const cancelOriginal = await request(app).patch(`/api/fee/receipts/${rid}/cancel`).set(auth(acc)).send({ reason: 'Wrong entry' });
+    expect(cancelOriginal.status).toBe(400);
+
+    const cancel = await request(app).patch(`/api/fee/receipts/${dup.body.id}/cancel`).set(auth(acc)).send({ reason: 'Wrong entry' });
     expect(cancel.body).toMatchObject({ status: 'cancelled', cancelledReason: 'Wrong entry' });
 
     const stats = await request(app).get('/api/fee/stats/today').set(auth(acc));
-    // The active duplicate counts for today; the cancelled original does not.
-    expect(stats.body.todayCount).toBe(1);
-    expect(stats.body.todayCollection).toBe(amount);
+    // Original is superseded (duplicate_issued) and the duplicate is now cancelled — nothing active today.
+    expect(stats.body.todayCount).toBe(0);
+    expect(stats.body.todayCollection).toBe(0);
   });
 
   it('GET /fee/ledger computes per-student totals from structure + receipts', async () => {
@@ -228,20 +249,38 @@ describe('Fee API', () => {
     expect(row.totalFee).toBeGreaterThan(0);
     expect(row.balance).toBe(Math.max(0, row.totalFee - amount));
 
+    // `amount` can also settle other already-overdue months in the same
+    // receipt (collect() always folds previousDues into monthsCovered — see
+    // fee.service.ts), so it is split across every one of those months by
+    // monthAllocations, not credited in full to April alone. Read the receipt
+    // back to know April's own actual share.
+    const receipt = await request(app).get(`/api/fee/receipts/${collect.body.id}`).set(auth(acc));
+    const allocations = receipt.body.monthAllocations as Array<{ month: string; amount: number }>;
+    const aprilAllocation = allocations.find((a) => a.month === 'April')?.amount ?? 0;
+    expect(allocations.reduce((s, a) => s + a.amount, 0)).toBe(amount);
+
     // Month filter: April (the paid month) shows a small monthly due with
-    // paid=amount; a different month shows the same monthly due but paid=0 —
-    // proving `month` actually changes the numbers, not just annual totals.
+    // paid=its own allocation; a month this receipt never covered shows the
+    // same monthly due but paid=0 — proving `month` actually changes the
+    // numbers, not just annual totals.
     const april = await request(app).get('/api/fee/ledger?month=Apr').set(auth(acc));
     const aprilRow = april.body.find((r: { studentId: string }) => r.studentId === sid);
     expect(aprilRow.totalFee).toBe(Math.round(row.totalFee / 12));
-    expect(aprilRow.paid).toBe(amount);
+    expect(aprilRow.paid).toBe(aprilAllocation);
     expect(aprilRow.status).toBe(aprilRow.balance <= 0 ? 'paid' : 'partial');
 
-    const july = await request(app).get('/api/fee/ledger?month=Jul').set(auth(acc));
-    const julyRow = july.body.find((r: { studentId: string }) => r.studentId === sid);
-    expect(julyRow.totalFee).toBe(aprilRow.totalFee);
-    expect(julyRow.paid).toBe(0);
-    expect(julyRow.status).toBe('pending');
+    const uncoveredMonth = allocations.length < 12
+      ? ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'].find(
+          (abbr) => !allocations.some((a) => a.month === { Apr: 'April', May: 'May', Jun: 'June', Jul: 'July', Aug: 'August', Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December', Jan: 'January', Feb: 'February', Mar: 'March' }[abbr]),
+        )
+      : undefined;
+    if (uncoveredMonth) {
+      const other = await request(app).get(`/api/fee/ledger?month=${uncoveredMonth}`).set(auth(acc));
+      const otherRow = other.body.find((r: { studentId: string }) => r.studentId === sid);
+      expect(otherRow.totalFee).toBe(aprilRow.totalFee);
+      expect(otherRow.paid).toBe(0);
+      expect(otherRow.status).toBe('pending');
+    }
   });
 
   it('rejects invalid collect payload (400)', async () => {
@@ -267,5 +306,48 @@ describe('Fee API', () => {
     const teacher = await token('teacher');
     expect((await request(app).get(`/api/fee/student-ledger/${studentId}`).set(auth(teacher))).status).toBe(403);
     expect((await request(app).get('/api/fee/heads').set(auth(teacher))).status).toBe(403);
+  });
+
+  it('transport fee is billed per the student\'s route, not per class', async () => {
+    const studentId = await class1StudentId();
+
+    // Baseline: no route assigned yet, so no transport line and no transport
+    // contribution to the total.
+    const before = await request(app).get(`/api/fee/pending/${studentId}`).set(auth(acc));
+    expect(before.status).toBe(200);
+    expect(before.body.feeHeads.some((h: { name: string }) => /transport/i.test(h.name))).toBe(false);
+
+    // Create a route with a distinctive fare and assign the student to it.
+    const route = await request(app)
+      .post('/api/transport/routes')
+      .set(auth(admin))
+      .send({ routeName: 'Test Route for Fee Check', monthlyFee: 777 });
+    expect(route.status).toBe(201);
+    const routeId = route.body.id as string;
+
+    const assign = await request(app)
+      .post('/api/transport/students/assign')
+      .set(auth(admin))
+      .send({ studentId, routeId, routeName: route.body.routeName, monthlyFee: 777 });
+    expect(assign.status).toBe(201);
+    const assignmentId = assign.body.id as string;
+
+    // Now the student's fee context carries a transport line worth the
+    // route's fare, on top of whatever the class-wide (non-transport) total
+    // already was — two students in the same class with different routes
+    // (or no route) would see different totals here.
+    const after = await request(app).get(`/api/fee/pending/${studentId}`).set(auth(acc));
+    expect(after.status).toBe(200);
+    const transportHead = after.body.feeHeads.find((h: { name: string }) => /transport/i.test(h.name));
+    expect(transportHead).toBeTruthy();
+    expect(transportHead.monthlyAmount).toBe(777);
+    expect(after.body.outstandingBalance - before.body.outstandingBalance).toBe(777 * 12);
+
+    // Removing the assignment drops the transport charge entirely — it never
+    // falls back to a class-wide amount.
+    await request(app).delete(`/api/transport/students/${assignmentId}/assignment`).set(auth(admin));
+    const afterRemoval = await request(app).get(`/api/fee/pending/${studentId}`).set(auth(acc));
+    expect(afterRemoval.body.feeHeads.some((h: { name: string }) => /transport/i.test(h.name))).toBe(false);
+    expect(afterRemoval.body.outstandingBalance).toBe(before.body.outstandingBalance);
   });
 });

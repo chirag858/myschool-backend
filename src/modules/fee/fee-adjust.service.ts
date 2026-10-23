@@ -47,6 +47,14 @@ function waiveOffView(d: Doc): Record<string, unknown> {
   };
 }
 
+/** Mirrors the frontend's canSelfApproveWaiveOff gate (waive-off-modal.tsx) — recomputed here since the client flag is never trusted. */
+const WAIVE_OFF_APPROVAL_THRESHOLD = 5000;
+function canSelfApprove(role: string, amount: number): boolean {
+  if (role === 'school_admin' || role === 'super_admin') return true;
+  if (role === 'principal') return amount <= WAIVE_OFF_APPROVAL_THRESHOLD;
+  return false;
+}
+
 export const feeAdjustService = {
   // ─── Readjustments ───
   async createReadjustment(schoolId: string, type: string, actor: { name: string; ip: string }, payload: Record<string, unknown>) {
@@ -72,9 +80,11 @@ export const feeAdjustService = {
   },
 
   // ─── Waive-off ───
-  async requestWaiveOff(schoolId: string, actor: { name: string; ip: string }, payload: Record<string, unknown>) {
+  async requestWaiveOff(schoolId: string, actor: { name: string; ip: string; role: string }, payload: Record<string, unknown>) {
     const now = nowIso();
-    const selfApprove = payload.selfApprove === true;
+    const amount = Number(payload.amount ?? 0);
+    // The client's `selfApprove` flag is never trusted — recompute from the actor's role and the amount.
+    const selfApprove = canSelfApprove(actor.role, amount);
     const doc = await WaiveOffModel.create({
       schoolId,
       studentId: payload.studentId,
@@ -103,8 +113,11 @@ export const feeAdjustService = {
   },
 
   async approveWaiveOff(schoolId: string, id: string, remarks: string, actor: { name: string }) {
-    const doc = await WaiveOffModel.findOne({ _id: id, schoolId });
-    if (!doc) throw ApiError.notFound('Waive-off not found');
+    const doc = await WaiveOffModel.findOne({ _id: id, schoolId, status: 'pending_approval' });
+    if (!doc) throw ApiError.badRequest('Waive-off not found or not pending approval');
+    if (doc.requestedBy === actor.name) {
+      throw ApiError.forbidden('Cannot approve your own waive-off request');
+    }
     const now = nowIso();
     const reason = remarks.trim() ? `${doc.reason} — ${remarks.trim()}` : doc.reason;
     doc.set({ status: 'applied', approvedBy: actor.name, approvedAt: now, appliedAt: now, reason });
@@ -114,11 +127,11 @@ export const feeAdjustService = {
 
   async rejectWaiveOff(schoolId: string, id: string, reason: string) {
     const doc = await WaiveOffModel.findOneAndUpdate(
-      { _id: id, schoolId },
+      { _id: id, schoolId, status: 'pending_approval' },
       { $set: { status: 'rejected', rejectedReason: reason } },
       { new: true },
     );
-    if (!doc) throw ApiError.notFound('Waive-off not found');
+    if (!doc) throw ApiError.badRequest('Waive-off not found or not pending approval');
     return waiveOffView(doc.toObject() as Doc);
   },
 

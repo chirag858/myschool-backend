@@ -5,7 +5,7 @@ import { getActiveSessionName } from '../academics/academics.service';
 import { AttendanceModel } from '../attendance/attendance.models';
 import { computeClassRows } from '../exams/exams.service';
 import { ExamModel } from '../exams/exams.models';
-import { annualByClass } from '../fee/fee.service';
+import { annualByClass, transportFeeByStudent } from '../fee/fee.service';
 import { ReceiptModel } from '../fee/fee.models';
 import { HostelStudentModel } from '../hostel/hostel.models';
 import { IssueModel } from '../library/library.models';
@@ -64,6 +64,7 @@ async function fetchStudentsRows(schoolId: string): Promise<Row[]> {
   const students = await StudentModel.find({ schoolId }).lean();
   const session = await getActiveSessionName(schoolId);
   const annual = await annualByClass(schoolId, session);
+  const transportByStudent = await transportFeeByStudent(schoolId, students.map((s) => String(s._id)));
   const receipts = await ReceiptModel.find({ schoolId: new Types.ObjectId(schoolId), status: 'active' })
     .select('studentId amount')
     .lean();
@@ -86,7 +87,7 @@ async function fetchStudentsRows(schoolId: string): Promise<Row[]> {
 
   return students.map((s) => {
     const sid = String(s._id);
-    const totalFee = annual[s.className ?? ''] ?? 0;
+    const totalFee = (annual[s.className ?? ''] ?? 0) + (transportByStudent.get(String(s._id)) ?? 0) * 12;
     const paid = paidByStudent.get(sid) ?? 0;
     const balance = Math.max(0, totalFee - paid);
     const att = attByStudent.get(sid);

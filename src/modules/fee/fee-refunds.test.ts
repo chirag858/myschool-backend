@@ -58,10 +58,18 @@ describe('Fee Refund Requests API', () => {
     const list2 = await request(app).get('/api/fee/refund-requests').set(auth(acc));
     expect(list2.body.length).toBe(3);
 
-    expect((await request(app).delete(`/api/fee/refund-requests/${create.body.id}`).set(auth(acc))).status).toBe(204);
-    expect((await request(app).get('/api/fee/refund-requests').set(auth(acc))).body.length).toBe(2);
-    // Cancelling a non-existent / not-owned request → 404
-    expect((await request(app).delete('/api/fee/refund-requests/000000000000000000000000').set(auth(acc))).status).toBe(404);
+    // An already-approved request can no longer be cancelled by the requester.
+    expect((await request(app).delete(`/api/fee/refund-requests/${create.body.id}`).set(auth(acc))).status).toBe(400);
+
+    // A fresh, still-pending request can be cancelled.
+    const second = await request(app)
+      .post('/api/fee/refund-requests')
+      .set(auth(acc))
+      .send({ studentId, studentName: 'Test Kid', className: 'Class 1', amount: 200, refundMode: 'online', reference: 'NEFT-10', reason: 'Overpaid again' });
+    expect((await request(app).delete(`/api/fee/refund-requests/${second.body.id}`).set(auth(acc))).status).toBe(204);
+    expect((await request(app).get('/api/fee/refund-requests').set(auth(acc))).body.length).toBe(3);
+    // Cancelling a non-existent / not-owned request → 400
+    expect((await request(app).delete('/api/fee/refund-requests/000000000000000000000000').set(auth(acc))).status).toBe(400);
   });
 
   it('rejects a request with a reason', async () => {

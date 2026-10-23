@@ -55,23 +55,23 @@ describe('Fee Scroll API (daily collection scroll)', () => {
     // real due amount for the month instead of inventing one.
     const context = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
     const entry = context.body.months.find((m: { month: string }) => m.month === 'April');
-    // April is the session's first month, so it never carries arrears from an
-    // earlier month — but the seed data can still carry a real pending fine
-    // or concession for this student, and collect() rejects a netPayable that
-    // doesn't account for those (see fee.service.ts recompute), so pull them
-    // from the same context rather than assuming they're 0. context.previousDues
-    // is fetched before any month is picked, so (like makeReceipt in
-    // utilize.test.ts) subtract April's own unpaid share — collect() excludes
-    // exactly the month(s) being paid from its own previousDues recompute.
+    // The seed data can still carry a real pending fine or concession for this
+    // student, and collect() rejects a netPayable that doesn't account for
+    // those (see fee.service.ts recompute), so pull them from the same
+    // context rather than assuming they're 0. A collection only charges the
+    // ticked month(s) — other overdue months (context.previousDues) are
+    // informational only and are NOT part of this transaction's total (see
+    // fee.service.ts collect()'s duesBeforeAdvance).
     const ownUnpaid = Math.max(0, entry.amount - entry.paid);
-    const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+    // Concession is scaled by how many months this receipt settles — see
+    // fee.service.ts collect()'s scaledConcessionAmount.
+    const scaledConcession = context.body.concessionAmount ?? 0;
     const netPayable = Math.max(
       0,
       Math.round(
-        entry.amount -
-          (context.body.concessionAmount ?? 0) -
+        ownUnpaid -
+          scaledConcession -
           (context.body.advanceBalance ?? 0) +
-          previousDues +
           (context.body.fineAmount ?? 0),
       ),
     );
@@ -98,34 +98,59 @@ describe('Fee Scroll API (daily collection scroll)', () => {
     expect(scroll.body.entries.some((e: { reference: string }) => e.reference === collect.body.receiptNumber)).toBe(true);
   });
 
-  it('open day → add expense → close day chains retained cash to next day opening', async () => {
+  it('open day → cash collection + expense → close day with a server-reconciled balance', async () => {
+    // The client's openingBalance is never trusted — the server derives it
+    // (0 here, since this collector has no prior closed day to chain from).
     const open = await request(app)
       .post('/api/fee/scroll/open-day')
       .set(auth(acc))
       .send({ date: TODAY, openingBalance: 2000 });
     expect(open.status).toBe(200);
-    expect(open.body).toMatchObject({ status: 'open', openingBalance: 2000 });
+    expect(open.body).toMatchObject({ status: 'open', openingBalance: 0 });
 
+    // A real cash collection, so there's cash on hand to spend and retain —
+    // closeDay's countedCash can never be negative (you can't count negative cash).
+    const sid = await class1StudentId();
+    const context = await request(app).get(`/api/fee/pending/${sid}`).set(auth(acc));
+    const entry = context.body.months.find((m: { month: string }) => m.month === 'April');
+    const ownUnpaid = Math.max(0, entry.amount - entry.paid);
+    const arrearsMonths = ((context.body.previousDuesMonths ?? []) as string[]).filter((m) => m !== 'April');
+    const previousDues = Math.max(0, (context.body.previousDues ?? 0) - ownUnpaid);
+    const scaledConcession = (context.body.concessionAmount ?? 0) * (1 + arrearsMonths.length);
+    const netPayable = Math.max(
+      0,
+      Math.round(
+        ownUnpaid - scaledConcession - (context.body.advanceBalance ?? 0) + previousDues + (context.body.fineAmount ?? 0),
+      ),
+    );
+    await request(app)
+      .post('/api/fee/collect')
+      .set(auth(acc))
+      .send({ studentId: sid, months: ['April'], netPayable, payments: [{ mode: 'cash', amount: netPayable }], paymentDate: TODAY });
+
+    const expenseAmount = Math.min(300, Math.max(1, netPayable - 1));
     const expense = await request(app)
       .post('/api/fee/scroll/expense')
       .set(auth(acc))
-      .send({ category: 'stationery', description: 'Receipt books', amount: 300, mode: 'cash' });
+      .send({ category: 'stationery', description: 'Receipt books', amount: expenseAmount, mode: 'cash' });
     expect(expense.status).toBe(201);
-    expect(expense.body).toMatchObject({ amount: 300, voucherNo: expect.stringMatching(/^VCH-/) });
+    expect(expense.body).toMatchObject({ amount: expenseAmount, voucherNo: expect.stringMatching(/^VCH-/) });
 
+    // expectedCash = opening(0) + cashCollected(netPayable) - cashExpenses(expenseAmount).
+    const expectedCash = netPayable - expenseAmount;
     const close = await request(app)
       .post('/api/fee/scroll/close-day')
       .set(auth(acc))
       .send({
         date: TODAY,
         denominations: [],
-        countedCash: 1700,
+        countedCash: expectedCash,
         variance: 0,
-        retained: 1700,
+        retained: expectedCash,
       });
     expect(close.status).toBe(200);
     expect(close.body.status).toBe('closed');
-    expect(close.body.closing).toMatchObject({ retained: 1700, cashExpenses: 300 });
+    expect(close.body.closing).toMatchObject({ retained: expectedCash, cashExpenses: expenseAmount });
   });
 
   it('rejects closing a day that was never opened (400)', async () => {
