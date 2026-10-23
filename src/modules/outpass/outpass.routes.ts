@@ -2,13 +2,18 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { outpassController } from './outpass.controller';
 import { addVisitorSchema, idParam, issueOutPassSchema } from './outpass.validation';
 
 /** Mounted at /api/outpass. School admin, principal, coordinator, receptionist. */
 export const outpassRoutes = Router();
-outpassRoutes.use(authenticate, requireRole('school_admin', 'principal', 'coordinator', 'receptionist'));
+outpassRoutes.use(
+  authenticate,
+  requireRole('school_admin', 'principal', 'coordinator', 'receptionist'),
+  requireModule('gate'),
+);
 
 outpassRoutes.get('/', asyncHandler(outpassController.list));
 outpassRoutes.post('/', validate({ body: issueOutPassSchema }), asyncHandler(outpassController.issue));

@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { transportTrackingController } from './transport-tracking.controller';
 import { addMaintenanceSchema, idParam, saveGpsDeviceSchema } from './transport-tracking.validation';
@@ -11,6 +12,7 @@ export const transportTrackingRoutes = Router();
 transportTrackingRoutes.use(
   authenticate,
   requireRole('school_admin', 'principal', 'coordinator', 'teacher', 'super_admin', 'support_engineer'),
+  requireModule('transport'),
 );
 
 transportTrackingRoutes.get('/vehicles/:id/maintenance', validate({ params: idParam }), asyncHandler(transportTrackingController.getMaintenance));

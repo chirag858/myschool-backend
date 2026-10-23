@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { ACADEMIC_ADMIN_ROLES } from '../user/roles';
 import { examController } from './exams.controller';
@@ -20,7 +21,7 @@ import {
 
 /** Mounted at /api/exams. Academic admins + teachers (marks entry). */
 export const examRoutes = Router();
-examRoutes.use(authenticate, requireRole(...ACADEMIC_ADMIN_ROLES, 'teacher'));
+examRoutes.use(authenticate, requireRole(...ACADEMIC_ADMIN_ROLES, 'teacher'), requireModule('examinations'));
 
 examRoutes.get('/kpi', asyncHandler(examController.kpi));
 examRoutes.get('/upcoming', asyncHandler(examController.upcoming));

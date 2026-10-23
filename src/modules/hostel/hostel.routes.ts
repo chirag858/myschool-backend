@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { hostelController } from './hostel.controller';
 import {
@@ -15,7 +16,7 @@ import {
 
 /** Mounted at /api/hostel. School admin + principal. */
 export const hostelRoutes = Router();
-hostelRoutes.use(authenticate, requireRole('school_admin', 'principal'));
+hostelRoutes.use(authenticate, requireRole('school_admin', 'principal'), requireModule('hostel'));
 
 hostelRoutes.get('/dashboard', asyncHandler(hostelController.kpi));
 

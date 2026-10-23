@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { upload } from '../../middleware/upload';
 import { validate } from '../../middleware/validate';
 import { gateManagerController } from './gate-manager.controller';
@@ -9,7 +10,11 @@ import { idParam, otpSchema, releaseSchema, teacherPassSchema, visitorSchema } f
 
 /** Mounted at /api/gate-manager. gate_manager + school_admin + principal. */
 export const gateManagerRoutes = Router();
-gateManagerRoutes.use(authenticate, requireRole('gate_manager', 'school_admin', 'principal'));
+gateManagerRoutes.use(
+  authenticate,
+  requireRole('gate_manager', 'school_admin', 'principal'),
+  requireModule('gate'),
+);
 
 gateManagerRoutes.post('/upload-photo', upload.single('photo'), asyncHandler(gateManagerController.uploadPhoto));
 

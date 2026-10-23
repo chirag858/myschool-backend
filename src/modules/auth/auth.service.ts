@@ -7,7 +7,7 @@ import { env } from '../../config/env';
 import { ApiError } from '../../lib/api-error';
 import { signTokens, verifyRefresh, type TokenPair } from '../../lib/jwt';
 import { SessionModel } from '../academics/academics.models';
-import { SchoolModel } from '../school/school.model';
+import { MODULE_KEYS, SchoolModel } from '../school/school.model';
 import { logger } from '../../lib/logger';
 import { isMailConfigured, sendMail } from '../../lib/mailer';
 import { isSmsConfigured, sendOtpSms } from '../../lib/sms-provider';
@@ -151,6 +151,22 @@ async function resolveTenantUser(
   return scoped[0] ?? null;
 }
 
+/**
+ * Attach the school's super-admin module toggles to a serialized user so the
+ * web sidebar and route guards can hide/block what's disabled. Platform
+ * roles (no schoolId) are left as-is; absent flag defaults to enabled.
+ */
+async function withEnabledModules(user: HydratedDocument<UserDoc>): Promise<Record<string, unknown>> {
+  const json = user.toJSON() as Record<string, unknown>;
+  if (!user.schoolId) return json;
+  const school = await SchoolModel.findById(user.schoolId).select('moduleFlags').lean();
+  const flags = school?.moduleFlags as Record<string, boolean> | undefined;
+  const enabledModules: Record<string, boolean> = {};
+  for (const key of MODULE_KEYS) enabledModules[key] = flags?.[key] !== false;
+  json.enabledModules = enabledModules;
+  return json;
+}
+
 /** Shared login tail: validate password + active state, record login, issue tokens. */
 async function completeLogin(
   user: HydratedDocument<UserDoc> | null,
@@ -165,7 +181,7 @@ async function completeLogin(
   user.lastLoginAt = new Date();
   user.lastLoginIp = ip;
   await user.save();
-  return { user: user.toJSON(), tokens: tokensFor(user) };
+  return { user: await withEnabledModules(user), tokens: tokensFor(user) };
 }
 
 export const authService = {
@@ -259,7 +275,7 @@ export const authService = {
 
     const user = await UserModel.findOne({ mobile });
     if (!user) throw ApiError.notFound('No account for this number');
-    return { user: user.toJSON(), tokens: tokensFor(user) };
+    return { user: await withEnabledModules(user), tokens: tokensFor(user) };
   },
 
   /** Exchange a refresh token for a fresh token pair (frontend `Tokens`). */
@@ -278,7 +294,7 @@ export const authService = {
   async getProfile(userId: string): Promise<unknown> {
     const user = await UserModel.findById(userId);
     if (!user) throw ApiError.notFound('User not found');
-    return user.toJSON();
+    return withEnabledModules(user);
   },
 
   /**

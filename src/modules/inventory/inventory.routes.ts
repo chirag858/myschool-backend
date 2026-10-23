@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { inventoryController } from './inventory.controller';
 import {
@@ -19,7 +20,7 @@ import {
  * the inventory vendor master to populate its "Vendor" picker.
  */
 export const inventoryRoutes = Router();
-inventoryRoutes.use(authenticate);
+inventoryRoutes.use(authenticate, requireModule('inventory'));
 const adminGate = requireRole('school_admin', 'principal');
 
 inventoryRoutes.get('/dashboard', adminGate, asyncHandler(inventoryController.kpi));

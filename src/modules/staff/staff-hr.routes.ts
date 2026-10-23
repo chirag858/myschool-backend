@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { upload } from '../../middleware/upload';
 import { validate } from '../../middleware/validate';
 import { staffHrController } from './staff-hr.controller';
@@ -56,7 +57,7 @@ staffHrRoutes.get('/:id/exit-record', validate({ params: idParam }), asyncHandle
 
 /** Payroll router. Mounted at /api/payroll. */
 export const payrollRoutes = Router();
-payrollRoutes.use(authenticate, requireRole('school_admin', 'principal', 'accountant'));
+payrollRoutes.use(authenticate, requireRole('school_admin', 'principal', 'accountant'), requireModule('payroll'));
 
 payrollRoutes.get('/stats', asyncHandler(staffHrController.payrollKpi));
 payrollRoutes.get('/advance-requests', asyncHandler(staffHrController.advanceRequests));

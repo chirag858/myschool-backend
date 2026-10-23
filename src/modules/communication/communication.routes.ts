@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { communicationController } from './communication.controller';
 import {
@@ -11,7 +12,9 @@ import {
   upsertCircularSchema,
 } from './communication.validation';
 
-const gate = [authenticate, requireRole('school_admin', 'principal', 'coordinator')];
+// Circulars/announcements/kpi sit behind the "communication" module toggle.
+// Notifications (the bell) stay ungated — it's core UX, not an optional module.
+const gate = [authenticate, requireRole('school_admin', 'principal', 'coordinator'), requireModule('communication')];
 const notificationGate = [
   authenticate,
   requireRole('school_admin', 'principal', 'coordinator', 'super_admin', 'support_engineer'),
