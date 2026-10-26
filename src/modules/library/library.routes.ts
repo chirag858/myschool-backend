@@ -2,13 +2,14 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { libraryController } from './library.controller';
 import { idParam, issueSchema, returnSchema, upsertBookSchema, waiveSchema } from './library.validation';
 
 /** Mounted at /api/library. School admin + principal. */
 export const libraryRoutes = Router();
-libraryRoutes.use(authenticate, requireRole('school_admin', 'principal'));
+libraryRoutes.use(authenticate, requireRole('school_admin', 'principal'), requireModule('library'));
 
 libraryRoutes.get('/dashboard', asyncHandler(libraryController.kpi));
 libraryRoutes.get('/activity', asyncHandler(libraryController.activity));

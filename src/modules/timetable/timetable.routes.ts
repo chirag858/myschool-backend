@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { ACADEMIC_ADMIN_ROLES } from '../user/roles';
 import { timetableController } from './timetable.controller';
@@ -21,6 +22,7 @@ import {
 } from './timetable.validation';
 
 export const timetableRoutes = Router();
+timetableRoutes.use(authenticate, requireModule('timetable'));
 
 const editGate = [authenticate, requireRole(...ACADEMIC_ADMIN_ROLES)];
 const readGate = [authenticate];

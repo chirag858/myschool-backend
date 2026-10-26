@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { transportController } from './transport.controller';
 import {
@@ -26,7 +27,7 @@ import {
  * pages they're allowed to reach.
  */
 export const transportRoutes = Router();
-transportRoutes.use(authenticate);
+transportRoutes.use(authenticate, requireModule('transport'));
 
 const adminOnly = requireRole('school_admin', 'principal');
 const routesReaders = requireRole(

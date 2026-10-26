@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { asyncHandler } from '../../lib/async-handler';
 import { authenticate, requireRole } from '../../middleware/auth';
+import { requireModule } from '../../middleware/require-module';
 import { validate } from '../../middleware/validate';
 import { inventoryRequestsController } from './inventory-requests.controller';
 import {
@@ -19,6 +20,7 @@ export const inventoryRequestsRoutes = Router();
 inventoryRequestsRoutes.use(
   authenticate,
   requireRole('school_admin', 'principal', 'coordinator', 'teacher', 'accountant', 'receptionist', 'gate_manager'),
+  requireModule('inventory'),
 );
 
 inventoryRequestsRoutes.get('/requests', validate({ query: requestsQuery }), asyncHandler(inventoryRequestsController.listRequests));

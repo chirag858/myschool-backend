@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { app } from '../../app';
 import { seedDemo } from '../../seed/seed';
+import { SchoolModel } from '../school/school.model';
 
 async function token(username: string): Promise<string> {
   const res = await request(app)
@@ -28,6 +29,21 @@ describe('Hostel API', () => {
     expect((await request(app).get('/api/hostel/buildings')).status).toBe(401);
     const acc = await token('accountant');
     expect((await request(app).get('/api/hostel/buildings').set(auth(acc))).status).toBe(403);
+  });
+
+  it('blocks the whole module with 403 once super-admin disables "hostel" for this school, and restores on re-enable', async () => {
+    const school = await SchoolModel.findOne({ code: 'MSC' });
+    if (!school) throw new Error('seed school MSC not found');
+    school.moduleFlags = { ...(school.moduleFlags as Record<string, boolean> | undefined), hostel: false };
+    await school.save();
+
+    const blocked = await request(app).get('/api/hostel/buildings').set(auth(admin));
+    expect(blocked.status).toBe(403);
+
+    school.moduleFlags = { ...(school.moduleFlags as Record<string, boolean> | undefined), hostel: true };
+    await school.save();
+    const restored = await request(app).get('/api/hostel/buildings').set(auth(admin));
+    expect(restored.status).toBe(200);
   });
 
   it('dashboard + buildings with derived room counts', async () => {
