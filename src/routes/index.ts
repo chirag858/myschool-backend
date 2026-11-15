@@ -33,6 +33,8 @@ import { receptionRoutes } from '../modules/reception/reception.routes';
 import { staffRoutes } from '../modules/staff/staff.routes';
 import { payrollRoutes, staffHrRoutes } from '../modules/staff/staff-hr.routes';
 import { homeworkRoutes, teacherRoutes } from '../modules/teacher/teacher.routes';
+import { eventsRoutes } from '../modules/events/events.routes';
+import { syllabusRoutes } from '../modules/syllabus/syllabus.routes';
 import { teacherAppRoutes } from '../modules/teacher-app/teacher-app.routes';
 import { transportRoutes } from '../modules/transport/transport.routes';
 import { driverAppRoutes } from '../modules/driver-app/driver-app.routes';
@@ -124,6 +126,8 @@ apiRouter.use('/parent', parentRoutes);
 apiRouter.use('/teacher', teacherRoutes);
 apiRouter.use('/teacher', teacherAppRoutes); // mobile teacher paths fall through the web router
 apiRouter.use('/homework', homeworkRoutes);
+apiRouter.use('/events', eventsRoutes);
+apiRouter.use('/syllabus', syllabusRoutes);
 apiRouter.use('/communication', communicationRoutes);
 apiRouter.use('/circulars', circularRoutes);
 apiRouter.use('/announcements', announcementRoutes);

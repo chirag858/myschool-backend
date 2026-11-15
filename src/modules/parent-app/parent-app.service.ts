@@ -10,6 +10,8 @@ import { ParentComplaintModel } from '../parent/parent.models';
 import { StudentModel } from '../students/student.model';
 import { TeacherClassModel } from '../teacher/teacher.models';
 import { TeacherContentModel } from '../teacher-app/teacher-app.models';
+import { eventsService } from '../events/events.service';
+import { syllabusService } from '../syllabus/syllabus.service';
 import { OtpModel } from '../auth/otp.model';
 import { UserModel } from '../user/user.model';
 import { RouteModel, StudentTransportModel, VehicleModel } from '../transport/transport.models';
@@ -142,6 +144,22 @@ export const parentAppService = {
       month: targetMonth,
       days: inMonth.map((r) => ({ date: r.date as string, status: ATT_OUT[String(r.status)] ?? 'notMarked' })),
     };
+  },
+
+  // ── Events (photo gallery) + Syllabus ──
+  // Child-class scoped reads over the events/syllabus modules. An album with no
+  // classKeys is whole-school; a syllabus row is matched on the child's class.
+  async events(schoolId: string, userId: string, childId: string) {
+    const c = await ownChild(schoolId, userId, childId);
+    return { rows: await eventsService.listForClass(schoolId, classKeyOf(c)) };
+  },
+  async eventAlbum(schoolId: string, userId: string, childId: string, albumId: string) {
+    const c = await ownChild(schoolId, userId, childId);
+    return eventsService.getForClass(schoolId, classKeyOf(c), albumId);
+  },
+  async syllabus(schoolId: string, userId: string, childId: string) {
+    const c = await ownChild(schoolId, userId, childId);
+    return { rows: await syllabusService.listForClass(schoolId, classKeyOf(c)) };
   },
 
   // ── Exams ──

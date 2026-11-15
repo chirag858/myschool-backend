@@ -32,6 +32,16 @@ export const parentAppController = {
     send(res, await S.attendance(schoolId(req), uid(req), childG(req), gq(req, 'month') || undefined));
   },
 
+  async events(req: Request, res: Response) {
+    send(res, await S.events(schoolId(req), uid(req), childG(req)));
+  },
+  async eventAlbum(req: Request, res: Response) {
+    send(res, await S.eventAlbum(schoolId(req), uid(req), childG(req), String(req.params.id)));
+  },
+  async syllabus(req: Request, res: Response) {
+    send(res, await S.syllabus(schoolId(req), uid(req), childG(req)));
+  },
+
   async examTimetable(req: Request, res: Response) {
     send(res, await S.examTimetable(schoolId(req), uid(req), childG(req)));
   },

@@ -21,6 +21,10 @@ parentAppRoutes.get('/dashboard-summary', asyncHandler(C.dashboardSummary));
 parentAppRoutes.get('/profile', asyncHandler(C.profile));
 parentAppRoutes.get('/app-attendance', asyncHandler(C.attendance));
 
+parentAppRoutes.get('/events', asyncHandler(C.events));
+parentAppRoutes.get('/events/:id', asyncHandler(C.eventAlbum));
+parentAppRoutes.get('/syllabus', asyncHandler(C.syllabus));
+
 parentAppRoutes.get('/exam/timetable', asyncHandler(C.examTimetable));
 parentAppRoutes.get('/timetable', asyncHandler(C.classTimetable));
 parentAppRoutes.get('/exam/schedules', asyncHandler(C.examSchedules));
