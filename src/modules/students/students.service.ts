@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import { Types } from 'mongoose';
 
 import { ApiError } from '../../lib/api-error';
+import { logger } from '../../lib/logger';
 import { UserModel } from '../user/user.model';
 import { StudentModel } from './student.model';
 import { createStudentSchema } from './students.validation';
@@ -56,17 +57,30 @@ async function createOrLinkParentAccount(
 
   const tempPassword = randomUUID().slice(0, 10);
   const passwordHash = await bcrypt.hash(tempPassword, 10);
-  const user = await UserModel.create({
-    name: `Parent of ${studentName}`,
-    username,
-    mobile,
-    role: 'parent',
-    passwordHash,
-    schoolId,
-    active: true,
-    mustChangePassword: true,
-  });
-  return { parentUserId: user._id, tempPassword };
+  try {
+    const user = await UserModel.create({
+      name: `Parent of ${studentName}`,
+      username,
+      mobile,
+      role: 'parent',
+      passwordHash,
+      schoolId,
+      active: true,
+      mustChangePassword: true,
+    });
+    return { parentUserId: user._id, tempPassword };
+  } catch (err) {
+    // A duplicate-key here means a concurrent admission just created the same
+    // parent, or a database still carrying a stale non-partial unique index on
+    // `email`/`username` rejected a second no-value account (see
+    // scripts/fix-user-indexes.ts). Recover by linking to whatever parent now
+    // exists for this mobile rather than failing the admission with a raw
+    // "Duplicate value".
+    if ((err as { code?: number })?.code !== 11000) throw err;
+    const raced = await UserModel.findOne({ schoolId, mobile, role: 'parent' });
+    if (raced) return { parentUserId: raced._id, linked: true };
+    throw err;
+  }
 }
 
 type Doc = Record<string, unknown> & { _id: unknown };
@@ -576,10 +590,17 @@ export const studentsService = {
     const created = doc!;
     let parentCredentials: { tempPassword?: string } | undefined;
     if (mobile) {
-      const { parentUserId, tempPassword } = await createOrLinkParentAccount(schoolId, created.name, String(mobile));
-      created.parentUserId = parentUserId as typeof created.parentUserId;
-      await created.save();
-      parentCredentials = tempPassword ? { tempPassword } : undefined;
+      // The student is already admitted; the parent login is secondary. Never
+      // let a parent-account failure fail (or half-complete) the admission —
+      // log it and let `backfill:parent-accounts` reconcile the login later.
+      try {
+        const { parentUserId, tempPassword } = await createOrLinkParentAccount(schoolId, created.name, String(mobile));
+        created.parentUserId = parentUserId as typeof created.parentUserId;
+        await created.save();
+        parentCredentials = tempPassword ? { tempPassword } : undefined;
+      } catch (err) {
+        logger.error({ err, studentId: String(created._id), schoolId, mobile }, 'parent-account link failed during admission; student admitted without a linked parent login');
+      }
     }
 
     return {
